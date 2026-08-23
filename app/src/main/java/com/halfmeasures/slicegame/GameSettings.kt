@@ -28,7 +28,9 @@ data class GameSettings(
     /** Hard ceiling on how many shapes can ever be on screen at once. */
     var maxConcurrency: Int = DEFAULT_MAX_CONCURRENCY,
     /** Milliseconds between spawns whenever fewer shapes are alive than the current cap. */
-    var spawnGapMs: Long = DEFAULT_SPAWN_GAP_MS
+    var spawnGapMs: Long = DEFAULT_SPAWN_GAP_MS,
+    /** Left/right wall bounce: 0 = shapes pass straight through (as before); 1 = fully elastic bounce. */
+    var wallStrength: Float = DEFAULT_WALL_STRENGTH
 ) {
     fun saveTo(context: Context) {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
@@ -40,18 +42,21 @@ data class GameSettings(
             .putInt(KEY_CONCURRENCY_STEP_SCORE, concurrencyStepScore)
             .putInt(KEY_MAX_CONCURRENCY, maxConcurrency)
             .putLong(KEY_SPAWN_GAP_MS, spawnGapMs)
+            .putFloat(KEY_WALL_STRENGTH, wallStrength)
             .apply()
     }
 
     companion object {
-        const val DEFAULT_SIZE_SCALE = 1.5f
-        const val DEFAULT_SPEED_SCALE = 1.0f
-        const val DEFAULT_GRAVITY_SCALE = 1.0f
-        const val DEFAULT_ROTATION_SCALE = 1.5f
+        // Defaults tuned by hand in-app and reported back.
+        const val DEFAULT_SIZE_SCALE = 1.9f
+        const val DEFAULT_SPEED_SCALE = 1.2f
+        const val DEFAULT_GRAVITY_SCALE = 0.8f
+        const val DEFAULT_ROTATION_SCALE = 1.3f
         const val DEFAULT_START_CONCURRENCY = 1
-        const val DEFAULT_CONCURRENCY_STEP_SCORE = 400
-        const val DEFAULT_MAX_CONCURRENCY = 4
-        const val DEFAULT_SPAWN_GAP_MS = 1000L
+        const val DEFAULT_CONCURRENCY_STEP_SCORE = 1383
+        const val DEFAULT_MAX_CONCURRENCY = 2
+        const val DEFAULT_SPAWN_GAP_MS = 1400L
+        const val DEFAULT_WALL_STRENGTH = 0f
 
         const val MIN_SIZE_SCALE = 0.5f
         const val MAX_SIZE_SCALE = 3.0f
@@ -67,6 +72,8 @@ data class GameSettings(
         const val MAX_CONCURRENCY_STEP_SCORE = 3000
         const val MIN_SPAWN_GAP_MS = 200L
         const val MAX_SPAWN_GAP_MS = 3000L
+        const val MIN_WALL_STRENGTH = 0f
+        const val MAX_WALL_STRENGTH = 1f
 
         private const val PREFS_NAME = "half_measures_settings"
         private const val KEY_SIZE_SCALE = "size_scale"
@@ -77,6 +84,7 @@ data class GameSettings(
         private const val KEY_CONCURRENCY_STEP_SCORE = "concurrency_step_score"
         private const val KEY_MAX_CONCURRENCY = "max_concurrency"
         private const val KEY_SPAWN_GAP_MS = "spawn_gap_ms"
+        private const val KEY_WALL_STRENGTH = "wall_strength"
 
         fun load(context: Context): GameSettings {
             val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -88,7 +96,8 @@ data class GameSettings(
                 startConcurrency = prefs.getInt(KEY_START_CONCURRENCY, DEFAULT_START_CONCURRENCY),
                 concurrencyStepScore = prefs.getInt(KEY_CONCURRENCY_STEP_SCORE, DEFAULT_CONCURRENCY_STEP_SCORE),
                 maxConcurrency = prefs.getInt(KEY_MAX_CONCURRENCY, DEFAULT_MAX_CONCURRENCY),
-                spawnGapMs = prefs.getLong(KEY_SPAWN_GAP_MS, DEFAULT_SPAWN_GAP_MS)
+                spawnGapMs = prefs.getLong(KEY_SPAWN_GAP_MS, DEFAULT_SPAWN_GAP_MS),
+                wallStrength = prefs.getFloat(KEY_WALL_STRENGTH, DEFAULT_WALL_STRENGTH)
             )
         }
     }

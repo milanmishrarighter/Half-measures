@@ -74,6 +74,13 @@ class SettingsActivity : AppCompatActivity() {
             onChange = { settings.rotationScale = it }
         )
 
+        addSlider(
+            root, "Wall strength (0 = sides are transparent, shapes pass through; higher = bouncier)",
+            GameSettings.MIN_WALL_STRENGTH, GameSettings.MAX_WALL_STRENGTH, settings.wallStrength,
+            format = { "${(it * 100).roundToInt()}%" },
+            onChange = { settings.wallStrength = it }
+        )
+
         root.addView(sectionLabel("Spawning"))
 
         addSlider(

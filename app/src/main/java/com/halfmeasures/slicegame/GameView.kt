@@ -149,6 +149,7 @@ class GameView @JvmOverloads constructor(
             while (iter.hasNext()) {
                 val s = iter.next()
                 s.update(dt, gravity)
+                if (settings.wallStrength > 0f) bounceOffWalls(s)
                 if (s.isOffScreen(width, height)) {
                     iter.remove()
                     // Every shape must be sliced - letting one get away ends the run.
@@ -178,6 +179,20 @@ class GameView @JvmOverloads constructor(
             val pu = popupIter.next()
             pu.update(dt)
             if (pu.age > 0.9f) popupIter.remove()
+        }
+    }
+
+    /** At wallStrength 0 this is skipped entirely (sides are transparent); otherwise
+     *  the left/right edges act as a wall with that coefficient of restitution. */
+    private fun bounceOffWalls(s: GameShape) {
+        val left = s.radius
+        val right = width - s.radius
+        if (s.x < left) {
+            s.x = left
+            s.vx = -s.vx * settings.wallStrength
+        } else if (s.x > right) {
+            s.x = right
+            s.vx = -s.vx * settings.wallStrength
         }
     }
 
