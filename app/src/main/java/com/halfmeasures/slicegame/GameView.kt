@@ -36,13 +36,12 @@ class GameView @JvmOverloads constructor(
     // ---- Player-adjustable settings (see GameSettings / SettingsActivity) ----
     private var settings = GameSettings.load(context)
 
-    /** Effective gravity for the current speedScale: scaling velocities by s and gravity by s^2
-     *  reproduces the exact same flight arc traced out 1/s times slower - true slow motion. */
-    private var gravity = GameShape.BASE_GRAVITY * settings.speedScale * settings.speedScale
+    /** Higher gravityScale falls faster and reaches a lower peak, independent of launch speed. */
+    private var gravity = GameShape.BASE_GRAVITY * settings.gravityScale
 
     fun refreshSettings() {
         settings = GameSettings.load(context)
-        gravity = GameShape.BASE_GRAVITY * settings.speedScale * settings.speedScale
+        gravity = GameShape.BASE_GRAVITY * settings.gravityScale
     }
 
     // ---- Game state ----
@@ -50,6 +49,7 @@ class GameView @JvmOverloads constructor(
     private var health = startHealth
     private var score = 0
     private var bestScore = 0
+    private var missedShape = false
     private var lastFrameTimeNanos = 0L
     private var nextSpawnAtMs = 0L
     private val random = Random(System.currentTimeMillis())
@@ -138,9 +138,11 @@ class GameView @JvmOverloads constructor(
         trailPoints.removeAll { nowMs - it.timeMs > trailMaxAgeMs }
 
         if (state == State.PLAYING) {
-            if (nowMs >= nextSpawnAtMs && width > 0 && height > 0) {
+            val concurrencyCap = (settings.startConcurrency + score / settings.concurrencyStepScore)
+                .coerceAtMost(settings.maxConcurrency)
+            if (shapes.size < concurrencyCap && nowMs >= nextSpawnAtMs && width > 0 && height > 0) {
                 spawnShape(nowMs)
-                scheduleNextSpawn(nowMs)
+                nextSpawnAtMs = nowMs + settings.spawnGapMs
             }
 
             val iter = shapes.iterator()
@@ -149,6 +151,10 @@ class GameView @JvmOverloads constructor(
                 s.update(dt, gravity)
                 if (s.isOffScreen(width, height)) {
                     iter.remove()
+                    // Every shape must be sliced - letting one get away ends the run.
+                    missedShape = true
+                    state = State.GAME_OVER
+                    bestScore = max(bestScore, score)
                 }
             }
 
@@ -175,18 +181,13 @@ class GameView @JvmOverloads constructor(
         }
     }
 
-    private fun scheduleNextSpawn(nowMs: Long) {
-        // Ramps from the start interval down to its floor as the player's score climbs,
-        // per settings.difficultyRampScore - not simply elapsed time.
-        val progress = min(1f, score / settings.difficultyRampScore.toFloat())
-        val start = settings.spawnIntervalStartMs
-        val floor = settings.spawnIntervalFloorMs
-        val interval = (start - (start - floor) * progress).toLong().coerceAtLeast(floor)
-        nextSpawnAtMs = nowMs + interval - random.nextLong(0, interval / 3 + 1)
-    }
-
     private fun spawnShape(nowMs: Long) {
-        shapes.add(GameShape.spawnRandom(width, height, random, nowMs, settings.sizeScale, settings.speedScale))
+        shapes.add(
+            GameShape.spawnRandom(
+                width, height, random, nowMs,
+                settings.sizeScale, settings.speedScale, settings.rotationScale
+            )
+        )
     }
 
     // ---------------------------------------------------------------------
@@ -304,6 +305,7 @@ class GameView @JvmOverloads constructor(
         trailPoints.clear()
         health = startHealth
         score = 0
+        missedShape = false
         state = State.PLAYING
         nextSpawnAtMs = System.currentTimeMillis() + 300
     }
@@ -324,8 +326,11 @@ class GameView @JvmOverloads constructor(
         drawHud(canvas)
 
         when (state) {
-            State.READY -> drawCenterMessage(canvas, "HALF MEASURES", "Slice each shape as close to 50/50 as you can\n\nTap to start")
-            State.GAME_OVER -> drawCenterMessage(canvas, "GAME OVER", "Score: $score   Best: $bestScore\n\nTap to play again")
+            State.READY -> drawCenterMessage(canvas, "HALF MEASURES", "Slice every shape - none can get away\n\nTap to start")
+            State.GAME_OVER -> {
+                val title = if (missedShape) "MISSED ONE!" else "GAME OVER"
+                drawCenterMessage(canvas, title, "Score: $score   Best: $bestScore\n\nTap to play again")
+            }
             State.PLAYING -> {}
         }
     }

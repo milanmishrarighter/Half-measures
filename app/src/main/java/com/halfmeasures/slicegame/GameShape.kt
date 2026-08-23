@@ -63,15 +63,22 @@ class GameShape(
             0xFFFF9F1C.toInt()
         )
 
-        /** Base, unscaled gravity used to derive a launch arc; must match [GameView]'s effective gravity math. */
+        /** Base, unscaled gravity; [GameView] applies GameSettings.gravityScale on top of this. */
         const val BASE_GRAVITY = 1500f // px/s^2
 
+        private const val BASE_LAUNCH_SPEED = 1600f // px/s, straight up before speedScale
+        private const val BASE_HORIZONTAL_DRIFT = 220f // px/s, max sideways speed before speedScale
+        private const val BASE_SPIN = 5f // rad/s, max spin before rotationScale
+
         /**
+         * Launch velocity is independent of gravity here: [speedScale] scales how fast a
+         * shape leaves the bottom of the screen, while [GameView] separately scales gravity
+         * via GameSettings.gravityScale - exactly like the settings screen describes it
+         * ("higher gravity = faster fall AND a lower peak height").
+         *
          * @param sizeScale multiplies the shape's radius (1.0 = base size).
-         * @param speedScale uniformly slows or speeds up the whole flight: velocities are
-         *   scaled by this factor and (by the caller, via [BASE_GRAVITY] * speedScale^2)
-         *   gravity is scaled by its square, which reproduces the exact same arc traced
-         *   out over 1/speedScale as much time - i.e. true slow motion, not a squashed path.
+         * @param speedScale multiplies launch speed, both vertical and horizontal drift.
+         * @param rotationScale multiplies spin speed.
          */
         fun spawnRandom(
             screenW: Int,
@@ -79,7 +86,8 @@ class GameShape(
             random: Random,
             nowMs: Long,
             sizeScale: Float = 1f,
-            speedScale: Float = 1f
+            speedScale: Float = 1f,
+            rotationScale: Float = 1f
         ): GameShape {
             val kind = ShapeKind.values().random(random)
             val radius = (((screenW * 0.06f) + random.nextFloat() * (screenW * 0.045f)) * sizeScale)
@@ -87,21 +95,15 @@ class GameShape(
             val x = radius * 1.5f + random.nextFloat() * (screenW - radius * 3f)
             val y = screenH + radius
 
-            // Aim roughly toward the upper-middle area of the screen so shapes stay reachable.
-            val targetX = screenW * (0.25f + random.nextFloat() * 0.5f)
-            val targetY = screenH * (0.18f + random.nextFloat() * 0.22f)
-            val flightSeconds = 1.15f + random.nextFloat() * 0.35f
+            val vx = (random.nextFloat() - 0.5f) * 2f * BASE_HORIZONTAL_DRIFT * speedScale
+            val vy = -BASE_LAUNCH_SPEED * speedScale * (0.85f + random.nextFloat() * 0.3f)
 
-            val vx = (targetX - x) / flightSeconds
-            // From y = y0 + vy*t + 0.5*g*t^2 solved for vy so the apex lands near targetY.
-            val vy = (targetY - y - 0.5f * BASE_GRAVITY * flightSeconds * flightSeconds) / flightSeconds
-
-            val angularVelocity = (random.nextFloat() - 0.5f) * 6f
+            val angularVelocity = (random.nextFloat() - 0.5f) * 2f * BASE_SPIN * rotationScale
             val color = palette[random.nextInt(palette.size)]
             return GameShape(
                 kind, x, y, radius,
-                vx * speedScale, vy * speedScale,
-                random.nextFloat() * 6.28f, angularVelocity * speedScale,
+                vx, vy,
+                random.nextFloat() * 6.28f, angularVelocity,
                 color, nowMs
             )
         }

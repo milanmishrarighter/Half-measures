@@ -13,8 +13,10 @@ import androidx.appcompat.app.AppCompatActivity
 import kotlin.math.roundToInt
 
 /**
- * Lets the player tune shape size, flight speed, how often shapes spawn, and how
- * quickly spawning ramps up with score. Built with plain widgets (no XML layout)
+ * Lets the player tune every knob behind the spawn algorithm - shape size, launch
+ * speed, gravity, spin, starting concurrency, how much score it takes to allow one
+ * more shape on screen, the concurrency ceiling, and the gap between spawns - so
+ * they can dial in the feel themselves. Built with plain widgets (no XML layout)
  * to match the rest of the app, which is entirely programmatic.
  */
 class SettingsActivity : AppCompatActivity() {
@@ -41,34 +43,69 @@ class SettingsActivity : AppCompatActivity() {
         }
         root.addView(title)
 
+        val section1 = sectionLabel("Shapes")
+        root.addView(section1)
+
         addSlider(
-            root, "Shape size",
+            root, "Size",
             GameSettings.MIN_SIZE_SCALE, GameSettings.MAX_SIZE_SCALE, settings.sizeScale,
             format = { "%.1fx".format(it) },
             onChange = { settings.sizeScale = it }
         )
 
         addSlider(
-            root, "Shape speed (how fast they fly)",
+            root, "Launch speed (how fast they fly off the bottom)",
             GameSettings.MIN_SPEED_SCALE, GameSettings.MAX_SPEED_SCALE, settings.speedScale,
             format = { "%.1fx".format(it) },
             onChange = { settings.speedScale = it }
         )
 
         addSlider(
-            root, "Spawn frequency (time between shapes at the start)",
-            GameSettings.MIN_SPAWN_INTERVAL_START_MS.toFloat(), GameSettings.MAX_SPAWN_INTERVAL_START_MS.toFloat(),
-            settings.spawnIntervalStartMs.toFloat(),
-            format = { "%.1fs".format(it / 1000f) },
-            onChange = { settings.spawnIntervalStartMs = it.toLong() }
+            root, "Gravity (higher = falls faster AND peaks lower)",
+            GameSettings.MIN_GRAVITY_SCALE, GameSettings.MAX_GRAVITY_SCALE, settings.gravityScale,
+            format = { "%.1fx".format(it) },
+            onChange = { settings.gravityScale = it }
         )
 
         addSlider(
-            root, "Difficulty ramp (score needed to reach max spawn rate)",
-            GameSettings.MIN_DIFFICULTY_RAMP_SCORE.toFloat(), GameSettings.MAX_DIFFICULTY_RAMP_SCORE.toFloat(),
-            settings.difficultyRampScore.toFloat(),
+            root, "Spin speed",
+            GameSettings.MIN_ROTATION_SCALE, GameSettings.MAX_ROTATION_SCALE, settings.rotationScale,
+            format = { "%.1fx".format(it) },
+            onChange = { settings.rotationScale = it }
+        )
+
+        root.addView(sectionLabel("Spawning"))
+
+        addSlider(
+            root, "Shapes on screen at the start (score 0)",
+            GameSettings.MIN_CONCURRENCY.toFloat(), GameSettings.MAX_CONCURRENCY_LIMIT.toFloat(),
+            settings.startConcurrency.toFloat(),
+            format = { "${it.roundToInt()}" },
+            onChange = { settings.startConcurrency = it.roundToInt() }
+        )
+
+        addSlider(
+            root, "Score needed to allow one more shape at once",
+            GameSettings.MIN_CONCURRENCY_STEP_SCORE.toFloat(), GameSettings.MAX_CONCURRENCY_STEP_SCORE.toFloat(),
+            settings.concurrencyStepScore.toFloat(),
             format = { "${it.roundToInt()} pts" },
-            onChange = { settings.difficultyRampScore = it.roundToInt() }
+            onChange = { settings.concurrencyStepScore = it.roundToInt() }
+        )
+
+        addSlider(
+            root, "Most shapes ever allowed on screen at once",
+            GameSettings.MIN_CONCURRENCY.toFloat(), GameSettings.MAX_CONCURRENCY_LIMIT.toFloat(),
+            settings.maxConcurrency.toFloat(),
+            format = { "${it.roundToInt()}" },
+            onChange = { settings.maxConcurrency = it.roundToInt() }
+        )
+
+        addSlider(
+            root, "Gap between spawns (while under the current cap)",
+            GameSettings.MIN_SPAWN_GAP_MS.toFloat(), GameSettings.MAX_SPAWN_GAP_MS.toFloat(),
+            settings.spawnGapMs.toFloat(),
+            format = { "%.1fs".format(it / 1000f) },
+            onChange = { settings.spawnGapMs = it.toLong() }
         )
 
         val buttonRow = LinearLayout(this).apply {
@@ -101,6 +138,13 @@ class SettingsActivity : AppCompatActivity() {
     override fun onPause() {
         super.onPause()
         settings.saveTo(this)
+    }
+
+    private fun sectionLabel(text: String): TextView = TextView(this).apply {
+        this.text = text
+        setTextColor(Color.argb(180, 255, 255, 255))
+        textSize = 13f
+        setPadding(0, 40, 0, 0)
     }
 
     private fun addSlider(
