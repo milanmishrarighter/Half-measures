@@ -63,9 +63,27 @@ class GameShape(
             0xFFFF9F1C.toInt()
         )
 
-        fun spawnRandom(screenW: Int, screenH: Int, random: Random, nowMs: Long, minSpeedFactor: Float = 1f): GameShape {
+        /** Base, unscaled gravity used to derive a launch arc; must match [GameView]'s effective gravity math. */
+        const val BASE_GRAVITY = 1500f // px/s^2
+
+        /**
+         * @param sizeScale multiplies the shape's radius (1.0 = base size).
+         * @param speedScale uniformly slows or speeds up the whole flight: velocities are
+         *   scaled by this factor and (by the caller, via [BASE_GRAVITY] * speedScale^2)
+         *   gravity is scaled by its square, which reproduces the exact same arc traced
+         *   out over 1/speedScale as much time - i.e. true slow motion, not a squashed path.
+         */
+        fun spawnRandom(
+            screenW: Int,
+            screenH: Int,
+            random: Random,
+            nowMs: Long,
+            sizeScale: Float = 1f,
+            speedScale: Float = 1f
+        ): GameShape {
             val kind = ShapeKind.values().random(random)
-            val radius = (screenW * 0.06f) + random.nextFloat() * (screenW * 0.045f)
+            val radius = (((screenW * 0.06f) + random.nextFloat() * (screenW * 0.045f)) * sizeScale)
+                .coerceAtMost(screenW * 0.3f)
             val x = radius * 1.5f + random.nextFloat() * (screenW - radius * 3f)
             val y = screenH + radius
 
@@ -74,15 +92,18 @@ class GameShape(
             val targetY = screenH * (0.18f + random.nextFloat() * 0.22f)
             val flightSeconds = 1.15f + random.nextFloat() * 0.35f
 
-            val gravity = 1500f // px/s^2, kept in sync with GameView.GRAVITY
             val vx = (targetX - x) / flightSeconds
             // From y = y0 + vy*t + 0.5*g*t^2 solved for vy so the apex lands near targetY.
-            var vy = (targetY - y - 0.5f * gravity * flightSeconds * flightSeconds) / flightSeconds
-            vy *= minSpeedFactor
+            val vy = (targetY - y - 0.5f * BASE_GRAVITY * flightSeconds * flightSeconds) / flightSeconds
 
             val angularVelocity = (random.nextFloat() - 0.5f) * 6f
             val color = palette[random.nextInt(palette.size)]
-            return GameShape(kind, x, y, radius, vx, vy, random.nextFloat() * 6.28f, angularVelocity, color, nowMs)
+            return GameShape(
+                kind, x, y, radius,
+                vx * speedScale, vy * speedScale,
+                random.nextFloat() * 6.28f, angularVelocity * speedScale,
+                color, nowMs
+            )
         }
     }
 }

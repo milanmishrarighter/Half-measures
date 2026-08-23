@@ -13,6 +13,7 @@ import android.view.MotionEvent
 import android.view.View
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 import kotlin.random.Random
 
 /**
@@ -29,11 +30,20 @@ class GameView @JvmOverloads constructor(
     enum class State { READY, PLAYING, GAME_OVER }
 
     // ---- Tunable constants ----
-    private val gravity = 1500f // px/s^2, must match GameShape.spawnRandom
     private val startHealth = 100
-    private val minSpawnIntervalMs = 550L
-    private val maxSpawnIntervalMs = 1350L
     private val trailMaxAgeMs = 140L
+
+    // ---- Player-adjustable settings (see GameSettings / SettingsActivity) ----
+    private var settings = GameSettings.load(context)
+
+    /** Effective gravity for the current speedScale: scaling velocities by s and gravity by s^2
+     *  reproduces the exact same flight arc traced out 1/s times slower - true slow motion. */
+    private var gravity = GameShape.BASE_GRAVITY * settings.speedScale * settings.speedScale
+
+    fun refreshSettings() {
+        settings = GameSettings.load(context)
+        gravity = GameShape.BASE_GRAVITY * settings.speedScale * settings.speedScale
+    }
 
     // ---- Game state ----
     private var state = State.READY
@@ -42,7 +52,6 @@ class GameView @JvmOverloads constructor(
     private var bestScore = 0
     private var lastFrameTimeNanos = 0L
     private var nextSpawnAtMs = 0L
-    private var elapsedPlayMs = 0L
     private val random = Random(System.currentTimeMillis())
 
     private val shapes = ArrayList<GameShape>()
@@ -129,8 +138,6 @@ class GameView @JvmOverloads constructor(
         trailPoints.removeAll { nowMs - it.timeMs > trailMaxAgeMs }
 
         if (state == State.PLAYING) {
-            elapsedPlayMs += (dt * 1000).toLong()
-
             if (nowMs >= nextSpawnAtMs && width > 0 && height > 0) {
                 spawnShape(nowMs)
                 scheduleNextSpawn(nowMs)
@@ -169,14 +176,17 @@ class GameView @JvmOverloads constructor(
     }
 
     private fun scheduleNextSpawn(nowMs: Long) {
-        val progress = min(1f, elapsedPlayMs / 45000f) // ramps up over the first 45s
-        val interval = (maxSpawnIntervalMs - (maxSpawnIntervalMs - minSpawnIntervalMs) * progress).toLong()
+        // Ramps from the start interval down to its floor as the player's score climbs,
+        // per settings.difficultyRampScore - not simply elapsed time.
+        val progress = min(1f, score / settings.difficultyRampScore.toFloat())
+        val start = settings.spawnIntervalStartMs
+        val floor = settings.spawnIntervalFloorMs
+        val interval = (start - (start - floor) * progress).toLong().coerceAtLeast(floor)
         nextSpawnAtMs = nowMs + interval - random.nextLong(0, interval / 3 + 1)
     }
 
     private fun spawnShape(nowMs: Long) {
-        val speedFactor = 1f + min(0.35f, elapsedPlayMs / 90000f)
-        shapes.add(GameShape.spawnRandom(width, height, random, nowMs, speedFactor))
+        shapes.add(GameShape.spawnRandom(width, height, random, nowMs, settings.sizeScale, settings.speedScale))
     }
 
     // ---------------------------------------------------------------------
@@ -252,9 +262,9 @@ class GameView @JvmOverloads constructor(
         val total = areaA + areaB
         val imbalancePercent = if (total <= 0f) 100f else kotlin.math.abs(areaA - areaB) / total * 100f
 
-        // Health lost equals the imbalance: a perfect 50/50 cut costs nothing,
-        // a 60/40 cut costs 20, a 100/0 "cut" (barely grazing) costs 100.
-        val healthLoss = imbalancePercent.toInt().coerceIn(0, 100)
+        // Health lost is a tenth of the imbalance: a perfect 50/50 cut costs nothing,
+        // a 60/40 cut costs 2, a 100/0 "cut" (barely grazing) costs 10.
+        val healthLoss = (imbalancePercent / 10f).roundToInt().coerceIn(0, 100)
         health = (health - healthLoss).coerceAtLeast(0)
 
         // Reward precision: perfect cuts are worth the most, up to a combo bonus.
@@ -273,10 +283,11 @@ class GameView @JvmOverloads constructor(
         pieces.add(SlicedPiece(left, shape.x, shape.y, shape.vx + nx * kick, shape.vy + ny * kick, shape.rotation, shape.angularVelocity, shape.color))
         pieces.add(SlicedPiece(right, shape.x, shape.y, shape.vx - nx * kick, shape.vy - ny * kick, shape.rotation, shape.angularVelocity, shape.color))
 
-        val label = if (healthLoss == 0) "PERFECT!" else "${100 - healthLoss}/${100}"
+        val splitA = (max(areaA, areaB) / total * 100f).roundToInt()
+        val label = if (healthLoss == 0) "PERFECT!" else "$splitA/${100 - splitA}"
         val popupColor = when {
-            healthLoss <= 4 -> Color.rgb(6, 214, 160)
-            healthLoss <= 20 -> Color.rgb(255, 209, 102)
+            healthLoss <= 1 -> Color.rgb(6, 214, 160)
+            healthLoss <= 5 -> Color.rgb(255, 209, 102)
             else -> Color.rgb(239, 71, 111)
         }
         popups.add(ScorePopup("+$gained  $label", shape.x, shape.y, popupColor))
@@ -293,7 +304,6 @@ class GameView @JvmOverloads constructor(
         trailPoints.clear()
         health = startHealth
         score = 0
-        elapsedPlayMs = 0
         state = State.PLAYING
         nextSpawnAtMs = System.currentTimeMillis() + 300
     }
@@ -375,7 +385,7 @@ class GameView @JvmOverloads constructor(
             val age = nowMs - p1.timeMs
             val alpha = (255 * (1f - age.toFloat() / trailMaxAgeMs)).toInt().coerceIn(0, 255)
             trailPaint.alpha = alpha
-            trailPaint.strokeWidth = 14f * (alpha / 255f) + 2f
+            trailPaint.strokeWidth = 26f * (alpha / 255f) + 5f
             canvas.drawLine(p0.x, p0.y, p1.x, p1.y, trailPaint)
         }
     }
