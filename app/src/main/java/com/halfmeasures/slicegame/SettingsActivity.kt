@@ -106,8 +106,8 @@ class SettingsActivity : AppCompatActivity() {
     private fun addSlider(
         parent: LinearLayout,
         label: String,
-        min: Float,
-        max: Float,
+        minValue: Float,
+        maxValue: Float,
         initial: Float,
         format: (Float) -> String,
         onChange: (Float) -> Unit
@@ -128,11 +128,11 @@ class SettingsActivity : AppCompatActivity() {
 
         val seekBar = SeekBar(this).apply {
             max = sliderSteps
-            progress = (((initial - min) / (max - min)) * sliderSteps).roundToInt().coerceIn(0, sliderSteps)
+            progress = (((initial - minValue) / (maxValue - minValue)) * sliderSteps).roundToInt().coerceIn(0, sliderSteps)
             layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                    val value = min + (max - min) * (progress.toFloat() / sliderSteps)
+                    val value = minValue + (maxValue - minValue) * (progress.toFloat() / sliderSteps)
                     valueView.text = format(value)
                     if (fromUser) onChange(value)
                 }
