@@ -36,10 +36,19 @@ data class GameSettings(
     var startHealth: Int = DEFAULT_START_HEALTH,
     /** Deviation at or below this counts as a PERFECT cut. */
     var perfectThreshold: Float = DEFAULT_PERFECT_THRESHOLD,
+    /** Deviation at or below this counts as a GREAT cut - 10 means 60/40 or better. */
+    var greatThreshold: Float = DEFAULT_GREAT_THRESHOLD,
     /** Points lost per point of deviation, from a 100-point perfect cut. */
     var scoreMissWeight: Float = DEFAULT_SCORE_MISS_WEIGHT,
-    /** Health lost per point of deviation. 0.2 means a 60/40 cut costs 2. */
-    var healthLossPerDeviation: Float = DEFAULT_HEALTH_LOSS_PER_DEVIATION,
+    /** Extra score, as a percentage, for a cut inside the great window. Scales to full at a perfect. */
+    var greatBonusPercent: Float = DEFAULT_GREAT_BONUS_PERCENT,
+    /** Health lost by a 60/40 cut. The curve below scales every other cut off this anchor. */
+    var healthLossAtSixtyForty: Float = DEFAULT_HEALTH_LOSS_AT_SIXTY_FORTY,
+    /**
+     * Exponent on the health penalty. 1 is linear; above that a bad cut hurts
+     * disproportionately more than a near miss.
+     */
+    var healthLossCurve: Float = DEFAULT_HEALTH_LOSS_CURVE,
     /** A perfect cut refills the health bar. */
     var perfectRestoresHealth: Boolean = DEFAULT_PERFECT_RESTORES_HEALTH,
     /** Extra score multiplier gained per consecutive perfect cut, as a percentage. */
@@ -57,7 +66,13 @@ data class GameSettings(
     var cameraShakeStrength: Float = DEFAULT_CAMERA_SHAKE_STRENGTH,
     var vibrationEnabled: Boolean = DEFAULT_VIBRATION_ENABLED,
     var vibrationStrength: Float = DEFAULT_VIBRATION_STRENGTH,
-    var trailThickness: Float = DEFAULT_TRAIL_THICKNESS
+    var trailThickness: Float = DEFAULT_TRAIL_THICKNESS,
+    /** Size of the floating score text after a cut. */
+    var popupTextScale: Float = DEFAULT_POPUP_TEXT_SCALE,
+    /** How much the living backdrop drifts and shifts colour. 0 freezes it. */
+    var backgroundMotion: Float = DEFAULT_BACKGROUND_MOTION,
+    /** Full-screen colour flash on a great or perfect cut. */
+    var screenFlashStrength: Float = DEFAULT_SCREEN_FLASH_STRENGTH
 ) {
     fun saveTo(context: Context) {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
@@ -73,8 +88,11 @@ data class GameSettings(
             .putLong("spawn_gap_ms", spawnGapMs)
             .putInt("start_health", startHealth)
             .putFloat("perfect_threshold", perfectThreshold)
+            .putFloat("great_threshold", greatThreshold)
             .putFloat("score_miss_weight", scoreMissWeight)
-            .putFloat("health_loss_per_deviation", healthLossPerDeviation)
+            .putFloat("great_bonus_percent", greatBonusPercent)
+            .putFloat("health_loss_at_sixty_forty", healthLossAtSixtyForty)
+            .putFloat("health_loss_curve", healthLossCurve)
             .putBoolean("perfect_restores_health", perfectRestoresHealth)
             .putFloat("combo_bonus_percent", comboBonusPercent)
             .putFloat("max_combo_multiplier", maxComboMultiplier)
@@ -87,6 +105,9 @@ data class GameSettings(
             .putBoolean("vibration_enabled", vibrationEnabled)
             .putFloat("vibration_strength", vibrationStrength)
             .putFloat("trail_thickness", trailThickness)
+            .putFloat("popup_text_scale", popupTextScale)
+            .putFloat("background_motion", backgroundMotion)
+            .putFloat("screen_flash_strength", screenFlashStrength)
             .apply()
     }
 
@@ -104,20 +125,26 @@ data class GameSettings(
         const val DEFAULT_SPAWN_GAP_MS = 1400L
         const val DEFAULT_START_HEALTH = 100
         const val DEFAULT_PERFECT_THRESHOLD = 1.5f
+        const val DEFAULT_GREAT_THRESHOLD = 10f
         const val DEFAULT_SCORE_MISS_WEIGHT = 1.0f
-        const val DEFAULT_HEALTH_LOSS_PER_DEVIATION = 0.2f
+        const val DEFAULT_GREAT_BONUS_PERCENT = 25f
+        const val DEFAULT_HEALTH_LOSS_AT_SIXTY_FORTY = 2f
+        const val DEFAULT_HEALTH_LOSS_CURVE = 1.8f
         const val DEFAULT_PERFECT_RESTORES_HEALTH = true
         const val DEFAULT_COMBO_BONUS_PERCENT = 10f
         const val DEFAULT_MAX_COMBO_MULTIPLIER = 3f
         const val DEFAULT_MISS_ENDS_RUN = true
         const val DEFAULT_GUIDE_LINE_ENABLED = true
-        const val DEFAULT_GUIDE_LINE_OPACITY = 0.55f
+        const val DEFAULT_GUIDE_LINE_OPACITY = 0.32f
         const val DEFAULT_PARTICLES_ENABLED = true
-        const val DEFAULT_PARTICLE_AMOUNT = 1.0f
-        const val DEFAULT_CAMERA_SHAKE_STRENGTH = 1.0f
+        const val DEFAULT_PARTICLE_AMOUNT = 1.6f
+        const val DEFAULT_CAMERA_SHAKE_STRENGTH = 1.35f
         const val DEFAULT_VIBRATION_ENABLED = true
         const val DEFAULT_VIBRATION_STRENGTH = 1.0f
         const val DEFAULT_TRAIL_THICKNESS = 1.0f
+        const val DEFAULT_POPUP_TEXT_SCALE = 1.5f
+        const val DEFAULT_BACKGROUND_MOTION = 1.0f
+        const val DEFAULT_SCREEN_FLASH_STRENGTH = 1.0f
 
         const val MIN_SIZE_SCALE = 0.5f
         const val MAX_SIZE_SCALE = 3.0f
@@ -141,10 +168,16 @@ data class GameSettings(
         const val MAX_START_HEALTH = 200
         const val MIN_PERFECT_THRESHOLD = 0.2f
         const val MAX_PERFECT_THRESHOLD = 10f
+        const val MIN_GREAT_THRESHOLD = 2f
+        const val MAX_GREAT_THRESHOLD = 25f
         const val MIN_SCORE_MISS_WEIGHT = 0f
         const val MAX_SCORE_MISS_WEIGHT = 3f
-        const val MIN_HEALTH_LOSS_PER_DEVIATION = 0f
-        const val MAX_HEALTH_LOSS_PER_DEVIATION = 2f
+        const val MIN_GREAT_BONUS_PERCENT = 0f
+        const val MAX_GREAT_BONUS_PERCENT = 150f
+        const val MIN_HEALTH_LOSS_AT_SIXTY_FORTY = 0f
+        const val MAX_HEALTH_LOSS_AT_SIXTY_FORTY = 15f
+        const val MIN_HEALTH_LOSS_CURVE = 1f
+        const val MAX_HEALTH_LOSS_CURVE = 3.5f
         const val MIN_COMBO_BONUS_PERCENT = 0f
         const val MAX_COMBO_BONUS_PERCENT = 50f
         const val MIN_MAX_COMBO_MULTIPLIER = 1f
@@ -159,6 +192,12 @@ data class GameSettings(
         const val MAX_VIBRATION_STRENGTH = 1f
         const val MIN_TRAIL_THICKNESS = 0.4f
         const val MAX_TRAIL_THICKNESS = 2.5f
+        const val MIN_POPUP_TEXT_SCALE = 0.6f
+        const val MAX_POPUP_TEXT_SCALE = 3f
+        const val MIN_BACKGROUND_MOTION = 0f
+        const val MAX_BACKGROUND_MOTION = 2.5f
+        const val MIN_SCREEN_FLASH_STRENGTH = 0f
+        const val MAX_SCREEN_FLASH_STRENGTH = 2f
 
         private const val PREFS_NAME = "half_measures_settings"
 
@@ -177,8 +216,11 @@ data class GameSettings(
                 spawnGapMs = p.getLong("spawn_gap_ms", DEFAULT_SPAWN_GAP_MS),
                 startHealth = p.getInt("start_health", DEFAULT_START_HEALTH),
                 perfectThreshold = p.getFloat("perfect_threshold", DEFAULT_PERFECT_THRESHOLD),
+                greatThreshold = p.getFloat("great_threshold", DEFAULT_GREAT_THRESHOLD),
                 scoreMissWeight = p.getFloat("score_miss_weight", DEFAULT_SCORE_MISS_WEIGHT),
-                healthLossPerDeviation = p.getFloat("health_loss_per_deviation", DEFAULT_HEALTH_LOSS_PER_DEVIATION),
+                greatBonusPercent = p.getFloat("great_bonus_percent", DEFAULT_GREAT_BONUS_PERCENT),
+                healthLossAtSixtyForty = p.getFloat("health_loss_at_sixty_forty", DEFAULT_HEALTH_LOSS_AT_SIXTY_FORTY),
+                healthLossCurve = p.getFloat("health_loss_curve", DEFAULT_HEALTH_LOSS_CURVE),
                 perfectRestoresHealth = p.getBoolean("perfect_restores_health", DEFAULT_PERFECT_RESTORES_HEALTH),
                 comboBonusPercent = p.getFloat("combo_bonus_percent", DEFAULT_COMBO_BONUS_PERCENT),
                 maxComboMultiplier = p.getFloat("max_combo_multiplier", DEFAULT_MAX_COMBO_MULTIPLIER),
@@ -190,7 +232,10 @@ data class GameSettings(
                 cameraShakeStrength = p.getFloat("camera_shake_strength", DEFAULT_CAMERA_SHAKE_STRENGTH),
                 vibrationEnabled = p.getBoolean("vibration_enabled", DEFAULT_VIBRATION_ENABLED),
                 vibrationStrength = p.getFloat("vibration_strength", DEFAULT_VIBRATION_STRENGTH),
-                trailThickness = p.getFloat("trail_thickness", DEFAULT_TRAIL_THICKNESS)
+                trailThickness = p.getFloat("trail_thickness", DEFAULT_TRAIL_THICKNESS),
+                popupTextScale = p.getFloat("popup_text_scale", DEFAULT_POPUP_TEXT_SCALE),
+                backgroundMotion = p.getFloat("background_motion", DEFAULT_BACKGROUND_MOTION),
+                screenFlashStrength = p.getFloat("screen_flash_strength", DEFAULT_SCREEN_FLASH_STRENGTH)
             )
         }
     }

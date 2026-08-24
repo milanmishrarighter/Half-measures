@@ -124,15 +124,32 @@ class SettingsActivity : AppCompatActivity() {
                 { "±%.1f%%".format(it) }, { settings.perfectThreshold = it }
             )
             slider(
+                c.body, "Great window", "10% means a 60/40 cut still counts as great",
+                GameSettings.MIN_GREAT_THRESHOLD, GameSettings.MAX_GREAT_THRESHOLD, settings.greatThreshold,
+                { "±%.0f%%".format(it) }, { settings.greatThreshold = it }
+            )
+            slider(
                 c.body, "Score penalty", "Points lost per 1% off a perfect half",
                 GameSettings.MIN_SCORE_MISS_WEIGHT, GameSettings.MAX_SCORE_MISS_WEIGHT, settings.scoreMissWeight,
                 { "%.1f pts".format(it) }, { settings.scoreMissWeight = it }
             )
             slider(
-                c.body, "Health penalty", "Health lost per 1% off a perfect half",
-                GameSettings.MIN_HEALTH_LOSS_PER_DEVIATION, GameSettings.MAX_HEALTH_LOSS_PER_DEVIATION,
-                settings.healthLossPerDeviation,
-                { "%.2f hp".format(it) }, { settings.healthLossPerDeviation = it }
+                c.body, "Precision bonus", "Extra score inside the great window, full at a perfect",
+                GameSettings.MIN_GREAT_BONUS_PERCENT, GameSettings.MAX_GREAT_BONUS_PERCENT,
+                settings.greatBonusPercent,
+                { "+${it.roundToInt()}%" }, { settings.greatBonusPercent = it }
+            )
+            slider(
+                c.body, "Health penalty", "Health lost by a 60/40 cut",
+                GameSettings.MIN_HEALTH_LOSS_AT_SIXTY_FORTY, GameSettings.MAX_HEALTH_LOSS_AT_SIXTY_FORTY,
+                settings.healthLossAtSixtyForty,
+                { "%.1f hp".format(it) }, { settings.healthLossAtSixtyForty = it }
+            )
+            slider(
+                c.body, "Penalty curve", "Higher makes bad cuts hurt far more than near misses",
+                GameSettings.MIN_HEALTH_LOSS_CURVE, GameSettings.MAX_HEALTH_LOSS_CURVE,
+                settings.healthLossCurve,
+                { "%.1f".format(it) }, { settings.healthLossCurve = it }
             )
             toggle(
                 c.body, "Perfect refills health", "A flawless cut restores the bar to full",
@@ -194,6 +211,22 @@ class SettingsActivity : AppCompatActivity() {
                 c.body, "Blade thickness", "Width of the swipe trail",
                 GameSettings.MIN_TRAIL_THICKNESS, GameSettings.MAX_TRAIL_THICKNESS, settings.trailThickness,
                 { "%.1fx".format(it) }, { settings.trailThickness = it }
+            )
+            slider(
+                c.body, "Score text size", "How big the floating score reads",
+                GameSettings.MIN_POPUP_TEXT_SCALE, GameSettings.MAX_POPUP_TEXT_SCALE, settings.popupTextScale,
+                { "%.1fx".format(it) }, { settings.popupTextScale = it }
+            )
+            slider(
+                c.body, "Background motion", "Drifting colour behind the play field",
+                GameSettings.MIN_BACKGROUND_MOTION, GameSettings.MAX_BACKGROUND_MOTION, settings.backgroundMotion,
+                { if (it <= 0.01f) "Off" else "%.1fx".format(it) }, { settings.backgroundMotion = it }
+            )
+            slider(
+                c.body, "Screen flash", "Colour wash on a great or perfect cut",
+                GameSettings.MIN_SCREEN_FLASH_STRENGTH, GameSettings.MAX_SCREEN_FLASH_STRENGTH,
+                settings.screenFlashStrength,
+                { if (it <= 0.01f) "Off" else "%.1fx".format(it) }, { settings.screenFlashStrength = it }
             )
         }
 

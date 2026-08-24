@@ -29,21 +29,35 @@ class Haptics(context: Context) {
 
     /** Ordinary cut - scales with how good the cut was, so a near-miss feels duller. */
     fun cut(strength: Float, quality: Float) {
-        val amplitude = (90 + 120 * quality.coerceIn(0f, 1f)) * strength
-        oneShot(durationMs = (12 + 14 * quality).toLong(), amplitude = amplitude.toInt())
+        val q = quality.coerceIn(0f, 1f)
+        val amplitude = (110 + 145 * q) * strength
+        oneShot(durationMs = (18 + 22 * q).toLong(), amplitude = amplitude.toInt())
     }
 
+    /** A cut inside the great window: a firm double knock, short of the perfect fanfare. */
+    fun great(strength: Float) {
+        waveform(
+            timings = longArrayOf(0, 30, 34, 58),
+            amplitudes = intArrayOf(0, scale(190, strength), 0, scale(235, strength))
+        )
+    }
+
+    /** The full celebration - a rising triple hit. */
     fun perfect(strength: Float) {
         waveform(
-            timings = longArrayOf(0, 26, 40, 55),
-            amplitudes = intArrayOf(0, scale(200, strength), 0, scale(255, strength))
+            timings = longArrayOf(0, 34, 26, 52, 26, 95),
+            amplitudes = intArrayOf(
+                0, scale(170, strength),
+                0, scale(220, strength),
+                0, scale(255, strength)
+            )
         )
     }
 
     fun gameOver(strength: Float) {
         waveform(
-            timings = longArrayOf(0, 70, 60, 190),
-            amplitudes = intArrayOf(0, scale(180, strength), 0, scale(255, strength))
+            timings = longArrayOf(0, 90, 60, 240),
+            amplitudes = intArrayOf(0, scale(200, strength), 0, scale(255, strength))
         )
     }
 
