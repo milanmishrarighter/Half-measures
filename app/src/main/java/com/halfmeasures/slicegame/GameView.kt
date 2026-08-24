@@ -1,6 +1,8 @@
 package com.halfmeasures.slicegame
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapShader
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
@@ -40,6 +42,7 @@ class GameView @JvmOverloads constructor(
     var onOpenSettings: (() -> Unit)? = null
 
     private var settings = GameSettings.load(context)
+    private val scores = context.getSharedPreferences("half_measures_scores", Context.MODE_PRIVATE)
     private val random = Random(System.currentTimeMillis())
     private val effects = EffectSystem(random)
     private val haptics = Haptics(context)
@@ -60,7 +63,9 @@ class GameView @JvmOverloads constructor(
     private var maxHealth = settings.startHealth
     private var health = settings.startHealth
     private var score = 0
-    private var bestScore = 0
+    private var bestScore = scores.getInt("best_score", 0)
+    /** True when the run just finished beat the stored record. */
+    private var beatBestScore = false
     private var perfectStreak = 0
     private var bestStreak = 0
     private var bestPerfectStreak = 0
@@ -132,6 +137,14 @@ class GameView @JvmOverloads constructor(
     }
     private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
     private val bgPaint = Paint()
+    /**
+     * A tiled speck of noise laid over the backdrop. A smooth dark gradient across
+     * a tall screen crosses very few distinct 8-bit values, so it renders as
+     * visible steps; a pixel of dither breaks the boundaries up and the eye reads
+     * the whole thing as continuous.
+     */
+    private val ditherPaint = Paint()
+    private var ditherShader: BitmapShader? = null
     private val scrimPaint = Paint()
     private val panelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val panelStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -242,6 +255,8 @@ class GameView @JvmOverloads constructor(
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
         if (w <= 0 || h <= 0) return
+
+        if (ditherShader == null) ditherShader = buildDitherShader()
 
         bgPaint.shader = LinearGradient(
             0f, 0f, 0f, h.toFloat(),
@@ -384,16 +399,14 @@ class GameView @JvmOverloads constructor(
     }
 
     /**
-     * Tally of how every cut landed, bucketed by the split it produced, so the
-     * end-of-run card can show the player's accuracy spread rather than a single
-     * average. Bucket 0 is a dead-centre 50/50 and each step is five points wider.
+     * Tally of how every cut landed, indexed by [Grade] so the breakdown always
+     * agrees with the PERFECT CUTS figure above it - bucketing on raw deviation
+     * instead let near-misses inside a wider band masquerade as dead-centre cuts.
      */
     private val cutBuckets = IntArray(CUT_BUCKET_LABELS.size)
 
-    private fun recordCutBucket(deviation: Float) {
-        // 0-5 lands in "50/50", then 10-point bands: 60/40, 70/30, and so on.
-        val index = ((deviation + 5f) / 10f).toInt().coerceIn(0, cutBuckets.size - 1)
-        cutBuckets[index]++
+    private fun recordCutBucket(grade: Grade) {
+        cutBuckets[grade.ordinal]++
     }
 
     /** -1 while the player is cold, +1 while they are hot; drives the backdrop's colour. */
@@ -436,7 +449,11 @@ class GameView @JvmOverloads constructor(
     private fun endRun() {
         if (state != State.PLAYING) return
         state = State.GAME_OVER
-        bestScore = max(bestScore, score)
+        if (score > bestScore) {
+            bestScore = score
+            beatBestScore = true
+            scores.edit().putInt("best_score", bestScore).apply()
+        }
         effects.addShake(0.7f * settings.cameraShakeStrength)
         if (settings.vibrationEnabled) haptics.gameOver(settings.vibrationStrength)
     }
@@ -457,6 +474,9 @@ class GameView @JvmOverloads constructor(
         perfectCount = 0
         cutCount = 0
         endedOnMiss = false
+        beatBestScore = false
+        bestStreak = 0
+        bestPerfectStreak = 0
         stage = 0
         unlockedKinds = ShapeKind.unlockedCount(
             0, settings.startingShapeCount, settings.shapesPerStage
@@ -596,7 +616,7 @@ class GameView @JvmOverloads constructor(
 
         val bigger = (max(areaA, areaB) / (areaA + areaB) * 100f).roundToInt()
         val split = "$bigger / ${100 - bigger}"
-        recordCutBucket(deviation)
+        recordCutBucket(grade)
 
         // Float the verdict well above the shape, clear of the flying halves and
         // debris, so it is actually readable instead of buried in the explosion.
@@ -893,6 +913,11 @@ class GameView @JvmOverloads constructor(
 
     private fun drawBackground(canvas: Canvas) {
         canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), bgPaint)
+
+        ditherShader?.let {
+            ditherPaint.shader = it
+            canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), ditherPaint)
+        }
         pixels.draw(canvas, pixelPaint, effects.energy)
 
         // A quiet seam along the floor, tinted by how the run is going.
@@ -902,6 +927,19 @@ class GameView @JvmOverloads constructor(
             0.22f + 0.30f * effects.energy.coerceAtMost(1f)
         )
         canvas.drawLine(0f, height * 0.995f, width.toFloat(), height * 0.995f, rimPaint)
+    }
+
+    /** A small tile of faint monochrome noise, repeated across the screen. */
+    private fun buildDitherShader(): BitmapShader {
+        val size = 64
+        val pixels = IntArray(size * size)
+        for (i in pixels.indices) {
+            // A couple of levels of jitter is all it takes to dissolve a band edge.
+            val level = random.nextInt(3)
+            pixels[i] = Color.argb(9 + level * 5, 255, 255, 255)
+        }
+        val bitmap = Bitmap.createBitmap(pixels, size, size, Bitmap.Config.ARGB_8888)
+        return BitmapShader(bitmap, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT)
     }
 
     private fun buildPath(vertices: List<PointF2>) {
@@ -1299,8 +1337,21 @@ class GameView @JvmOverloads constructor(
         val cx = width / 2f
         val cardLeft = width * 0.09f
         val cardRight = width * 0.91f
-        val cardTop = height * 0.12f
-        val cardBottom = primaryButton.top - 26f * density
+        val padX = 28f * density
+        val rowStep = 26f * density
+        val breakdownRowHeight = 21f * density
+
+        // Measure the card to its contents so the last row never crowds the edge.
+        val headerHeight = 152f * density
+        val statRowsHeight = rowStep * 5
+        val breakdownHeight = 16f * density + breakdownRowHeight * cutBuckets.size
+        val bottomPadding = 30f * density
+        val cardHeight = headerHeight + 24f * density + statRowsHeight +
+            18f * density + breakdownHeight + bottomPadding
+
+        val maxBottom = primaryButton.top - 26f * density
+        val cardTop = (maxBottom - cardHeight).coerceAtLeast(height * 0.06f)
+        val cardBottom = maxBottom
 
         roundRect.set(cardLeft, cardTop, cardRight, cardBottom)
         val radius = 26f * density
@@ -1312,15 +1363,19 @@ class GameView @JvmOverloads constructor(
 
         uiBoldPaint.textAlign = Paint.Align.CENTER
         uiBoldPaint.textSize = 17f * density
-        uiBoldPaint.color = accentColor
+        uiBoldPaint.color = if (beatBestScore) Theme.gold else accentColor
         canvas.drawText(
-            if (endedOnMiss) "ONE GOT AWAY" else "OUT OF HEALTH",
+            when {
+                beatBestScore -> "NEW BEST!"
+                endedOnMiss -> "ONE GOT AWAY"
+                else -> "OUT OF HEALTH"
+            },
             cx, cardTop + 40f * density, uiBoldPaint
         )
 
         displayPaint.textAlign = Paint.Align.CENTER
         displayPaint.textSize = 52f * density
-        displayPaint.color = Theme.textPrimary
+        displayPaint.color = if (beatBestScore) Theme.gold else Theme.textPrimary
         canvas.drawText(score.toString(), cx, cardTop + 112f * density, displayPaint)
 
         uiPaint.textSize = 15f * density
@@ -1330,24 +1385,26 @@ class GameView @JvmOverloads constructor(
         // Divider
         rimPaint.strokeWidth = 1.5f
         rimPaint.color = Theme.hairline
-        val dividerY = cardTop + 152f * density
-        canvas.drawLine(cardLeft + 28f * density, dividerY, cardRight - 28f * density, dividerY, rimPaint)
+        val dividerY = cardTop + headerHeight
+        canvas.drawLine(cardLeft + padX, dividerY, cardRight - padX, dividerY, rimPaint)
 
         // Headline run stats, in the order that tells the story of the run.
-        val padX = 28f * density
+        val left = cardLeft + padX
+        val right = cardRight - padX
         var rowY = dividerY + 30f * density
-        val rowStep = 26f * density
 
-        drawStatRow(canvas, cardLeft + padX, cardRight - padX, rowY, "CUTS SURVIVED", cutCount.toString(), Theme.textPrimary)
+        drawStatRow(canvas, left, right, rowY, "BEST SCORE", bestScore.toString(), Theme.accent)
         rowY += rowStep
-        drawStatRow(canvas, cardLeft + padX, cardRight - padX, rowY, "PERFECT CUTS", perfectCount.toString(), Theme.gold)
+        drawStatRow(canvas, left, right, rowY, "CUTS SURVIVED", cutCount.toString(), Theme.textPrimary)
         rowY += rowStep
-        drawStatRow(canvas, cardLeft + padX, cardRight - padX, rowY, "BEST PERFECT STREAK", "${bestPerfectStreak}x", Theme.gold)
+        drawStatRow(canvas, left, right, rowY, "PERFECT CUTS", perfectCount.toString(), Theme.gold)
         rowY += rowStep
-        drawStatRow(canvas, cardLeft + padX, cardRight - padX, rowY, "BEST GOOD STREAK", "${bestStreak}x", Theme.good)
-        rowY += rowStep + 6f * density
+        drawStatRow(canvas, left, right, rowY, "BEST PERFECT STREAK", "${bestPerfectStreak}x", Theme.gold)
+        rowY += rowStep
+        drawStatRow(canvas, left, right, rowY, "BEST GOOD STREAK", "${bestStreak}x", Theme.good)
+        rowY += rowStep + 12f * density
 
-        drawCutBreakdown(canvas, cardLeft, cardRight, rowY, cardBottom)
+        drawCutBreakdown(canvas, cardLeft, cardRight, rowY, breakdownRowHeight)
 
         drawButton(canvas, primaryButton, "RETRY", primary = true, pressed = pressedButton == 1)
         drawButton(canvas, secondaryButton, "SETTINGS", primary = false, pressed = pressedButton == 2)
@@ -1363,14 +1420,12 @@ class GameView @JvmOverloads constructor(
         cardLeft: Float,
         cardRight: Float,
         top: Float,
-        cardBottom: Float
+        rowHeight: Float
     ) {
         var peak = 0
         for (count in cutBuckets) peak = max(peak, count)
 
         val padX = 28f * density
-        val rowHeight = 21f * density
-        if (cardBottom - top < rowHeight * 2) return
 
         uiBoldPaint.textAlign = Paint.Align.LEFT
         uiBoldPaint.textSize = 12f * density
@@ -1385,7 +1440,6 @@ class GameView @JvmOverloads constructor(
 
         var y = top + 16f * density
         for (index in cutBuckets.indices) {
-            if (y + rowHeight > cardBottom) break
             val count = cutBuckets[index]
             val centerY = y + rowHeight * 0.5f
 
@@ -1511,7 +1565,8 @@ class GameView @JvmOverloads constructor(
         val EMERGENCY_BLUE = Color.rgb(74, 138, 255)
 
         /** Accuracy buckets shown on the game-over card, widest miss last. */
-        val CUT_BUCKET_LABELS = arrayOf("50/50", "60/40", "70/30", "80/20", "90/10")
+        /** One per [Grade], showing the worst split that still lands in that tier. */
+        val CUT_BUCKET_LABELS = arrayOf("PERFECT", "60/40", "70/30", "80/20", "90/10")
     }
 
     private class TrailPoint(val x: Float, val y: Float, val timeMs: Long)

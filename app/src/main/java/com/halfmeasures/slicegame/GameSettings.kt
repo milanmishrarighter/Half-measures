@@ -195,7 +195,7 @@ data class GameSettings(
         const val DEFAULT_MAX_COMBO_MULTIPLIER = 4f
         const val DEFAULT_COLD_STREAK_PENALTY_PERCENT = 20f
         const val DEFAULT_MISS_ENDS_RUN = true
-        const val DEFAULT_GUIDE_LINE_ENABLED = true
+        const val DEFAULT_GUIDE_LINE_ENABLED = false
         const val DEFAULT_GUIDE_LINE_OPACITY = 0.32f
         const val DEFAULT_PARTICLES_ENABLED = true
         const val DEFAULT_PARTICLE_AMOUNT = 0.5f
