@@ -6,6 +6,62 @@ import kotlin.random.Random
 
 data class PointF2(val x: Float, val y: Float)
 
+// Outline builders live at file scope rather than in ShapeKind's companion: enum
+// entry constructors run before the companion is initialised, so they cannot call
+// into it.
+
+private fun regularOutline(sides: Int, angleOffset: Float): List<PointF2> =
+    (0 until sides).map { i ->
+        val t = angleOffset + (2.0 * Math.PI * i / sides).toFloat()
+        PointF2(cos(t), sin(t))
+    }
+
+private fun starOutline(points: Int, innerRatio: Float): List<PointF2> {
+    val verts = ArrayList<PointF2>(points * 2)
+    for (i in 0 until points * 2) {
+        val r = if (i % 2 == 0) 1f else innerRatio
+        val t = (-Math.PI / 2 + Math.PI * i / points).toFloat()
+        verts.add(PointF2(r * cos(t), r * sin(t)))
+    }
+    return verts
+}
+
+/** A rounded bar: straight sides with semicircular caps. */
+private fun capsuleOutline(): List<PointF2> {
+    val halfLength = 0.62f   // centre of each cap
+    val capRadius = 0.46f
+    val steps = 12
+    val verts = ArrayList<PointF2>(steps * 2 + 2)
+    for (i in 0..steps) { // right cap, -90deg -> +90deg
+        val t = (-Math.PI / 2 + Math.PI * i / steps).toFloat()
+        verts.add(PointF2(halfLength + capRadius * cos(t), capRadius * sin(t)))
+    }
+    for (i in 0..steps) { // left cap, +90deg -> +270deg
+        val t = (Math.PI / 2 + Math.PI * i / steps).toFloat()
+        verts.add(PointF2(-halfLength + capRadius * cos(t), capRadius * sin(t)))
+    }
+    return verts
+}
+
+private fun diamondOutline(): List<PointF2> = listOf(
+    PointF2(0f, -1f), PointF2(0.66f, 0f), PointF2(0f, 1f), PointF2(-0.66f, 0f)
+)
+
+private fun trapezoidOutline(): List<PointF2> = listOf(
+    PointF2(-0.52f, -0.62f), PointF2(0.52f, -0.62f),
+    PointF2(0.95f, 0.62f), PointF2(-0.95f, 0.62f)
+)
+
+private fun crossOutline(): List<PointF2> {
+    val a = 0.34f // half-width of the arms
+    val b = 1f    // arm reach
+    return listOf(
+        PointF2(-a, -b), PointF2(a, -b), PointF2(a, -a), PointF2(b, -a),
+        PointF2(b, a), PointF2(a, a), PointF2(a, b), PointF2(-a, b),
+        PointF2(-a, a), PointF2(-b, a), PointF2(-b, -a), PointF2(-a, -a)
+    )
+}
+
 /**
  * The catalogue of sliceable shapes. Each kind supplies its outline in unit
  * space (roughly bounded by a radius-1 circle); [GameShape] scales, rotates and
@@ -18,18 +74,18 @@ enum class ShapeKind(
     val unlockScore: Int,
     private val builder: () -> List<PointF2>
 ) {
-    CIRCLE("Circle", 0, { regular(36, 0f) }),
-    SQUARE("Square", 0, { regular(4, (Math.PI / 4).toFloat()) }),
-    CAPSULE("Capsule", 400, { capsule() }),
-    HEXAGON("Hexagon", 900, { regular(6, 0f) }),
-    DIAMOND("Diamond", 1500, { diamond() }),
-    OCTAGON("Octagon", 2200, { regular(8, (Math.PI / 8).toFloat()) }),
-    PENTAGON("Pentagon", 3000, { regular(5, (-Math.PI / 2).toFloat()) }),
-    TRIANGLE("Triangle", 4000, { regular(3, (-Math.PI / 2).toFloat()) }),
-    TRAPEZOID("Trapezoid", 5200, { trapezoid() }),
-    STAR6("Six-Point Star", 6500, { star(6, 0.58f) }),
-    CROSS("Cross", 8000, { cross() }),
-    STAR5("Star", 9500, { star(5, 0.42f) });
+    CIRCLE("Circle", 0, { regularOutline(36, 0f) }),
+    SQUARE("Square", 0, { regularOutline(4, (Math.PI / 4).toFloat()) }),
+    CAPSULE("Capsule", 400, { capsuleOutline() }),
+    HEXAGON("Hexagon", 900, { regularOutline(6, 0f) }),
+    DIAMOND("Diamond", 1500, { diamondOutline() }),
+    OCTAGON("Octagon", 2200, { regularOutline(8, (Math.PI / 8).toFloat()) }),
+    PENTAGON("Pentagon", 3000, { regularOutline(5, (-Math.PI / 2).toFloat()) }),
+    TRIANGLE("Triangle", 4000, { regularOutline(3, (-Math.PI / 2).toFloat()) }),
+    TRAPEZOID("Trapezoid", 5200, { trapezoidOutline() }),
+    STAR6("Six-Point Star", 6500, { starOutline(6, 0.58f) }),
+    CROSS("Cross", 8000, { crossOutline() }),
+    STAR5("Star", 9500, { starOutline(5, 0.42f) });
 
     /** Outline in unit space, computed once per kind. */
     val unitVertices: List<PointF2> by lazy(LazyThreadSafetyMode.NONE) { builder() }
@@ -46,58 +102,6 @@ enum class ShapeKind(
     }
 
     companion object {
-        private fun regular(sides: Int, angleOffset: Float): List<PointF2> =
-            (0 until sides).map { i ->
-                val t = angleOffset + (2.0 * Math.PI * i / sides).toFloat()
-                PointF2(cos(t), sin(t))
-            }
-
-        private fun star(points: Int, innerRatio: Float): List<PointF2> {
-            val verts = ArrayList<PointF2>(points * 2)
-            for (i in 0 until points * 2) {
-                val r = if (i % 2 == 0) 1f else innerRatio
-                val t = (-Math.PI / 2 + Math.PI * i / points).toFloat()
-                verts.add(PointF2(r * cos(t), r * sin(t)))
-            }
-            return verts
-        }
-
-        /** A rounded bar: straight sides with semicircular caps. */
-        private fun capsule(): List<PointF2> {
-            val halfLength = 0.62f   // centre of each cap
-            val capRadius = 0.46f
-            val steps = 12
-            val verts = ArrayList<PointF2>(steps * 2 + 2)
-            for (i in 0..steps) { // right cap, -90deg -> +90deg
-                val t = (-Math.PI / 2 + Math.PI * i / steps).toFloat()
-                verts.add(PointF2(halfLength + capRadius * cos(t), capRadius * sin(t)))
-            }
-            for (i in 0..steps) { // left cap, +90deg -> +270deg
-                val t = (Math.PI / 2 + Math.PI * i / steps).toFloat()
-                verts.add(PointF2(-halfLength + capRadius * cos(t), capRadius * sin(t)))
-            }
-            return verts
-        }
-
-        private fun diamond(): List<PointF2> = listOf(
-            PointF2(0f, -1f), PointF2(0.66f, 0f), PointF2(0f, 1f), PointF2(-0.66f, 0f)
-        )
-
-        private fun trapezoid(): List<PointF2> = listOf(
-            PointF2(-0.52f, -0.62f), PointF2(0.52f, -0.62f),
-            PointF2(0.95f, 0.62f), PointF2(-0.95f, 0.62f)
-        )
-
-        private fun cross(): List<PointF2> {
-            val a = 0.34f // half-width of the arms
-            val b = 1f    // arm reach
-            return listOf(
-                PointF2(-a, -b), PointF2(a, -b), PointF2(a, -a), PointF2(b, -a),
-                PointF2(b, a), PointF2(a, a), PointF2(a, b), PointF2(-a, b),
-                PointF2(-a, a), PointF2(-b, a), PointF2(-b, -a), PointF2(-a, -a)
-            )
-        }
-
         /** Kinds available at [score], honouring the player's unlock-pace setting. */
         fun unlockedAt(score: Int, pace: Float): List<ShapeKind> {
             val unlocked = values().filter { it.unlockScore * pace <= score }
