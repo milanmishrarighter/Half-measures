@@ -922,13 +922,10 @@ class GameView @JvmOverloads constructor(
                 effects.addEnergy(0.35f)
                 pixels.burst(shape.x, shape.y, 0.6f)
             }
-            Grade.FAIR -> {
-                effects.addShake(0.2f * settings.cameraShakeStrength)
-                pixels.burst(shape.x, shape.y, 0.35f)
-            }
-            Grade.POOR -> {
-                effects.addShake(0.12f * settings.cameraShakeStrength)
-                pixels.burst(shape.x, shape.y, 0.25f)
+            else -> {
+                // Fair, poor and outright misses all get the same muted acknowledgement.
+                effects.addShake(0.16f * settings.cameraShakeStrength)
+                pixels.burst(shape.x, shape.y, 0.3f)
             }
         }
 
