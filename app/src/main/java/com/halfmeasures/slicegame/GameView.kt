@@ -634,7 +634,7 @@ class GameView @JvmOverloads constructor(
             }
         }
 
-        if (grade == Grade.PERFECT && settings.slowMoOnPerfect && dangerCountdown < 0f) {
+        if (grade == Grade.PERFECT && settings.slowMoOnPerfect && dangerRecovery <= 0f) {
             perfectSlowMo = settings.slowMoDuration
         }
         return true
