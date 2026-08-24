@@ -93,6 +93,16 @@ object Theme {
             Color.red(color), Color.green(color), Color.blue(color)
         )
 
+    /** Straight RGB interpolation, [t] clamped to 0..1. */
+    fun lerpColor(from: Int, to: Int, t: Float): Int {
+        val k = t.coerceIn(0f, 1f)
+        return Color.rgb(
+            (Color.red(from) + (Color.red(to) - Color.red(from)) * k).toInt(),
+            (Color.green(from) + (Color.green(to) - Color.green(from)) * k).toInt(),
+            (Color.blue(from) + (Color.blue(to) - Color.blue(from)) * k).toInt()
+        )
+    }
+
     fun lighten(color: Int, amount: Float): Int {
         val a = amount.coerceIn(0f, 1f)
         return Color.rgb(

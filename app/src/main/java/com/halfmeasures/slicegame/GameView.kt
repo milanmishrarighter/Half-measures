@@ -14,6 +14,7 @@ import android.util.AttributeSet
 import android.view.Choreographer
 import android.view.MotionEvent
 import android.view.View
+import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
@@ -71,6 +72,24 @@ class GameView @JvmOverloads constructor(
     private var nextSpawnAtMs = 0L
     private var elapsed = 0f
 
+    // ---- Time control ----
+    /** Everything on screen runs at this multiple of real time. */
+    private var timeScale = 1f
+    /** Seconds remaining of the celebratory slow motion after a perfect cut. */
+    private var perfectSlowMo = 0f
+    /**
+     * Critical-health sequence: counts 3, 2, 1 in real seconds while time crawls,
+     * then eases back to full speed. Negative when idle.
+     */
+    private var dangerCountdown = -1f
+    private var dangerRecovery = 0f
+    private var dangerArmed = true
+
+    /** Consecutive great-or-better cuts, and consecutive sloppy ones. */
+    private var hotStreak = 0
+    private var coldStreak = 0
+    private var stage = 0
+
     /** Health bar lags the true value so gains and losses read as motion. */
     private var displayedHealth = settings.startHealth.toFloat()
     private var displayedScore = 0f
@@ -78,7 +97,6 @@ class GameView @JvmOverloads constructor(
     private val shapes = ArrayList<GameShape>()
     private val pieces = ArrayList<SlicedPiece>()
     private val trailPoints = ArrayList<TrailPoint>()
-    private val bokeh = ArrayList<Bokeh>()
 
     private var lastTouchX = 0f
     private var lastTouchY = 0f
@@ -112,8 +130,6 @@ class GameView @JvmOverloads constructor(
     }
     private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
     private val bgPaint = Paint()
-    private val bokehPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
-    private val floorGlowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val scrimPaint = Paint()
     private val panelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val panelStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -135,19 +151,10 @@ class GameView @JvmOverloads constructor(
         textAlign = Paint.Align.LEFT
     }
 
-    private val auroraPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    /** Pixel cells are drawn without anti-aliasing so the edges stay crisp and blocky. */
+    private val pixelPaint = Paint()
     private val flashPaint = Paint()
-
-    /** Colours the living backdrop cycles through. */
-    private val auroraPalette = intArrayOf(
-        Color.rgb(64, 96, 220),
-        Color.rgb(140, 66, 210),
-        Color.rgb(30, 150, 190),
-        Color.rgb(200, 70, 150),
-        Color.rgb(40, 170, 140)
-    )
-    private val auroraShaders = ArrayList<RadialGradient>()
-    private val auroras = ArrayList<Aurora>()
+    private val pixels = PixelBackground(random)
 
     private val path = Path()
     private val shaderMatrix = Matrix()
@@ -178,13 +185,64 @@ class GameView @JvmOverloads constructor(
 
     override fun doFrame(frameTimeNanos: Long) {
         if (lastFrameTimeNanos == 0L) lastFrameTimeNanos = frameTimeNanos
-        var dt = (frameTimeNanos - lastFrameTimeNanos) / 1_000_000_000f
+        var realDt = (frameTimeNanos - lastFrameTimeNanos) / 1_000_000_000f
         lastFrameTimeNanos = frameTimeNanos
-        dt = min(dt, 1f / 30f) // after a stall, step conservatively instead of teleporting
+        realDt = min(realDt, 1f / 30f) // after a stall, step conservatively instead of teleporting
 
-        update(dt)
+        // The countdown runs on real time; everything else obeys the time scale.
+        updateTimeControl(realDt)
+        update(realDt * timeScale)
         invalidate()
         Choreographer.getInstance().postFrameCallback(this)
+    }
+
+    /**
+     * Works out how fast the world should run this frame. A perfect cut drops into
+     * slow motion and eases back; critical health holds a hard slow motion through a
+     * 3-2-1 countdown and then ramps back linearly, so the player gets a beat to
+     * see how close they are to losing.
+     */
+    private fun updateTimeControl(realDt: Float) {
+        if (state != State.PLAYING) {
+            timeScale = 1f
+            return
+        }
+
+        if (dangerCountdown >= 0f) {
+            dangerCountdown -= realDt
+            if (dangerCountdown < 0f) dangerRecovery = DANGER_RECOVERY_SECONDS
+            timeScale = settings.slowMoIntensity.coerceIn(0.05f, 1f)
+            return
+        }
+
+        if (dangerRecovery > 0f) {
+            dangerRecovery = (dangerRecovery - realDt).coerceAtLeast(0f)
+            // Linear climb back to normal speed.
+            val progress = 1f - dangerRecovery / DANGER_RECOVERY_SECONDS
+            timeScale = settings.slowMoIntensity + (1f - settings.slowMoIntensity) * progress
+            return
+        }
+
+        if (perfectSlowMo > 0f) {
+            perfectSlowMo = (perfectSlowMo - realDt).coerceAtLeast(0f)
+            val total = settings.slowMoDuration.coerceAtLeast(0.05f)
+            // Ease out: slowest at the moment of the cut, gliding back to full speed.
+            val progress = (1f - perfectSlowMo / total).coerceIn(0f, 1f)
+            val eased = progress * progress
+            timeScale = settings.slowMoIntensity + (1f - settings.slowMoIntensity) * eased
+            return
+        }
+
+        timeScale = 1f
+    }
+
+    private fun triggerDangerSequence() {
+        dangerCountdown = DANGER_COUNTDOWN_SECONDS
+        dangerRecovery = 0f
+        perfectSlowMo = 0f
+        effects.addFlash(Theme.danger, 0.5f * settings.screenFlashStrength)
+        pixels.flash(1.4f)
+        if (settings.vibrationEnabled) haptics.gameOver(settings.vibrationStrength)
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
@@ -197,54 +255,7 @@ class GameView @JvmOverloads constructor(
             floatArrayOf(0f, 0.62f, 1f),
             Shader.TileMode.CLAMP
         )
-        floorGlowPaint.shader = RadialGradient(
-            w / 2f, h * 1.02f, h * 0.42f,
-            intArrayOf(Theme.withAlpha(Theme.bgGlow, 0.5f), Theme.withAlpha(Theme.bgGlow, 0f)),
-            floatArrayOf(0f, 1f),
-            Shader.TileMode.CLAMP
-        )
-
-        bokeh.clear()
-        repeat(14) {
-            bokeh.add(
-                Bokeh(
-                    x = random.nextFloat() * w,
-                    y = random.nextFloat() * h,
-                    radius = (w * 0.03f) + random.nextFloat() * (w * 0.11f),
-                    drift = 6f + random.nextFloat() * 18f,
-                    phase = random.nextFloat() * 6.2832f,
-                    alpha = 0.025f + random.nextFloat() * 0.045f
-                )
-            )
-        }
-
-        // Aurora blobs: one cached radial shader per palette colour, reused with a
-        // local matrix, so the backdrop can breathe and shift hue without ever
-        // allocating a shader mid-frame.
-        auroraShaders.clear()
-        for (color in auroraPalette) {
-            auroraShaders.add(
-                RadialGradient(
-                    0f, 0f, 1f,
-                    intArrayOf(color, Theme.withAlpha(color, 0.45f), Theme.withAlpha(color, 0f)),
-                    floatArrayOf(0f, 0.45f, 1f),
-                    Shader.TileMode.CLAMP
-                )
-            )
-        }
-        auroras.clear()
-        repeat(4) { i ->
-            auroras.add(
-                Aurora(
-                    seed = random.nextFloat() * 6.2832f,
-                    speed = 0.06f + random.nextFloat() * 0.09f,
-                    radiusFactor = 0.55f + random.nextFloat() * 0.5f,
-                    colorA = i % auroraPalette.size,
-                    colorB = (i + 1) % auroraPalette.size,
-                    mixSpeed = 0.05f + random.nextFloat() * 0.06f
-                )
-            )
-        }
+        pixels.resize(w, h)
 
         layoutButtons(w, h)
     }
@@ -275,17 +286,33 @@ class GameView @JvmOverloads constructor(
 
         trailPoints.removeAll { nowMs - it.timeMs > trailMaxAgeMs }
 
-        for (b in bokeh) b.update(dt, height)
+        pixels.update(
+            dt * settings.backgroundMotion,
+            effects.energy,
+            if (maxHealth > 0) displayedHealth / maxHealth else 1f,
+            stage
+        )
 
         if (state == State.PLAYING) {
-            val cap = (settings.startConcurrency + score / max(1, settings.concurrencyStepScore))
-                .coerceAtMost(settings.maxConcurrency)
+            updateStage()
+
+            val cap = (settings.startConcurrency + stage * settings.concurrencyPerStage)
+                .coerceIn(1, settings.maxConcurrency)
             if (shapes.size < cap && nowMs >= nextSpawnAtMs && width > 0 && height > 0) {
-                shapes.add(GameShape.spawnRandom(width, height, random, nowMs, score, settings))
+                shapes.add(GameShape.spawnRandom(width, height, random, nowMs, stage, settings))
                 nextSpawnAtMs = nowMs + settings.spawnGapMs
             }
 
-            announceNewShapeUnlocks()
+            // Critical health: hold a beat in slow motion so the danger registers.
+            if (settings.lowHealthSlowMo && maxHealth > 0) {
+                val fraction = health.toFloat() / maxHealth
+                if (dangerArmed && health > 0 && fraction <= settings.lowHealthThreshold) {
+                    dangerArmed = false
+                    triggerDangerSequence()
+                } else if (fraction > settings.lowHealthThreshold * 1.5f) {
+                    dangerArmed = true
+                }
+            }
 
             var i = shapes.size - 1
             while (i >= 0) {
@@ -324,31 +351,37 @@ class GameView @JvmOverloads constructor(
         displayedScore += (score - displayedScore) * min(1f, dt * 12f)
     }
 
-    /** Celebrates the moment a harder shape joins the rotation. */
-    private fun announceNewShapeUnlocks() {
-        val kinds = ShapeKind.values()
-        val pace = settings.shapeUnlockPace
-        var count = 0
-        for (k in kinds) if (k.unlockScore * pace <= score) count++
+    /**
+     * Advances the difficulty stage. Every stage the player earns brings more
+     * shapes on screen at once, faster tumbling, and fresh, harder shape kinds.
+     */
+    private fun updateStage() {
+        val interval = max(1, settings.stageScoreInterval)
+        val newStage = score / interval
+        if (newStage == stage) return
 
-        if (unlockedKinds == 0) {
-            unlockedKinds = count
-            return
+        stage = newStage
+        val unlocked = ShapeKind.unlockedCount(
+            stage, settings.startingShapeCount, settings.shapesPerStage
+        )
+        val gained = unlocked - unlockedKinds
+        unlockedKinds = unlocked
+
+        val headline = "STAGE ${stage + 1}"
+        val subline = if (gained > 0) {
+            val names = ShapeKind.values()
+                .copyOfRange(unlocked - gained, unlocked)
+                .joinToString(" · ") { it.displayName.uppercase() }
+            "NEW: $names"
+        } else {
+            "FASTER · BUSIER"
         }
-        if (count > unlockedKinds) {
-            // Kinds are declared in ascending unlock order, so the newest is the last unlocked.
-            val fresh = kinds[count - 1]
-            effects.popup(
-                headline = "NEW SHAPE",
-                subline = fresh.displayName.uppercase(),
-                x = width / 2f,
-                y = height * 0.3f,
-                color = Theme.accent,
-                emphasis = 0.7f
-            )
-            if (settings.vibrationEnabled) haptics.tick(settings.vibrationStrength)
-            unlockedKinds = count
-        }
+        effects.popup(headline, subline, width / 2f, height * 0.32f, Theme.gold, 0.85f)
+        effects.addFlash(Theme.gold, 0.3f * settings.screenFlashStrength)
+        pixels.flash(1.6f)
+        pixels.ripple(width / 2f, height * 0.5f, 1.4f)
+        effects.addEnergy(1.2f)
+        if (settings.vibrationEnabled) haptics.great(settings.vibrationStrength)
     }
 
     private fun bounceOffWalls(s: GameShape) {
@@ -401,10 +434,21 @@ class GameView @JvmOverloads constructor(
         score = 0
         displayedScore = 0f
         perfectStreak = 0
+        hotStreak = 0
+        coldStreak = 0
         perfectCount = 0
         cutCount = 0
         endedOnMiss = false
-        unlockedKinds = 0
+        stage = 0
+        unlockedKinds = ShapeKind.unlockedCount(
+            0, settings.startingShapeCount, settings.shapesPerStage
+        )
+        timeScale = 1f
+        perfectSlowMo = 0f
+        dangerCountdown = -1f
+        dangerRecovery = 0f
+        dangerArmed = true
+        pixels.reset()
         state = State.PLAYING
         nextSpawnAtMs = System.currentTimeMillis() + 320
     }
@@ -428,6 +472,7 @@ class GameView @JvmOverloads constructor(
                 lastTouchY = event.y
                 hasLastTouch = true
                 trailPoints.add(TrailPoint(event.x, event.y, System.currentTimeMillis()))
+                pixels.touch(event.x, event.y)
             }
 
             MotionEvent.ACTION_MOVE -> {
@@ -439,6 +484,8 @@ class GameView @JvmOverloads constructor(
                 }
                 handleSwipeSegment(event.x, event.y)
                 trailPoints.add(TrailPoint(event.x, event.y, nowMs))
+                // Dragging stirs the floor, densest near its surface.
+                pixels.touch(event.x, event.y)
             }
 
             MotionEvent.ACTION_UP -> {
@@ -531,19 +578,27 @@ class GameView @JvmOverloads constructor(
 
         val bigger = (max(areaA, areaB) / (areaA + areaB) * 100f).roundToInt()
         val split = "$bigger / ${100 - bigger}"
+        val headline = when {
+            grade == Grade.PERFECT -> "PERFECT"
+            gained < 0 -> "$gained"
+            else -> "+$gained"
+        }
+        val subline = when {
+            grade == Grade.PERFECT -> "+$gained" + streakSuffix()
+            grade == Grade.GREAT -> "GREAT  ·  $split" + streakSuffix()
+            coldStreak >= 2 -> "COLD STREAK  ·  $split"
+            else -> split
+        }
         effects.popup(
-            headline = if (grade == Grade.PERFECT) "PERFECT" else "+$gained",
-            subline = when (grade) {
-                Grade.PERFECT -> "+$gained"
-                Grade.GREAT -> "GREAT  ·  $split"
-                else -> split
-            },
+            headline = headline,
+            subline = subline,
             x = shape.x,
             y = shape.y,
-            color = gradeColor(grade),
-            emphasis = when (grade) {
-                Grade.PERFECT -> 1f
-                Grade.GREAT -> 0.6f
+            color = if (gained < 0) Theme.danger else gradeColor(grade),
+            emphasis = when {
+                grade == Grade.PERFECT -> 1f
+                grade == Grade.GREAT -> 0.6f
+                coldStreak >= 2 -> 0.5f
                 else -> 0f
             }
         )
@@ -555,8 +610,14 @@ class GameView @JvmOverloads constructor(
                 else -> haptics.cut(settings.vibrationStrength, 1f - deviation / 50f)
             }
         }
+
+        if (grade == Grade.PERFECT && settings.slowMoOnPerfect && dangerCountdown < 0f) {
+            perfectSlowMo = settings.slowMoDuration
+        }
         return true
     }
+
+    private fun streakSuffix(): String = if (hotStreak > 1) "  ·  ${hotStreak}x STREAK" else ""
 
     /**
      * A perfect cut - and only a perfect cut - refills the bar. Everything else
@@ -575,17 +636,26 @@ class GameView @JvmOverloads constructor(
     }
 
     /**
-     * 100 points for a flawless halving, falling away with the miss, then lifted
-     * by two bonuses: a precision bonus that ramps up inside the great window,
-     * and the combo multiplier for consecutive perfects.
+     * 100 points for a flawless halving, falling away with the miss, then bent by
+     * streaks: a run of great-or-better cuts compounds the payout, while a run of
+     * sloppy ones eats into it and can start costing points outright.
      */
     private fun applyScore(deviation: Float, grade: Grade): Int {
+        val strong = grade == Grade.PERFECT || grade == Grade.GREAT
+        val sloppy = grade == Grade.FAIR || grade == Grade.POOR
+
         if (grade == Grade.PERFECT) {
-            perfectStreak++
             perfectCount++
-            bestStreak = max(bestStreak, perfectStreak)
+        }
+        if (strong) {
+            hotStreak++
+            coldStreak = 0
+            perfectStreak = if (grade == Grade.PERFECT) perfectStreak + 1 else 0
+            bestStreak = max(bestStreak, hotStreak)
         } else {
             perfectStreak = 0
+            hotStreak = 0
+            if (sloppy) coldStreak++ else coldStreak = 0
         }
 
         val base = (100f - deviation * settings.scoreMissWeight).coerceAtLeast(0f)
@@ -595,15 +665,25 @@ class GameView @JvmOverloads constructor(
         } else {
             1f
         }
-        val gained = (base * precision * comboMultiplier()).roundToInt()
-        score += gained
+
+        var gained = (base * precision * comboMultiplier()).roundToInt()
+
+        if (coldStreak > 0) {
+            // Each sloppy cut in a row shaves more off the payout; past the second
+            // one the run actively bleeds points rather than merely earning few.
+            val penalty = (settings.coldStreakPenaltyPercent / 100f * coldStreak).coerceAtMost(1.6f)
+            gained = (gained * (1f - penalty)).roundToInt()
+            if (coldStreak >= 3) gained -= (25 * (coldStreak - 2))
+        }
+
+        score = (score + gained).coerceAtLeast(0)
         return gained
     }
 
-    /** 1.0 until a second consecutive perfect, then grows with the streak. */
+    /** Grows with a run of great-or-better cuts, capped by the player's ceiling. */
     private fun comboMultiplier(): Float {
-        val bonusSteps = (perfectStreak - 1).coerceAtLeast(0)
-        return (1f + bonusSteps * settings.comboBonusPercent / 100f)
+        val steps = (hotStreak - 1).coerceAtLeast(0)
+        return (1f + steps * settings.comboBonusPercent / 100f)
             .coerceAtMost(settings.maxComboMultiplier)
     }
 
@@ -696,22 +776,40 @@ class GameView @JvmOverloads constructor(
                 effects.shockwave(shape.x, shape.y, r * 11f, Color.WHITE, 0.7f, 5f, 0.15f)
                 effects.addShake(1.5f * settings.cameraShakeStrength)
                 effects.addFlash(Theme.gold, 0.55f * settings.screenFlashStrength)
-                effects.addEnergy(1.5f)
+                effects.addEnergy(1.6f)
+                pixels.ripple(shape.x, shape.y, 1.5f)
+                pixels.flash(1.5f)
             }
             Grade.GREAT -> {
                 effects.shockwave(shape.x, shape.y, r * 4.4f, Theme.accent, 0.5f, 11f)
                 effects.shockwave(shape.x, shape.y, r * 6.2f, Theme.withAlpha(Color.WHITE, 0.8f), 0.55f, 5f, 0.08f)
                 effects.addShake(0.8f * settings.cameraShakeStrength)
                 effects.addFlash(Theme.accent, 0.22f * settings.screenFlashStrength)
-                effects.addEnergy(0.85f)
+                effects.addEnergy(0.9f)
+                pixels.ripple(shape.x, shape.y, 1.0f)
+                pixels.flash(0.65f)
             }
             Grade.GOOD -> {
                 effects.shockwave(shape.x, shape.y, r * 3f, Theme.good, 0.42f, 6f)
                 effects.addShake(0.35f * settings.cameraShakeStrength)
                 effects.addEnergy(0.35f)
+                pixels.ripple(shape.x, shape.y, 0.6f)
             }
-            Grade.FAIR -> effects.addShake(0.2f * settings.cameraShakeStrength)
-            Grade.POOR -> effects.addShake(0.12f * settings.cameraShakeStrength)
+            Grade.FAIR -> {
+                effects.addShake(0.2f * settings.cameraShakeStrength)
+                pixels.ripple(shape.x, shape.y, 0.35f)
+            }
+            Grade.POOR -> {
+                effects.addShake(0.12f * settings.cameraShakeStrength)
+                pixels.ripple(shape.x, shape.y, 0.25f)
+            }
+        }
+
+        // A cold streak makes itself felt: the screen bruises red and kicks.
+        if (coldStreak >= 2) {
+            effects.addFlash(Theme.danger, 0.25f * coldStreak.coerceAtMost(4) * settings.screenFlashStrength)
+            effects.addShake(0.35f * coldStreak.coerceAtMost(4) * settings.cameraShakeStrength)
+            pixels.flash(0.5f * coldStreak.coerceAtMost(4))
         }
     }
 
@@ -747,7 +845,10 @@ class GameView @JvmOverloads constructor(
 
         drawFlash(canvas)
         drawPopups(canvas)
-        if (state == State.PLAYING) drawHud(canvas)
+        if (state == State.PLAYING) {
+            drawHud(canvas)
+            drawDangerCountdown(canvas)
+        }
 
         when (state) {
             State.READY -> drawReadyScreen(canvas)
@@ -758,69 +859,12 @@ class GameView @JvmOverloads constructor(
 
     private fun drawBackground(canvas: Canvas) {
         canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), bgPaint)
+        pixels.draw(canvas, pixelPaint)
 
-        drawAuroras(canvas)
-
-        for (b in bokeh) {
-            bokehPaint.color = Theme.withAlpha(Theme.bgGlow, b.alpha)
-            canvas.drawCircle(b.x, b.renderY, b.radius, bokehPaint)
-        }
-        canvas.drawRect(0f, height * 0.55f, width.toFloat(), height.toFloat(), floorGlowPaint)
-
-        // A soft line the shapes launch from, so the bottom edge reads as a stage.
-        rimPaint.strokeWidth = 2f
-        rimPaint.color = Theme.withAlpha(Theme.accent, 0.10f + 0.14f * effects.energy.coerceAtMost(1f))
-        canvas.drawLine(0f, height * 0.985f, width.toFloat(), height.toFloat() * 0.985f, rimPaint)
-    }
-
-    /**
-     * Slow drifting colour fields. Each blob crossfades between two cached shaders
-     * so its hue shifts continuously, and all of them swell with [EffectSystem.energy]
-     * so the whole backdrop surges when the player strings good cuts together.
-     */
-    private fun drawAuroras(canvas: Canvas) {
-        if (auroraShaders.isEmpty()) return
-        val motion = settings.backgroundMotion
-        if (motion <= 0.001f) return
-
-        val energy = effects.energy
-        val w = width.toFloat()
-        val h = height.toFloat()
-
-        for (a in auroras) {
-            val t = elapsed * a.speed * motion + a.seed
-            val cx = w * (0.5f + 0.42f * cos(t))
-            val cy = h * (0.42f + 0.34f * sin(t * 1.27f))
-            val radius = w * a.radiusFactor * (1f + 0.10f * sin(t * 2.1f) + 0.20f * energy)
-
-            shaderMatrix.reset()
-            shaderMatrix.postScale(radius, radius)
-            shaderMatrix.postTranslate(cx, cy)
-
-            val mix = (0.5f + 0.5f * sin(elapsed * a.mixSpeed * motion + a.seed)).coerceIn(0f, 1f)
-            val baseAlpha = (0.10f + 0.13f * energy).coerceIn(0f, 0.45f)
-
-            drawAuroraLayer(canvas, a.colorA, cx, cy, radius, baseAlpha * (1f - mix))
-            drawAuroraLayer(canvas, a.colorB, cx, cy, radius, baseAlpha * mix)
-        }
-    }
-
-    private fun drawAuroraLayer(
-        canvas: Canvas,
-        colorIndex: Int,
-        cx: Float,
-        cy: Float,
-        radius: Float,
-        alpha: Float
-    ) {
-        if (alpha <= 0.004f) return
-        val shader = auroraShaders[colorIndex]
-        shader.setLocalMatrix(shaderMatrix)
-        auroraPaint.shader = shader
-        auroraPaint.alpha = (alpha * 255).toInt().coerceIn(0, 255)
-        canvas.drawCircle(cx, cy, radius, auroraPaint)
-        auroraPaint.shader = null
-        auroraPaint.alpha = 255
+        // A bright seam along the floor the shapes launch from, pulsing with excitement.
+        rimPaint.strokeWidth = 3f
+        rimPaint.color = Theme.withAlpha(Color.WHITE, 0.10f + 0.22f * effects.energy.coerceAtMost(1f))
+        canvas.drawLine(0f, height * 0.995f, width.toFloat(), height * 0.995f, rimPaint)
     }
 
     private fun buildPath(vertices: List<PointF2>) {
@@ -1061,11 +1105,17 @@ class GameView @JvmOverloads constructor(
 
         // Fill
         val frac = (displayedHealth / maxHealth).coerceIn(0f, 1f)
+        val critical = frac <= settings.lowHealthThreshold
         if (frac > 0.001f) {
-            val healthColor = when {
+            var healthColor = when {
                 frac > 0.55f -> Theme.good
                 frac > 0.25f -> Theme.gold
                 else -> Theme.danger
+            }
+            // Critical health strobes so it is impossible to miss.
+            if (critical) {
+                val blink = 0.5f + 0.5f * sin(elapsed * 16f)
+                healthColor = Theme.lerpColor(Theme.danger, Color.WHITE, blink * 0.8f)
             }
             roundRect.set(pad, barTop, pad + barWidth * frac, barTop + barHeight)
             panelPaint.color = healthColor
@@ -1081,8 +1131,11 @@ class GameView @JvmOverloads constructor(
 
         uiBoldPaint.textAlign = Paint.Align.LEFT
         uiBoldPaint.textSize = 15f * density
-        uiBoldPaint.color = Theme.textFaint
-        canvas.drawText("HEALTH", pad, barTop + barHeight + 20f * density, uiBoldPaint)
+        uiBoldPaint.color = if (critical) Theme.danger else Theme.textFaint
+        canvas.drawText(
+            if (critical) "CRITICAL" else "HEALTH",
+            pad, barTop + barHeight + 20f * density, uiBoldPaint
+        )
 
         uiBoldPaint.textAlign = Paint.Align.RIGHT
         uiBoldPaint.color = Theme.textSecondary
@@ -1092,6 +1145,12 @@ class GameView @JvmOverloads constructor(
             barTop + barHeight + 20f * density,
             uiBoldPaint
         )
+
+        // Stage badge, top-right under the bar.
+        uiBoldPaint.textAlign = Paint.Align.RIGHT
+        uiBoldPaint.textSize = 14f * density
+        uiBoldPaint.color = Theme.withAlpha(Theme.gold, 0.9f)
+        canvas.drawText("STAGE ${stage + 1}", pad + barWidth, barTop + barHeight + 44f * density, uiBoldPaint)
 
         // Score, centred and large.
         displayPaint.textAlign = Paint.Align.CENTER
@@ -1103,18 +1162,47 @@ class GameView @JvmOverloads constructor(
         uiPaint.color = Theme.textFaint
         canvas.drawText("SCORE", width / 2f, barTop + barHeight + 80f * density, uiPaint)
 
-        if (perfectStreak > 1) {
+        val streakY = barTop + barHeight + 108f * density
+        if (hotStreak > 1) {
+            // Hot streak: swells and glows as it climbs.
             val multiplier = comboMultiplier()
+            val beat = 1f + 0.06f * sin(elapsed * 9f)
             uiBoldPaint.textAlign = Paint.Align.CENTER
-            uiBoldPaint.textSize = 20f * density
+            uiBoldPaint.textSize = 21f * density * beat
             uiBoldPaint.color = Theme.gold
             canvas.drawText(
-                "${perfectStreak}x PERFECT  ·  ${"%.1f".format(multiplier)}x",
-                width / 2f,
-                barTop + barHeight + 108f * density,
-                uiBoldPaint
+                "${hotStreak}x STREAK  ·  ${"%.1f".format(multiplier)}x SCORE",
+                width / 2f, streakY, uiBoldPaint
             )
+        } else if (coldStreak > 1) {
+            val beat = 0.5f + 0.5f * sin(elapsed * 12f)
+            uiBoldPaint.textAlign = Paint.Align.CENTER
+            uiBoldPaint.textSize = 21f * density
+            uiBoldPaint.color = Theme.lerpColor(Theme.danger, Color.WHITE, beat * 0.5f)
+            canvas.drawText("${coldStreak}x COLD  ·  SCORE FALLING", width / 2f, streakY, uiBoldPaint)
         }
+    }
+
+    /** The 3-2-1 that plays over the critical-health slow motion. */
+    private fun drawDangerCountdown(canvas: Canvas) {
+        if (dangerCountdown < 0f) return
+        val secondsLeft = ceil(dangerCountdown.toDouble()).toInt().coerceIn(1, 9)
+        // Each digit swells then shrinks over its own second.
+        val withinSecond = 1f - (dangerCountdown - (secondsLeft - 1))
+        val pop = 1f + 0.35f * (1f - withinSecond) * (1f - withinSecond)
+
+        scrimPaint.color = Theme.withAlpha(Theme.danger, 0.12f)
+        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), scrimPaint)
+
+        displayPaint.textAlign = Paint.Align.CENTER
+        displayPaint.textSize = 96f * density * pop
+        displayPaint.color = Theme.withAlpha(Color.WHITE, (withinSecond * 1.4f).coerceIn(0.25f, 1f))
+        canvas.drawText(secondsLeft.toString(), width / 2f, height * 0.5f, displayPaint)
+
+        uiBoldPaint.textAlign = Paint.Align.CENTER
+        uiBoldPaint.textSize = 20f * density
+        uiBoldPaint.color = Theme.danger
+        canvas.drawText("HEALTH CRITICAL", width / 2f, height * 0.5f + 44f * density, uiBoldPaint)
     }
 
     // ---- Overlays ----
@@ -1262,37 +1350,15 @@ class GameView @JvmOverloads constructor(
     // Small holders
     // ---------------------------------------------------------------------
 
+    private companion object {
+        /** Real seconds the critical-health countdown runs for. */
+        const val DANGER_COUNTDOWN_SECONDS = 3f
+        /** Real seconds spent climbing linearly back to full speed afterwards. */
+        const val DANGER_RECOVERY_SECONDS = 1.2f
+    }
+
     private class TrailPoint(val x: Float, val y: Float, val timeMs: Long)
 
-    /** One drifting colour field in the backdrop. */
-    private class Aurora(
-        val seed: Float,
-        val speed: Float,
-        val radiusFactor: Float,
-        val colorA: Int,
-        val colorB: Int,
-        val mixSpeed: Float
-    )
-
-    private class Bokeh(
-        val x: Float,
-        var y: Float,
-        val radius: Float,
-        val drift: Float,
-        val phase: Float,
-        val alpha: Float
-    ) {
-        private var t = phase
-        var renderY = y
-            private set
-
-        fun update(dt: Float, screenH: Int) {
-            t += dt
-            y -= drift * dt
-            if (y < -radius * 2f) y = screenH + radius * 2f
-            renderY = y + sin(t * 0.6f) * radius * 0.12f
-        }
-    }
 
     /** One half of a sliced shape, tumbling away and fading out. */
     private class SlicedPiece(

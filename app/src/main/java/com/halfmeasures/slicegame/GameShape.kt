@@ -2,6 +2,7 @@ package com.halfmeasures.slicegame
 
 import kotlin.math.cos
 import kotlin.math.sin
+import kotlin.math.sqrt
 import kotlin.random.Random
 
 data class PointF2(val x: Float, val y: Float)
@@ -65,27 +66,28 @@ private fun crossOutline(): List<PointF2> {
 /**
  * The catalogue of sliceable shapes. Each kind supplies its outline in unit
  * space (roughly bounded by a radius-1 circle); [GameShape] scales, rotates and
- * positions it. [unlockScore] gates when a kind starts appearing, so a run opens
- * on easy round/blocky shapes and works up to spiky, concave ones that are much
- * harder to halve by eye.
+ * positions it. Kinds are declared easiest-first and unlocked by difficulty stage,
+ * so a run opens on easy round/blocky shapes and works up to spiky, concave ones
+ * that are much harder to halve by eye.
  */
 enum class ShapeKind(
     val displayName: String,
-    val unlockScore: Int,
     private val builder: () -> List<PointF2>
 ) {
-    CIRCLE("Circle", 0, { regularOutline(36, 0f) }),
-    SQUARE("Square", 0, { regularOutline(4, (Math.PI / 4).toFloat()) }),
-    CAPSULE("Capsule", 400, { capsuleOutline() }),
-    HEXAGON("Hexagon", 900, { regularOutline(6, 0f) }),
-    DIAMOND("Diamond", 1500, { diamondOutline() }),
-    OCTAGON("Octagon", 2200, { regularOutline(8, (Math.PI / 8).toFloat()) }),
-    PENTAGON("Pentagon", 3000, { regularOutline(5, (-Math.PI / 2).toFloat()) }),
-    TRIANGLE("Triangle", 4000, { regularOutline(3, (-Math.PI / 2).toFloat()) }),
-    TRAPEZOID("Trapezoid", 5200, { trapezoidOutline() }),
-    STAR6("Six-Point Star", 6500, { starOutline(6, 0.58f) }),
-    CROSS("Cross", 8000, { crossOutline() }),
-    STAR5("Star", 9500, { starOutline(5, 0.42f) });
+    // Declared easiest-to-halve first: the unlock schedule walks down this list,
+    // so a run opens on symmetric blobs and ends on spiky, concave outlines.
+    CIRCLE("Circle", { regularOutline(36, 0f) }),
+    SQUARE("Square", { regularOutline(4, (Math.PI / 4).toFloat()) }),
+    CAPSULE("Capsule", { capsuleOutline() }),
+    DIAMOND("Diamond", { diamondOutline() }),
+    HEXAGON("Hexagon", { regularOutline(6, 0f) }),
+    OCTAGON("Octagon", { regularOutline(8, (Math.PI / 8).toFloat()) }),
+    TRAPEZOID("Trapezoid", { trapezoidOutline() }),
+    PENTAGON("Pentagon", { regularOutline(5, (-Math.PI / 2).toFloat()) }),
+    TRIANGLE("Triangle", { regularOutline(3, (-Math.PI / 2).toFloat()) }),
+    STAR6("Six-Point Star", { starOutline(6, 0.58f) }),
+    CROSS("Cross", { crossOutline() }),
+    STAR5("Star", { starOutline(5, 0.42f) });
 
     /** Outline in unit space, computed once per kind. */
     val unitVertices: List<PointF2> by lazy(LazyThreadSafetyMode.NONE) { builder() }
@@ -102,11 +104,12 @@ enum class ShapeKind(
     }
 
     companion object {
-        /** Kinds available at [score], honouring the player's unlock-pace setting. */
-        fun unlockedAt(score: Int, pace: Float): List<ShapeKind> {
-            val unlocked = values().filter { it.unlockScore * pace <= score }
-            return if (unlocked.isEmpty()) listOf(CIRCLE, SQUARE) else unlocked
-        }
+        /**
+         * How many kinds are in play at [stage]: the starting set, plus a fixed
+         * number of new shapes each stage, capped at the full catalogue.
+         */
+        fun unlockedCount(stage: Int, startingShapes: Int, shapesPerStage: Int): Int =
+            (startingShapes + stage * shapesPerStage).coerceIn(1, values().size)
     }
 }
 
@@ -169,30 +172,43 @@ class GameShape(
 
     companion object {
         const val BASE_GRAVITY = 1500f          // px/s^2 before gravityScale
-        private const val BASE_LAUNCH_SPEED = 1600f
-        private const val BASE_HORIZONTAL_DRIFT = 220f
-        private const val BASE_SPIN = 5f
+        private const val BASE_HORIZONTAL_DRIFT = 150f
+        private const val BASE_SPIN = 3.4f
 
+        /**
+         * Launches a shape for the given difficulty [stage].
+         *
+         * The upward velocity is solved from the *desired apex height* rather than
+         * set directly, so however the player tunes gravity a shape always tops out
+         * at the same fraction of the screen and never sails off out of reach.
+         */
         fun spawnRandom(
             screenW: Int,
             screenH: Int,
             random: Random,
             nowMs: Long,
-            score: Int,
+            stage: Int,
             settings: GameSettings
         ): GameShape {
-            val pool = ShapeKind.unlockedAt(score, settings.shapeUnlockPace)
-            val kind = pool[random.nextInt(pool.size)]
+            val poolSize = ShapeKind.unlockedCount(
+                stage, settings.startingShapeCount, settings.shapesPerStage
+            )
+            val kind = values()[random.nextInt(poolSize)]
 
             val radius = (((screenW * 0.06f) + random.nextFloat() * (screenW * 0.045f)) * settings.sizeScale)
                 .coerceAtMost(screenW * 0.3f)
             val x = radius * 1.5f + random.nextFloat() * (screenW - radius * 3f)
             val y = screenH + radius
 
-            val speed = settings.speedScale
-            val vx = (random.nextFloat() - 0.5f) * 2f * BASE_HORIZONTAL_DRIFT * speed
-            val vy = -BASE_LAUNCH_SPEED * speed * (0.85f + random.nextFloat() * 0.3f)
-            val spin = (random.nextFloat() - 0.5f) * 2f * BASE_SPIN * settings.rotationScale
+            val gravity = BASE_GRAVITY * settings.gravityScale
+            val apex = screenH * settings.flightHeight * (0.92f + random.nextFloat() * 0.16f)
+            val vy = -sqrt(2f * gravity * apex)
+
+            val vx = (random.nextFloat() - 0.5f) * 2f * BASE_HORIZONTAL_DRIFT
+            // Shapes tumble faster every stage, so late runs are harder to read.
+            val spinScale = settings.rotationScale *
+                (1f + settings.rotationPerStagePercent / 100f * stage)
+            val spin = (random.nextFloat() - 0.5f) * 2f * BASE_SPIN * spinScale
 
             return GameShape(
                 kind, x, y, radius, vx, vy,

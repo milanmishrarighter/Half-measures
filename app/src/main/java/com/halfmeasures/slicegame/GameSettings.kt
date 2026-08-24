@@ -6,10 +6,11 @@ import android.content.Context
  * Every tunable knob in the game, persisted to SharedPreferences so the whole
  * feel of the game can be dialled in from the in-app Settings screen.
  *
- * Spawning works as a concurrency ladder: at most [startConcurrency] shapes are
- * allowed on screen at once at the start of a run. Every [concurrencyStepScore]
- * points that cap goes up by one (never past [maxConcurrency]). Whenever fewer
- * shapes are alive than the current cap, a new one spawns every [spawnGapMs].
+ * Difficulty runs on stages: every [stageScoreInterval] points the run advances a
+ * stage, which allows [concurrencyPerStage] more shapes on screen (never past
+ * [maxConcurrency]), introduces [shapesPerStage] new shape kinds, and adds
+ * [rotationPerStagePercent] more spin. Whenever fewer shapes are alive than the
+ * current cap, a new one spawns every [spawnGapMs].
  *
  * Scoring works off "deviation": half the area imbalance, i.e. how many
  * percentage points the bigger piece sits above a perfect 50. A 60/40 cut has a
@@ -18,17 +19,27 @@ import android.content.Context
 data class GameSettings(
     // ---- Shapes ----
     var sizeScale: Float = DEFAULT_SIZE_SCALE,
-    var speedScale: Float = DEFAULT_SPEED_SCALE,
+    /** How high shapes rise, as a fraction of screen height. Reachability is guaranteed. */
+    var flightHeight: Float = DEFAULT_FLIGHT_HEIGHT,
     var gravityScale: Float = DEFAULT_GRAVITY_SCALE,
     var rotationScale: Float = DEFAULT_ROTATION_SCALE,
     /** 0 = sides are transparent and shapes drift off; 1 = fully elastic bounce. */
     var wallStrength: Float = DEFAULT_WALL_STRENGTH,
-    /** Multiplies every shape's unlock score. Lower = harder shapes arrive sooner. */
-    var shapeUnlockPace: Float = DEFAULT_SHAPE_UNLOCK_PACE,
+
+    // ---- Difficulty stages ----
+    /** Score needed to advance one stage. Each stage adds shapes, spin and traffic. */
+    var stageScoreInterval: Int = DEFAULT_STAGE_SCORE_INTERVAL,
+    /** Shape kinds in play at stage 0. */
+    var startingShapeCount: Int = DEFAULT_STARTING_SHAPE_COUNT,
+    /** New shape kinds introduced each stage. */
+    var shapesPerStage: Int = DEFAULT_SHAPES_PER_STAGE,
+    /** Extra shapes allowed on screen per stage. */
+    var concurrencyPerStage: Int = DEFAULT_CONCURRENCY_PER_STAGE,
+    /** Spin speed added per stage, as a percentage. */
+    var rotationPerStagePercent: Float = DEFAULT_ROTATION_PER_STAGE_PERCENT,
 
     // ---- Spawning ----
     var startConcurrency: Int = DEFAULT_START_CONCURRENCY,
-    var concurrencyStepScore: Int = DEFAULT_CONCURRENCY_STEP_SCORE,
     var maxConcurrency: Int = DEFAULT_MAX_CONCURRENCY,
     var spawnGapMs: Long = DEFAULT_SPAWN_GAP_MS,
 
@@ -51,9 +62,11 @@ data class GameSettings(
     var healthLossCurve: Float = DEFAULT_HEALTH_LOSS_CURVE,
     /** A perfect cut refills the health bar. */
     var perfectRestoresHealth: Boolean = DEFAULT_PERFECT_RESTORES_HEALTH,
-    /** Extra score multiplier gained per consecutive perfect cut, as a percentage. */
+    /** Score multiplier gained per consecutive great-or-better cut, as a percentage. */
     var comboBonusPercent: Float = DEFAULT_COMBO_BONUS_PERCENT,
     var maxComboMultiplier: Float = DEFAULT_MAX_COMBO_MULTIPLIER,
+    /** Score cut per consecutive sloppy cut, as a percentage - a cold streak bites back. */
+    var coldStreakPenaltyPercent: Float = DEFAULT_COLD_STREAK_PENALTY_PERCENT,
     /** Letting a shape fall off screen uncut ends the run. */
     var missEndsRun: Boolean = DEFAULT_MISS_ENDS_RUN,
 
@@ -72,18 +85,33 @@ data class GameSettings(
     /** How much the living backdrop drifts and shifts colour. 0 freezes it. */
     var backgroundMotion: Float = DEFAULT_BACKGROUND_MOTION,
     /** Full-screen colour flash on a great or perfect cut. */
-    var screenFlashStrength: Float = DEFAULT_SCREEN_FLASH_STRENGTH
+    var screenFlashStrength: Float = DEFAULT_SCREEN_FLASH_STRENGTH,
+
+    // ---- Slow motion ----
+    /** Time crawls for a moment on a perfect cut. */
+    var slowMoOnPerfect: Boolean = DEFAULT_SLOW_MO_ON_PERFECT,
+    /** How far time slows: 0.2 means one-fifth speed. */
+    var slowMoIntensity: Float = DEFAULT_SLOW_MO_INTENSITY,
+    /** Seconds a perfect-cut slow motion lasts before easing back. */
+    var slowMoDuration: Float = DEFAULT_SLOW_MO_DURATION,
+    /** Drop into slow motion with a countdown when health gets critical. */
+    var lowHealthSlowMo: Boolean = DEFAULT_LOW_HEALTH_SLOW_MO,
+    /** Health fraction that triggers the critical-health warning. */
+    var lowHealthThreshold: Float = DEFAULT_LOW_HEALTH_THRESHOLD
 ) {
     fun saveTo(context: Context) {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
             .putFloat("size_scale", sizeScale)
-            .putFloat("speed_scale", speedScale)
+            .putFloat("flight_height", flightHeight)
             .putFloat("gravity_scale", gravityScale)
             .putFloat("rotation_scale", rotationScale)
             .putFloat("wall_strength", wallStrength)
-            .putFloat("shape_unlock_pace", shapeUnlockPace)
+            .putInt("stage_score_interval", stageScoreInterval)
+            .putInt("starting_shape_count", startingShapeCount)
+            .putInt("shapes_per_stage", shapesPerStage)
+            .putInt("concurrency_per_stage", concurrencyPerStage)
+            .putFloat("rotation_per_stage_percent", rotationPerStagePercent)
             .putInt("start_concurrency", startConcurrency)
-            .putInt("concurrency_step_score", concurrencyStepScore)
             .putInt("max_concurrency", maxConcurrency)
             .putLong("spawn_gap_ms", spawnGapMs)
             .putInt("start_health", startHealth)
@@ -96,6 +124,7 @@ data class GameSettings(
             .putBoolean("perfect_restores_health", perfectRestoresHealth)
             .putFloat("combo_bonus_percent", comboBonusPercent)
             .putFloat("max_combo_multiplier", maxComboMultiplier)
+            .putFloat("cold_streak_penalty_percent", coldStreakPenaltyPercent)
             .putBoolean("miss_ends_run", missEndsRun)
             .putBoolean("guide_line_enabled", guideLineEnabled)
             .putFloat("guide_line_opacity", guideLineOpacity)
@@ -108,20 +137,28 @@ data class GameSettings(
             .putFloat("popup_text_scale", popupTextScale)
             .putFloat("background_motion", backgroundMotion)
             .putFloat("screen_flash_strength", screenFlashStrength)
+            .putBoolean("slow_mo_on_perfect", slowMoOnPerfect)
+            .putFloat("slow_mo_intensity", slowMoIntensity)
+            .putFloat("slow_mo_duration", slowMoDuration)
+            .putBoolean("low_health_slow_mo", lowHealthSlowMo)
+            .putFloat("low_health_threshold", lowHealthThreshold)
             .apply()
     }
 
     companion object {
         // Defaults hand-tuned in-app and reported back by the player.
         const val DEFAULT_SIZE_SCALE = 1.9f
-        const val DEFAULT_SPEED_SCALE = 1.2f
+        const val DEFAULT_FLIGHT_HEIGHT = 0.58f
         const val DEFAULT_GRAVITY_SCALE = 0.8f
-        const val DEFAULT_ROTATION_SCALE = 1.3f
+        const val DEFAULT_ROTATION_SCALE = 0.55f
         const val DEFAULT_WALL_STRENGTH = 0.6f
-        const val DEFAULT_SHAPE_UNLOCK_PACE = 1.0f
+        const val DEFAULT_STAGE_SCORE_INTERVAL = 5000
+        const val DEFAULT_STARTING_SHAPE_COUNT = 4
+        const val DEFAULT_SHAPES_PER_STAGE = 2
+        const val DEFAULT_CONCURRENCY_PER_STAGE = 1
+        const val DEFAULT_ROTATION_PER_STAGE_PERCENT = 10f
         const val DEFAULT_START_CONCURRENCY = 1
-        const val DEFAULT_CONCURRENCY_STEP_SCORE = 1383
-        const val DEFAULT_MAX_CONCURRENCY = 2
+        const val DEFAULT_MAX_CONCURRENCY = 5
         const val DEFAULT_SPAWN_GAP_MS = 1400L
         const val DEFAULT_START_HEALTH = 100
         const val DEFAULT_PERFECT_THRESHOLD = 1.5f
@@ -131,8 +168,9 @@ data class GameSettings(
         const val DEFAULT_HEALTH_LOSS_AT_SIXTY_FORTY = 2f
         const val DEFAULT_HEALTH_LOSS_CURVE = 1.8f
         const val DEFAULT_PERFECT_RESTORES_HEALTH = true
-        const val DEFAULT_COMBO_BONUS_PERCENT = 10f
-        const val DEFAULT_MAX_COMBO_MULTIPLIER = 3f
+        const val DEFAULT_COMBO_BONUS_PERCENT = 15f
+        const val DEFAULT_MAX_COMBO_MULTIPLIER = 4f
+        const val DEFAULT_COLD_STREAK_PENALTY_PERCENT = 20f
         const val DEFAULT_MISS_ENDS_RUN = true
         const val DEFAULT_GUIDE_LINE_ENABLED = true
         const val DEFAULT_GUIDE_LINE_OPACITY = 0.32f
@@ -145,23 +183,34 @@ data class GameSettings(
         const val DEFAULT_POPUP_TEXT_SCALE = 1.5f
         const val DEFAULT_BACKGROUND_MOTION = 1.0f
         const val DEFAULT_SCREEN_FLASH_STRENGTH = 1.0f
+        const val DEFAULT_SLOW_MO_ON_PERFECT = true
+        const val DEFAULT_SLOW_MO_INTENSITY = 0.22f
+        const val DEFAULT_SLOW_MO_DURATION = 1.1f
+        const val DEFAULT_LOW_HEALTH_SLOW_MO = true
+        const val DEFAULT_LOW_HEALTH_THRESHOLD = 0.1f
 
         const val MIN_SIZE_SCALE = 0.5f
         const val MAX_SIZE_SCALE = 3.0f
-        const val MIN_SPEED_SCALE = 0.3f
-        const val MAX_SPEED_SCALE = 2.5f
+        const val MIN_FLIGHT_HEIGHT = 0.25f
+        const val MAX_FLIGHT_HEIGHT = 0.9f
         const val MIN_GRAVITY_SCALE = 0.4f
         const val MAX_GRAVITY_SCALE = 2.5f
         const val MIN_ROTATION_SCALE = 0.0f
-        const val MAX_ROTATION_SCALE = 4.0f
+        const val MAX_ROTATION_SCALE = 3.0f
         const val MIN_WALL_STRENGTH = 0f
         const val MAX_WALL_STRENGTH = 1f
-        const val MIN_SHAPE_UNLOCK_PACE = 0.2f
-        const val MAX_SHAPE_UNLOCK_PACE = 3.0f
+        const val MIN_STAGE_SCORE_INTERVAL = 500
+        const val MAX_STAGE_SCORE_INTERVAL = 15000
+        const val MIN_STARTING_SHAPE_COUNT = 1
+        const val MAX_STARTING_SHAPE_COUNT = 12
+        const val MIN_SHAPES_PER_STAGE = 0
+        const val MAX_SHAPES_PER_STAGE = 4
+        const val MIN_CONCURRENCY_PER_STAGE = 0
+        const val MAX_CONCURRENCY_PER_STAGE = 3
+        const val MIN_ROTATION_PER_STAGE_PERCENT = 0f
+        const val MAX_ROTATION_PER_STAGE_PERCENT = 50f
         const val MIN_CONCURRENCY = 1
         const val MAX_CONCURRENCY_LIMIT = 8
-        const val MIN_CONCURRENCY_STEP_SCORE = 50
-        const val MAX_CONCURRENCY_STEP_SCORE = 3000
         const val MIN_SPAWN_GAP_MS = 200L
         const val MAX_SPAWN_GAP_MS = 3000L
         const val MIN_START_HEALTH = 20
@@ -181,7 +230,9 @@ data class GameSettings(
         const val MIN_COMBO_BONUS_PERCENT = 0f
         const val MAX_COMBO_BONUS_PERCENT = 50f
         const val MIN_MAX_COMBO_MULTIPLIER = 1f
-        const val MAX_MAX_COMBO_MULTIPLIER = 5f
+        const val MAX_MAX_COMBO_MULTIPLIER = 6f
+        const val MIN_COLD_STREAK_PENALTY_PERCENT = 0f
+        const val MAX_COLD_STREAK_PENALTY_PERCENT = 60f
         const val MIN_GUIDE_LINE_OPACITY = 0.1f
         const val MAX_GUIDE_LINE_OPACITY = 1f
         const val MIN_PARTICLE_AMOUNT = 0.2f
@@ -198,6 +249,12 @@ data class GameSettings(
         const val MAX_BACKGROUND_MOTION = 2.5f
         const val MIN_SCREEN_FLASH_STRENGTH = 0f
         const val MAX_SCREEN_FLASH_STRENGTH = 2f
+        const val MIN_SLOW_MO_INTENSITY = 0.1f
+        const val MAX_SLOW_MO_INTENSITY = 0.9f
+        const val MIN_SLOW_MO_DURATION = 0.3f
+        const val MAX_SLOW_MO_DURATION = 3f
+        const val MIN_LOW_HEALTH_THRESHOLD = 0.05f
+        const val MAX_LOW_HEALTH_THRESHOLD = 0.5f
 
         private const val PREFS_NAME = "half_measures_settings"
 
@@ -205,13 +262,16 @@ data class GameSettings(
             val p = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             return GameSettings(
                 sizeScale = p.getFloat("size_scale", DEFAULT_SIZE_SCALE),
-                speedScale = p.getFloat("speed_scale", DEFAULT_SPEED_SCALE),
+                flightHeight = p.getFloat("flight_height", DEFAULT_FLIGHT_HEIGHT),
                 gravityScale = p.getFloat("gravity_scale", DEFAULT_GRAVITY_SCALE),
                 rotationScale = p.getFloat("rotation_scale", DEFAULT_ROTATION_SCALE),
                 wallStrength = p.getFloat("wall_strength", DEFAULT_WALL_STRENGTH),
-                shapeUnlockPace = p.getFloat("shape_unlock_pace", DEFAULT_SHAPE_UNLOCK_PACE),
+                stageScoreInterval = p.getInt("stage_score_interval", DEFAULT_STAGE_SCORE_INTERVAL),
+                startingShapeCount = p.getInt("starting_shape_count", DEFAULT_STARTING_SHAPE_COUNT),
+                shapesPerStage = p.getInt("shapes_per_stage", DEFAULT_SHAPES_PER_STAGE),
+                concurrencyPerStage = p.getInt("concurrency_per_stage", DEFAULT_CONCURRENCY_PER_STAGE),
+                rotationPerStagePercent = p.getFloat("rotation_per_stage_percent", DEFAULT_ROTATION_PER_STAGE_PERCENT),
                 startConcurrency = p.getInt("start_concurrency", DEFAULT_START_CONCURRENCY),
-                concurrencyStepScore = p.getInt("concurrency_step_score", DEFAULT_CONCURRENCY_STEP_SCORE),
                 maxConcurrency = p.getInt("max_concurrency", DEFAULT_MAX_CONCURRENCY),
                 spawnGapMs = p.getLong("spawn_gap_ms", DEFAULT_SPAWN_GAP_MS),
                 startHealth = p.getInt("start_health", DEFAULT_START_HEALTH),
@@ -224,6 +284,7 @@ data class GameSettings(
                 perfectRestoresHealth = p.getBoolean("perfect_restores_health", DEFAULT_PERFECT_RESTORES_HEALTH),
                 comboBonusPercent = p.getFloat("combo_bonus_percent", DEFAULT_COMBO_BONUS_PERCENT),
                 maxComboMultiplier = p.getFloat("max_combo_multiplier", DEFAULT_MAX_COMBO_MULTIPLIER),
+                coldStreakPenaltyPercent = p.getFloat("cold_streak_penalty_percent", DEFAULT_COLD_STREAK_PENALTY_PERCENT),
                 missEndsRun = p.getBoolean("miss_ends_run", DEFAULT_MISS_ENDS_RUN),
                 guideLineEnabled = p.getBoolean("guide_line_enabled", DEFAULT_GUIDE_LINE_ENABLED),
                 guideLineOpacity = p.getFloat("guide_line_opacity", DEFAULT_GUIDE_LINE_OPACITY),
@@ -235,7 +296,12 @@ data class GameSettings(
                 trailThickness = p.getFloat("trail_thickness", DEFAULT_TRAIL_THICKNESS),
                 popupTextScale = p.getFloat("popup_text_scale", DEFAULT_POPUP_TEXT_SCALE),
                 backgroundMotion = p.getFloat("background_motion", DEFAULT_BACKGROUND_MOTION),
-                screenFlashStrength = p.getFloat("screen_flash_strength", DEFAULT_SCREEN_FLASH_STRENGTH)
+                screenFlashStrength = p.getFloat("screen_flash_strength", DEFAULT_SCREEN_FLASH_STRENGTH),
+                slowMoOnPerfect = p.getBoolean("slow_mo_on_perfect", DEFAULT_SLOW_MO_ON_PERFECT),
+                slowMoIntensity = p.getFloat("slow_mo_intensity", DEFAULT_SLOW_MO_INTENSITY),
+                slowMoDuration = p.getFloat("slow_mo_duration", DEFAULT_SLOW_MO_DURATION),
+                lowHealthSlowMo = p.getBoolean("low_health_slow_mo", DEFAULT_LOW_HEALTH_SLOW_MO),
+                lowHealthThreshold = p.getFloat("low_health_threshold", DEFAULT_LOW_HEALTH_THRESHOLD)
             )
         }
     }

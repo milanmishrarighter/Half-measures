@@ -48,185 +48,246 @@ class SettingsActivity : AppCompatActivity() {
 
         root.addView(header())
 
-        card("SHAPES").let { c ->
+        card("THE SHAPES").let { c ->
             root.addView(c.wrapper)
             slider(
-                c.body, "Size", "How big the shapes are",
+                c.body, "Size", "Bigger number = bigger shapes to cut.",
                 GameSettings.MIN_SIZE_SCALE, GameSettings.MAX_SIZE_SCALE, settings.sizeScale,
                 { "%.1fx".format(it) }, { settings.sizeScale = it }
             )
             slider(
-                c.body, "Launch speed", "How fast they leave the bottom",
-                GameSettings.MIN_SPEED_SCALE, GameSettings.MAX_SPEED_SCALE, settings.speedScale,
-                { "%.1fx".format(it) }, { settings.speedScale = it }
+                c.body, "How high they fly", "How far up the screen they go before falling back down.",
+                GameSettings.MIN_FLIGHT_HEIGHT, GameSettings.MAX_FLIGHT_HEIGHT, settings.flightHeight,
+                { "${(it * 100).roundToInt()}%" }, { settings.flightHeight = it }
             )
             slider(
-                c.body, "Gravity", "Higher falls faster and peaks lower",
+                c.body, "Gravity", "Bigger number = they drop back down faster. Smaller = they float.",
                 GameSettings.MIN_GRAVITY_SCALE, GameSettings.MAX_GRAVITY_SCALE, settings.gravityScale,
                 { "%.1fx".format(it) }, { settings.gravityScale = it }
             )
             slider(
-                c.body, "Spin speed", "How fast shapes rotate in flight",
+                c.body, "Spinning", "How much the shapes twirl. Twirly shapes are harder to cut in half.",
                 GameSettings.MIN_ROTATION_SCALE, GameSettings.MAX_ROTATION_SCALE, settings.rotationScale,
                 { "%.1fx".format(it) }, { settings.rotationScale = it }
             )
             slider(
-                c.body, "Wall strength", "0% lets shapes drift off the sides, higher bounces them back",
+                c.body, "Bouncy walls", "0% and shapes fly off the sides. Higher and they bounce back in.",
                 GameSettings.MIN_WALL_STRENGTH, GameSettings.MAX_WALL_STRENGTH, settings.wallStrength,
-                { "${(it * 100).roundToInt()}%" }, { settings.wallStrength = it }
-            )
-            slider(
-                c.body, "Shape unlock pace", "Lower brings the hard shapes out sooner",
-                GameSettings.MIN_SHAPE_UNLOCK_PACE, GameSettings.MAX_SHAPE_UNLOCK_PACE, settings.shapeUnlockPace,
-                { "%.1fx".format(it) }, { settings.shapeUnlockPace = it }
+                { if (it <= 0.01f) "Off" else "${(it * 100).roundToInt()}%" }, { settings.wallStrength = it }
             )
         }
 
-        card("SPAWNING").let { c ->
+        card("GETTING HARDER").let { c ->
             root.addView(c.wrapper)
             slider(
-                c.body, "Shapes at the start", "How many can share the screen at score 0",
+                c.body, "Points per level", "Score this many points and the game jumps to the next level.",
+                GameSettings.MIN_STAGE_SCORE_INTERVAL.toFloat(), GameSettings.MAX_STAGE_SCORE_INTERVAL.toFloat(),
+                settings.stageScoreInterval.toFloat(),
+                { "${it.roundToInt()}" }, { settings.stageScoreInterval = it.roundToInt() }
+            )
+            slider(
+                c.body, "Shape types at level 1", "How many different shapes you start with. The easy ones come first.",
+                GameSettings.MIN_STARTING_SHAPE_COUNT.toFloat(), GameSettings.MAX_STARTING_SHAPE_COUNT.toFloat(),
+                settings.startingShapeCount.toFloat(),
+                { "${it.roundToInt()}" }, { settings.startingShapeCount = it.roundToInt() }
+            )
+            slider(
+                c.body, "New shapes each level", "How many brand new shapes show up when you level up.",
+                GameSettings.MIN_SHAPES_PER_STAGE.toFloat(), GameSettings.MAX_SHAPES_PER_STAGE.toFloat(),
+                settings.shapesPerStage.toFloat(),
+                { "${it.roundToInt()}" }, { settings.shapesPerStage = it.roundToInt() }
+            )
+            slider(
+                c.body, "Extra shapes each level", "How many more shapes are allowed in the air when you level up.",
+                GameSettings.MIN_CONCURRENCY_PER_STAGE.toFloat(), GameSettings.MAX_CONCURRENCY_PER_STAGE.toFloat(),
+                settings.concurrencyPerStage.toFloat(),
+                { "+${it.roundToInt()}" }, { settings.concurrencyPerStage = it.roundToInt() }
+            )
+            slider(
+                c.body, "Extra spin each level", "How much twirlier the shapes get when you level up.",
+                GameSettings.MIN_ROTATION_PER_STAGE_PERCENT, GameSettings.MAX_ROTATION_PER_STAGE_PERCENT,
+                settings.rotationPerStagePercent,
+                { "+${it.roundToInt()}%" }, { settings.rotationPerStagePercent = it }
+            )
+        }
+
+        card("HOW MANY AT ONCE").let { c ->
+            root.addView(c.wrapper)
+            slider(
+                c.body, "Shapes in the air at level 1", "How many shapes can be up at the same time when you start.",
                 GameSettings.MIN_CONCURRENCY.toFloat(), GameSettings.MAX_CONCURRENCY_LIMIT.toFloat(),
                 settings.startConcurrency.toFloat(),
                 { "${it.roundToInt()}" }, { settings.startConcurrency = it.roundToInt() }
             )
             slider(
-                c.body, "Score per extra shape", "Score needed to allow one more at once",
-                GameSettings.MIN_CONCURRENCY_STEP_SCORE.toFloat(), GameSettings.MAX_CONCURRENCY_STEP_SCORE.toFloat(),
-                settings.concurrencyStepScore.toFloat(),
-                { "${it.roundToInt()} pts" }, { settings.concurrencyStepScore = it.roundToInt() }
-            )
-            slider(
-                c.body, "Maximum at once", "Hard ceiling on shapes on screen",
+                c.body, "Never more than", "No matter how good you get, never more shapes than this at once.",
                 GameSettings.MIN_CONCURRENCY.toFloat(), GameSettings.MAX_CONCURRENCY_LIMIT.toFloat(),
                 settings.maxConcurrency.toFloat(),
                 { "${it.roundToInt()}" }, { settings.maxConcurrency = it.roundToInt() }
             )
             slider(
-                c.body, "Gap between spawns", "Wait before the next shape appears",
+                c.body, "Wait between shapes", "How long the game waits before throwing up the next shape.",
                 GameSettings.MIN_SPAWN_GAP_MS.toFloat(), GameSettings.MAX_SPAWN_GAP_MS.toFloat(),
                 settings.spawnGapMs.toFloat(),
                 { "%.1fs".format(it / 1000f) }, { settings.spawnGapMs = it.toLong() }
             )
         }
 
-        card("SCORING & HEALTH").let { c ->
+        card("POINTS & HEALTH").let { c ->
             root.addView(c.wrapper)
             slider(
-                c.body, "Starting health", "Health you begin each run with",
+                c.body, "Starting health", "How much health you begin with. It runs out, the game ends.",
                 GameSettings.MIN_START_HEALTH.toFloat(), GameSettings.MAX_START_HEALTH.toFloat(),
                 settings.startHealth.toFloat(),
                 { "${it.roundToInt()}" }, { settings.startHealth = it.roundToInt() }
             )
             slider(
-                c.body, "Perfect window", "How close to 50/50 still counts as perfect",
+                c.body, "How close counts as PERFECT", "Cut this close to dead centre and it counts as perfect.",
                 GameSettings.MIN_PERFECT_THRESHOLD, GameSettings.MAX_PERFECT_THRESHOLD, settings.perfectThreshold,
                 { "±%.1f%%".format(it) }, { settings.perfectThreshold = it }
             )
             slider(
-                c.body, "Great window", "10% means a 60/40 cut still counts as great",
+                c.body, "How close counts as GREAT", "10% means a 60/40 cut still gets a well done.",
                 GameSettings.MIN_GREAT_THRESHOLD, GameSettings.MAX_GREAT_THRESHOLD, settings.greatThreshold,
                 { "±%.0f%%".format(it) }, { settings.greatThreshold = it }
             )
             slider(
-                c.body, "Score penalty", "Points lost per 1% off a perfect half",
+                c.body, "Points lost for being off", "How many points you drop for each 1% you miss by.",
                 GameSettings.MIN_SCORE_MISS_WEIGHT, GameSettings.MAX_SCORE_MISS_WEIGHT, settings.scoreMissWeight,
                 { "%.1f pts".format(it) }, { settings.scoreMissWeight = it }
             )
             slider(
-                c.body, "Precision bonus", "Extra score inside the great window, full at a perfect",
+                c.body, "Bonus for being neat", "Extra points for really tidy cuts. The tidier, the bigger the bonus.",
                 GameSettings.MIN_GREAT_BONUS_PERCENT, GameSettings.MAX_GREAT_BONUS_PERCENT,
                 settings.greatBonusPercent,
                 { "+${it.roundToInt()}%" }, { settings.greatBonusPercent = it }
             )
             slider(
-                c.body, "Health penalty", "Health lost by a 60/40 cut",
+                c.body, "Health lost on a 60/40 cut", "How much health an okay-but-not-great cut costs you.",
                 GameSettings.MIN_HEALTH_LOSS_AT_SIXTY_FORTY, GameSettings.MAX_HEALTH_LOSS_AT_SIXTY_FORTY,
                 settings.healthLossAtSixtyForty,
                 { "%.1f hp".format(it) }, { settings.healthLossAtSixtyForty = it }
             )
             slider(
-                c.body, "Penalty curve", "Higher makes bad cuts hurt far more than near misses",
+                c.body, "Punish bad cuts extra", "Turn this up and really messy cuts hurt way more than small mistakes.",
                 GameSettings.MIN_HEALTH_LOSS_CURVE, GameSettings.MAX_HEALTH_LOSS_CURVE,
                 settings.healthLossCurve,
                 { "%.1f".format(it) }, { settings.healthLossCurve = it }
             )
             toggle(
-                c.body, "Perfect refills health", "A flawless cut restores the bar to full",
+                c.body, "Perfect cut heals you", "A dead centre cut fills your health bar right back up.",
                 settings.perfectRestoresHealth
             ) { settings.perfectRestoresHealth = it }
-            slider(
-                c.body, "Combo bonus", "Score multiplier gained per perfect in a row",
-                GameSettings.MIN_COMBO_BONUS_PERCENT, GameSettings.MAX_COMBO_BONUS_PERCENT, settings.comboBonusPercent,
-                { "+${it.roundToInt()}%" }, { settings.comboBonusPercent = it }
-            )
-            slider(
-                c.body, "Combo ceiling", "Highest multiplier a streak can reach",
-                GameSettings.MIN_MAX_COMBO_MULTIPLIER, GameSettings.MAX_MAX_COMBO_MULTIPLIER,
-                settings.maxComboMultiplier,
-                { "%.1fx".format(it) }, { settings.maxComboMultiplier = it }
-            )
             toggle(
-                c.body, "Missing ends the run", "Letting a shape fall off screen is game over",
+                c.body, "Missing a shape ends the game", "Let one fall off the screen without cutting it and you lose.",
                 settings.missEndsRun
             ) { settings.missEndsRun = it }
         }
 
-        card("FEEL & EFFECTS").let { c ->
+        card("STREAKS").let { c ->
+            root.addView(c.wrapper)
+            slider(
+                c.body, "Hot streak bonus", "Good cut after good cut? Each one adds this much extra score.",
+                GameSettings.MIN_COMBO_BONUS_PERCENT, GameSettings.MAX_COMBO_BONUS_PERCENT, settings.comboBonusPercent,
+                { "+${it.roundToInt()}%" }, { settings.comboBonusPercent = it }
+            )
+            slider(
+                c.body, "Biggest hot streak bonus", "The most your streak bonus can ever grow to.",
+                GameSettings.MIN_MAX_COMBO_MULTIPLIER, GameSettings.MAX_MAX_COMBO_MULTIPLIER,
+                settings.maxComboMultiplier,
+                { "%.1fx".format(it) }, { settings.maxComboMultiplier = it }
+            )
+            slider(
+                c.body, "Cold streak punishment", "Bad cut after bad cut? Each one takes this much off your score.",
+                GameSettings.MIN_COLD_STREAK_PENALTY_PERCENT, GameSettings.MAX_COLD_STREAK_PENALTY_PERCENT,
+                settings.coldStreakPenaltyPercent,
+                { "-${it.roundToInt()}%" }, { settings.coldStreakPenaltyPercent = it }
+            )
+        }
+
+        card("SLOW MOTION").let { c ->
             root.addView(c.wrapper)
             toggle(
-                c.body, "Halving guide", "Dashed line showing the perfect cut",
+                c.body, "Slow-mo on a perfect cut", "Time crawls for a moment so you can enjoy a perfect cut.",
+                settings.slowMoOnPerfect
+            ) { settings.slowMoOnPerfect = it }
+            slider(
+                c.body, "How slow it goes", "Smaller number = slower. 20% means everything moves at a fifth speed.",
+                GameSettings.MIN_SLOW_MO_INTENSITY, GameSettings.MAX_SLOW_MO_INTENSITY, settings.slowMoIntensity,
+                { "${(it * 100).roundToInt()}%" }, { settings.slowMoIntensity = it }
+            )
+            slider(
+                c.body, "How long the slow-mo lasts", "How many seconds before the game speeds back up.",
+                GameSettings.MIN_SLOW_MO_DURATION, GameSettings.MAX_SLOW_MO_DURATION, settings.slowMoDuration,
+                { "%.1fs".format(it) }, { settings.slowMoDuration = it }
+            )
+            toggle(
+                c.body, "Warning when health is low", "Time slows and counts 3, 2, 1 so you know you are nearly out.",
+                settings.lowHealthSlowMo
+            ) { settings.lowHealthSlowMo = it }
+            slider(
+                c.body, "When to warn you", "Health drops below this much and the warning kicks in.",
+                GameSettings.MIN_LOW_HEALTH_THRESHOLD, GameSettings.MAX_LOW_HEALTH_THRESHOLD,
+                settings.lowHealthThreshold,
+                { "${(it * 100).roundToInt()}%" }, { settings.lowHealthThreshold = it }
+            )
+        }
+
+        card("LOOK & FEEL").let { c ->
+            root.addView(c.wrapper)
+            toggle(
+                c.body, "Show the dotted helper line", "A row of faint dots showing exactly where to cut.",
                 settings.guideLineEnabled
             ) { settings.guideLineEnabled = it }
             slider(
-                c.body, "Guide visibility", "How strongly the guide shows",
+                c.body, "How clearly you see it", "Turn it up to make the helper dots easier to spot.",
                 GameSettings.MIN_GUIDE_LINE_OPACITY, GameSettings.MAX_GUIDE_LINE_OPACITY, settings.guideLineOpacity,
                 { "${(it * 100).roundToInt()}%" }, { settings.guideLineOpacity = it }
             )
             toggle(
-                c.body, "Particles", "Sparks and debris on every cut",
+                c.body, "Sparks and bits", "Little bits fly everywhere when you cut something.",
                 settings.particlesEnabled
             ) { settings.particlesEnabled = it }
             slider(
-                c.body, "Particle amount", "How much debris a cut throws",
+                c.body, "How many bits fly", "More bits = messier, more exciting explosions.",
                 GameSettings.MIN_PARTICLE_AMOUNT, GameSettings.MAX_PARTICLE_AMOUNT, settings.particleAmount,
                 { "%.1fx".format(it) }, { settings.particleAmount = it }
             )
             slider(
-                c.body, "Camera shake", "Screen kick on a good cut",
+                c.body, "Screen shake", "How hard the whole screen jolts when you land a good cut.",
                 GameSettings.MIN_CAMERA_SHAKE_STRENGTH, GameSettings.MAX_CAMERA_SHAKE_STRENGTH,
                 settings.cameraShakeStrength,
                 { if (it <= 0.01f) "Off" else "%.1fx".format(it) }, { settings.cameraShakeStrength = it }
             )
-            toggle(
-                c.body, "Vibration", "Haptic feedback on cuts and misses",
-                settings.vibrationEnabled
-            ) { settings.vibrationEnabled = it }
             slider(
-                c.body, "Vibration strength", "How hard the phone buzzes",
-                GameSettings.MIN_VIBRATION_STRENGTH, GameSettings.MAX_VIBRATION_STRENGTH, settings.vibrationStrength,
-                { "${(it * 100).roundToInt()}%" }, { settings.vibrationStrength = it }
+                c.body, "Colour flash", "The whole screen lights up for a split second on a great cut.",
+                GameSettings.MIN_SCREEN_FLASH_STRENGTH, GameSettings.MAX_SCREEN_FLASH_STRENGTH,
+                settings.screenFlashStrength,
+                { if (it <= 0.01f) "Off" else "%.1fx".format(it) }, { settings.screenFlashStrength = it }
             )
             slider(
-                c.body, "Blade thickness", "Width of the swipe trail",
+                c.body, "Dancing background", "How much the pixel floor behind the game wiggles and changes colour.",
+                GameSettings.MIN_BACKGROUND_MOTION, GameSettings.MAX_BACKGROUND_MOTION, settings.backgroundMotion,
+                { if (it <= 0.01f) "Still" else "%.1fx".format(it) }, { settings.backgroundMotion = it }
+            )
+            slider(
+                c.body, "Knife trail thickness", "How fat the glowing line under your finger is.",
                 GameSettings.MIN_TRAIL_THICKNESS, GameSettings.MAX_TRAIL_THICKNESS, settings.trailThickness,
                 { "%.1fx".format(it) }, { settings.trailThickness = it }
             )
             slider(
-                c.body, "Score text size", "How big the floating score reads",
+                c.body, "Score text size", "How big the points that pop up after a cut are.",
                 GameSettings.MIN_POPUP_TEXT_SCALE, GameSettings.MAX_POPUP_TEXT_SCALE, settings.popupTextScale,
                 { "%.1fx".format(it) }, { settings.popupTextScale = it }
             )
+            toggle(
+                c.body, "Buzzing", "The phone buzzes in your hand when you cut something.",
+                settings.vibrationEnabled
+            ) { settings.vibrationEnabled = it }
             slider(
-                c.body, "Background motion", "Drifting colour behind the play field",
-                GameSettings.MIN_BACKGROUND_MOTION, GameSettings.MAX_BACKGROUND_MOTION, settings.backgroundMotion,
-                { if (it <= 0.01f) "Off" else "%.1fx".format(it) }, { settings.backgroundMotion = it }
-            )
-            slider(
-                c.body, "Screen flash", "Colour wash on a great or perfect cut",
-                GameSettings.MIN_SCREEN_FLASH_STRENGTH, GameSettings.MAX_SCREEN_FLASH_STRENGTH,
-                settings.screenFlashStrength,
-                { if (it <= 0.01f) "Off" else "%.1fx".format(it) }, { settings.screenFlashStrength = it }
+                c.body, "How hard it buzzes", "Turn it down for a gentle tap, up for a proper thump.",
+                GameSettings.MIN_VIBRATION_STRENGTH, GameSettings.MAX_VIBRATION_STRENGTH, settings.vibrationStrength,
+                { "${(it * 100).roundToInt()}%" }, { settings.vibrationStrength = it }
             )
         }
 
