@@ -14,7 +14,7 @@ import android.util.AttributeSet
 import android.view.Choreographer
 import android.view.MotionEvent
 import android.view.View
-import kotlin.math.ceil
+
 import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
@@ -63,6 +63,7 @@ class GameView @JvmOverloads constructor(
     private var bestScore = 0
     private var perfectStreak = 0
     private var bestStreak = 0
+    private var bestPerfectStreak = 0
     private var perfectCount = 0
     private var cutCount = 0
     private var endedOnMiss = false
@@ -82,11 +83,7 @@ class GameView @JvmOverloads constructor(
     private var timeScale = 1f
     /** Seconds remaining of the celebratory slow motion after a perfect cut. */
     private var perfectSlowMo = 0f
-    /**
-     * Critical-health sequence: counts 3, 2, 1 in real seconds while time crawls,
-     * then eases back to full speed. Negative when idle.
-     */
-    private var dangerCountdown = -1f
+    /** Seconds left of the short speed dip when health first turns critical. */
     private var dangerRecovery = 0f
     private var dangerArmed = true
 
@@ -203,20 +200,13 @@ class GameView @JvmOverloads constructor(
 
     /**
      * Works out how fast the world should run this frame. A perfect cut drops into
-     * slow motion and eases back; critical health holds a hard slow motion through a
-     * 3-2-1 countdown and then ramps back linearly, so the player gets a beat to
-     * see how close they are to losing.
+     * slow motion and eases back. Dropping into critical health dips the speed just
+     * long enough to register, then climbs straight back to normal - the warning
+     * itself is carried by the flashing bar rather than by holding time hostage.
      */
     private fun updateTimeControl(realDt: Float) {
         if (state != State.PLAYING) {
             timeScale = 1f
-            return
-        }
-
-        if (dangerCountdown >= 0f) {
-            dangerCountdown -= realDt
-            if (dangerCountdown < 0f) dangerRecovery = DANGER_RECOVERY_SECONDS
-            timeScale = settings.slowMoIntensity.coerceIn(0.05f, 1f)
             return
         }
 
@@ -242,8 +232,7 @@ class GameView @JvmOverloads constructor(
     }
 
     private fun triggerDangerSequence() {
-        dangerCountdown = DANGER_COUNTDOWN_SECONDS
-        dangerRecovery = 0f
+        dangerRecovery = DANGER_RECOVERY_SECONDS
         perfectSlowMo = 0f
         effects.addFlash(Theme.danger, 0.5f * settings.screenFlashStrength)
         pixels.flash(1.4f)
@@ -314,13 +303,12 @@ class GameView @JvmOverloads constructor(
                 spawnCountdown = settings.spawnGapMs / 1000f
             }
 
-            // Critical health: hold a beat in slow motion so the danger registers.
-            if (settings.lowHealthSlowMo && maxHealth > 0) {
-                val fraction = health.toFloat() / maxHealth
-                if (dangerArmed && health > 0 && fraction <= settings.lowHealthThreshold) {
+            // Critical health: one short dip in speed, then the flashing bar carries it.
+            if (settings.lowHealthSlowMo) {
+                if (dangerArmed && health > 0 && health <= settings.lowHealthAt) {
                     dangerArmed = false
                     triggerDangerSequence()
-                } else if (fraction > settings.lowHealthThreshold * 1.5f) {
+                } else if (health > settings.lowHealthAt + 10) {
                     dangerArmed = true
                 }
             }
@@ -403,8 +391,8 @@ class GameView @JvmOverloads constructor(
     private val cutBuckets = IntArray(CUT_BUCKET_LABELS.size)
 
     private fun recordCutBucket(deviation: Float) {
-        // 0-2.5 lands in "50/50", then 5-point bands: 55/45, 60/40, and so on.
-        val index = ((deviation + 2.5f) / 5f).toInt().coerceIn(0, cutBuckets.size - 1)
+        // 0-5 lands in "50/50", then 10-point bands: 60/40, 70/30, and so on.
+        val index = ((deviation + 5f) / 10f).toInt().coerceIn(0, cutBuckets.size - 1)
         cutBuckets[index]++
     }
 
@@ -449,7 +437,6 @@ class GameView @JvmOverloads constructor(
         if (state != State.PLAYING) return
         state = State.GAME_OVER
         bestScore = max(bestScore, score)
-        bestStreak = max(bestStreak, perfectStreak)
         effects.addShake(0.7f * settings.cameraShakeStrength)
         if (settings.vibrationEnabled) haptics.gameOver(settings.vibrationStrength)
     }
@@ -476,7 +463,6 @@ class GameView @JvmOverloads constructor(
         )
         timeScale = 1f
         perfectSlowMo = 0f
-        dangerCountdown = -1f
         dangerRecovery = 0f
         dangerArmed = true
         pixels.reset()
@@ -663,7 +649,10 @@ class GameView @JvmOverloads constructor(
      */
     private fun applyHealth(deviation: Float, grade: Grade) {
         if (grade == Grade.PERFECT && settings.perfectRestoresHealth) {
-            health = maxHealth
+            // The streak has already been advanced by applyScore, so the first
+            // perfect heals one step, the second two, and ten refills a full bar.
+            val heal = (perfectStreak * settings.perfectHealPerStreak).roundToInt()
+            health = (health + heal).coerceIn(0, maxHealth)
             return
         }
         val ratio = deviation / 10f // 1.0 at a 60/40 cut
@@ -687,7 +676,9 @@ class GameView @JvmOverloads constructor(
         if (strong) {
             hotStreak++
             coldStreak = 0
+            // A good streak survives a merely-great cut; a perfect streak does not.
             perfectStreak = if (grade == Grade.PERFECT) perfectStreak + 1 else 0
+            bestPerfectStreak = max(bestPerfectStreak, perfectStreak)
             bestStreak = max(bestStreak, hotStreak)
         } else {
             perfectStreak = 0
@@ -717,11 +708,17 @@ class GameView @JvmOverloads constructor(
         return gained
     }
 
-    /** Grows with a run of great-or-better cuts, capped by the player's ceiling. */
+    /**
+     * Good and perfect streaks pay separately and stack: every great-or-better cut
+     * in a row adds the good-streak bonus, and every *perfect* in a row adds its own
+     * larger bonus on top. Both are additive so the ceiling stays predictable.
+     */
     private fun comboMultiplier(): Float {
-        val steps = (hotStreak - 1).coerceAtLeast(0)
-        return (1f + steps * settings.comboBonusPercent / 100f)
-            .coerceAtMost(settings.maxComboMultiplier)
+        val goodSteps = (hotStreak - 1).coerceAtLeast(0)
+        val perfectSteps = (perfectStreak - 1).coerceAtLeast(0)
+        val bonus = goodSteps * settings.comboBonusPercent / 100f +
+            perfectSteps * settings.perfectStreakBonusPercent / 100f
+        return (1f + bonus).coerceAtMost(settings.maxComboMultiplier)
     }
 
     private fun spawnPieces(
@@ -881,10 +878,10 @@ class GameView @JvmOverloads constructor(
         if (shaken) canvas.restore()
 
         drawFlash(canvas)
+        drawCriticalWarning(canvas)
         drawPopups(canvas)
         if (state == State.PLAYING) {
             drawHud(canvas)
-            drawDangerCountdown(canvas)
         }
 
         when (state) {
@@ -1145,17 +1142,17 @@ class GameView @JvmOverloads constructor(
 
         // Fill
         val frac = (displayedHealth / maxHealth).coerceIn(0f, 1f)
-        val critical = frac <= settings.lowHealthThreshold
+        val critical = health <= settings.lowHealthAt && health > 0
         if (frac > 0.001f) {
             var healthColor = when {
                 frac > 0.55f -> Theme.good
                 frac > 0.25f -> Theme.gold
                 else -> Theme.danger
             }
-            // Critical health strobes so it is impossible to miss.
+            // Critical health alternates red and blue like an emergency light.
             if (critical) {
-                val blink = 0.5f + 0.5f * sin(elapsed * 16f)
-                healthColor = Theme.lerpColor(Theme.danger, Color.WHITE, blink * 0.8f)
+                val lamp = 0.5f + 0.5f * sin(elapsed * 8.2f)
+                healthColor = Theme.lerpColor(EMERGENCY_RED, EMERGENCY_BLUE, lamp)
             }
             roundRect.set(pad, barTop, pad + barWidth * frac, barTop + barHeight)
             panelPaint.color = healthColor
@@ -1171,7 +1168,11 @@ class GameView @JvmOverloads constructor(
 
         uiBoldPaint.textAlign = Paint.Align.LEFT
         uiBoldPaint.textSize = 15f * density
-        uiBoldPaint.color = if (critical) Theme.danger else Theme.textFaint
+        uiBoldPaint.color = if (critical) {
+            Theme.lerpColor(EMERGENCY_RED, EMERGENCY_BLUE, 0.5f + 0.5f * sin(elapsed * 8.2f))
+        } else {
+            Theme.textFaint
+        }
         canvas.drawText(
             if (critical) "CRITICAL" else "HEALTH",
             pad, barTop + barHeight + 20f * density, uiBoldPaint
@@ -1223,26 +1224,43 @@ class GameView @JvmOverloads constructor(
         }
     }
 
-    /** The 3-2-1 that plays over the critical-health slow motion. */
-    private fun drawDangerCountdown(canvas: Canvas) {
-        if (dangerCountdown < 0f) return
-        val secondsLeft = ceil(dangerCountdown.toDouble()).toInt().coerceIn(1, 9)
-        // Each digit swells then shrinks over its own second.
-        val withinSecond = 1f - (dangerCountdown - (secondsLeft - 1))
-        val pop = 1f + 0.35f * (1f - withinSecond) * (1f - withinSecond)
+    /**
+     * The critical-health warning: a red-and-blue wash alternating like an
+     * ambulance light, plus a pulsing CRITICAL banner. Runs for as long as health
+     * stays low rather than for a fixed countdown.
+     */
+    private fun drawCriticalWarning(canvas: Canvas) {
+        if (state != State.PLAYING || health <= 0 || health > settings.lowHealthAt) return
 
-        scrimPaint.color = Theme.withAlpha(Theme.danger, 0.12f)
-        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), scrimPaint)
+        // Two lamps a half-cycle apart, so the colour alternates rather than throbs.
+        val cycle = (elapsed * 2.6f) % 1f
+        val redLamp = (kotlin.math.cos(cycle * 6.2832f) * 0.5f + 0.5f)
+        val blueLamp = 1f - redLamp
 
-        displayPaint.textAlign = Paint.Align.CENTER
-        displayPaint.textSize = 96f * density * pop
-        displayPaint.color = Theme.withAlpha(Color.WHITE, (withinSecond * 1.4f).coerceIn(0.25f, 1f))
-        canvas.drawText(secondsLeft.toString(), width / 2f, height * 0.5f, displayPaint)
+        val edge = width * 0.42f
+        scrimPaint.shader = LinearGradient(
+            0f, 0f, edge, 0f,
+            Theme.withAlpha(EMERGENCY_RED, 0.30f * redLamp), Color.TRANSPARENT,
+            Shader.TileMode.CLAMP
+        )
+        canvas.drawRect(0f, 0f, edge, height.toFloat(), scrimPaint)
 
+        scrimPaint.shader = LinearGradient(
+            width.toFloat(), 0f, width - edge, 0f,
+            Theme.withAlpha(EMERGENCY_BLUE, 0.30f * blueLamp), Color.TRANSPARENT,
+            Shader.TileMode.CLAMP
+        )
+        canvas.drawRect(width - edge, 0f, width.toFloat(), height.toFloat(), scrimPaint)
+        scrimPaint.shader = null
+
+        val bannerPulse = (kotlin.math.cos(elapsed * 9f) * 0.5f + 0.5f)
         uiBoldPaint.textAlign = Paint.Align.CENTER
-        uiBoldPaint.textSize = 20f * density
-        uiBoldPaint.color = Theme.danger
-        canvas.drawText("HEALTH CRITICAL", width / 2f, height * 0.5f + 44f * density, uiBoldPaint)
+        uiBoldPaint.textSize = 19f * density
+        uiBoldPaint.color = Theme.withAlpha(
+            if (redLamp > 0.5f) EMERGENCY_RED else EMERGENCY_BLUE,
+            0.55f + 0.45f * bannerPulse
+        )
+        canvas.drawText("CRITICAL", width / 2f, height * 0.16f, uiBoldPaint)
     }
 
     // ---- Overlays ----
@@ -1315,31 +1333,30 @@ class GameView @JvmOverloads constructor(
         val dividerY = cardTop + 152f * density
         canvas.drawLine(cardLeft + 28f * density, dividerY, cardRight - 28f * density, dividerY, rimPaint)
 
-        // Three stat columns.
-        val statY = dividerY + 46f * density
-        val third = (cardRight - cardLeft) / 3f
-        drawStat(canvas, cardLeft + third * 0.5f, statY, bestScore.toString(), "BEST")
-        drawStat(canvas, cardLeft + third * 1.5f, statY, perfectCount.toString(), "PERFECT")
-        drawStat(canvas, cardLeft + third * 2.5f, statY, "${bestStreak}x", "STREAK")
+        // Headline run stats, in the order that tells the story of the run.
+        val padX = 28f * density
+        var rowY = dividerY + 30f * density
+        val rowStep = 26f * density
 
-        val accuracy = if (cutCount > 0) (perfectCount * 100f / cutCount).roundToInt() else 0
-        uiPaint.textSize = 15f * density
-        uiPaint.color = Theme.textFaint
-        canvas.drawText(
-            "$cutCount cuts · $accuracy% perfect",
-            cx, statY + 34f * density, uiPaint
-        )
+        drawStatRow(canvas, cardLeft + padX, cardRight - padX, rowY, "CUTS SURVIVED", cutCount.toString(), Theme.textPrimary)
+        rowY += rowStep
+        drawStatRow(canvas, cardLeft + padX, cardRight - padX, rowY, "PERFECT CUTS", perfectCount.toString(), Theme.gold)
+        rowY += rowStep
+        drawStatRow(canvas, cardLeft + padX, cardRight - padX, rowY, "BEST PERFECT STREAK", "${bestPerfectStreak}x", Theme.gold)
+        rowY += rowStep
+        drawStatRow(canvas, cardLeft + padX, cardRight - padX, rowY, "BEST GOOD STREAK", "${bestStreak}x", Theme.good)
+        rowY += rowStep + 6f * density
 
-        drawCutBreakdown(canvas, cardLeft, cardRight, statY + 56f * density, cardBottom)
+        drawCutBreakdown(canvas, cardLeft, cardRight, rowY, cardBottom)
 
         drawButton(canvas, primaryButton, "RETRY", primary = true, pressed = pressedButton == 1)
         drawButton(canvas, secondaryButton, "SETTINGS", primary = false, pressed = pressedButton == 2)
     }
 
     /**
-     * How the run's cuts were distributed across accuracy bands, as a small bar
-     * chart. Only bands the player actually hit are listed, so the chart stays
-     * short, and the bars are scaled against the most common band.
+     * How the run's cuts were distributed across accuracy bands. Every band is
+     * listed even when empty, so the player can see at a glance both what they hit
+     * and what they avoided, with bars scaled against the most common band.
      */
     private fun drawCutBreakdown(
         canvas: Canvas,
@@ -1348,30 +1365,17 @@ class GameView @JvmOverloads constructor(
         top: Float,
         cardBottom: Float
     ) {
-        val used = ArrayList<Int>(cutBuckets.size)
         var peak = 0
-        for (i in cutBuckets.indices) {
-            if (cutBuckets[i] > 0) {
-                used.add(i)
-                peak = max(peak, cutBuckets[i])
-            }
-        }
-        if (used.isEmpty() || peak == 0) return
+        for (count in cutBuckets) peak = max(peak, count)
 
         val padX = 28f * density
-        val rowHeight = 20f * density
-        val available = cardBottom - top - 26f * density
-        val maxRows = (available / rowHeight).toInt()
-        if (maxRows < 1) return
+        val rowHeight = 21f * density
+        if (cardBottom - top < rowHeight * 2) return
 
         uiBoldPaint.textAlign = Paint.Align.LEFT
         uiBoldPaint.textSize = 12f * density
         uiBoldPaint.color = Theme.textFaint
         canvas.drawText("HOW YOUR CUTS LANDED", cardLeft + padX, top, uiBoldPaint)
-
-        // If the player sprayed across more bands than fit, keep the most frequent.
-        val rows = if (used.size <= maxRows - 1) used
-        else used.sortedByDescending { cutBuckets[it] }.take(maxRows - 1).sorted()
 
         val labelWidth = 46f * density
         val countWidth = 34f * density
@@ -1379,14 +1383,15 @@ class GameView @JvmOverloads constructor(
         val barRight = cardRight - padX - countWidth
         val barSpan = (barRight - barLeft).coerceAtLeast(1f)
 
-        var y = top + 18f * density
-        for (index in rows) {
+        var y = top + 16f * density
+        for (index in cutBuckets.indices) {
+            if (y + rowHeight > cardBottom) break
             val count = cutBuckets[index]
             val centerY = y + rowHeight * 0.5f
 
             uiBoldPaint.textAlign = Paint.Align.LEFT
             uiBoldPaint.textSize = 13f * density
-            uiBoldPaint.color = Theme.textSecondary
+            uiBoldPaint.color = if (count > 0) Theme.textSecondary else Theme.textFaint
             canvas.drawText(
                 CUT_BUCKET_LABELS[index],
                 cardLeft + padX,
@@ -1399,16 +1404,18 @@ class GameView @JvmOverloads constructor(
             panelPaint.color = Theme.withAlpha(Color.WHITE, 0.07f)
             canvas.drawRoundRect(roundRect, barHeight / 2f, barHeight / 2f, panelPaint)
 
-            val fraction = count.toFloat() / peak
-            roundRect.set(
-                barLeft, centerY - barHeight / 2f,
-                barLeft + barSpan * fraction, centerY + barHeight / 2f
-            )
-            panelPaint.color = bucketColor(index)
-            canvas.drawRoundRect(roundRect, barHeight / 2f, barHeight / 2f, panelPaint)
+            if (count > 0 && peak > 0) {
+                val fraction = count.toFloat() / peak
+                roundRect.set(
+                    barLeft, centerY - barHeight / 2f,
+                    barLeft + barSpan * fraction, centerY + barHeight / 2f
+                )
+                panelPaint.color = bucketColor(index)
+                canvas.drawRoundRect(roundRect, barHeight / 2f, barHeight / 2f, panelPaint)
+            }
 
             uiBoldPaint.textAlign = Paint.Align.RIGHT
-            uiBoldPaint.color = Theme.textPrimary
+            uiBoldPaint.color = if (count > 0) Theme.textPrimary else Theme.textFaint
             canvas.drawText(
                 count.toString(),
                 cardRight - padX,
@@ -1425,19 +1432,29 @@ class GameView @JvmOverloads constructor(
         0 -> Theme.gold
         1 -> Theme.good
         2 -> Theme.accent
-        3, 4 -> Color.rgb(255, 190, 90)
+        3 -> Color.rgb(255, 190, 90)
         else -> Theme.danger
     }
 
-    private fun drawStat(canvas: Canvas, cx: Float, cy: Float, value: String, label: String) {
-        displayPaint.textAlign = Paint.Align.CENTER
-        displayPaint.textSize = 19f * density
-        displayPaint.color = Theme.textPrimary
-        canvas.drawText(value, cx, cy, displayPaint)
+    /** One "LABEL .......... value" line on the game-over card. */
+    private fun drawStatRow(
+        canvas: Canvas,
+        left: Float,
+        right: Float,
+        y: Float,
+        label: String,
+        value: String,
+        valueColor: Int
+    ) {
+        uiBoldPaint.textAlign = Paint.Align.LEFT
+        uiBoldPaint.textSize = 14f * density
+        uiBoldPaint.color = Theme.textFaint
+        canvas.drawText(label, left, y, uiBoldPaint)
 
-        uiPaint.textSize = 13f * density
-        uiPaint.color = Theme.textFaint
-        canvas.drawText(label, cx, cy + 20f * density, uiPaint)
+        uiBoldPaint.textAlign = Paint.Align.RIGHT
+        uiBoldPaint.textSize = 17f * density
+        uiBoldPaint.color = valueColor
+        canvas.drawText(value, right, y, uiBoldPaint)
     }
 
     private fun drawChip(canvas: Canvas, cx: Float, cy: Float, text: String) {
@@ -1487,15 +1504,14 @@ class GameView @JvmOverloads constructor(
 
     private companion object {
         /** Real seconds the critical-health countdown runs for. */
-        const val DANGER_COUNTDOWN_SECONDS = 3f
         /** Real seconds spent climbing linearly back to full speed afterwards. */
-        const val DANGER_RECOVERY_SECONDS = 2.2f
+        const val DANGER_RECOVERY_SECONDS = 1.1f
+
+        val EMERGENCY_RED = Color.rgb(255, 62, 74)
+        val EMERGENCY_BLUE = Color.rgb(74, 138, 255)
 
         /** Accuracy buckets shown on the game-over card, widest miss last. */
-        val CUT_BUCKET_LABELS = arrayOf(
-            "50/50", "55/45", "60/40", "65/35", "70/30",
-            "75/25", "80/20", "85/15", "90/10", "95/5", "99/1"
-        )
+        val CUT_BUCKET_LABELS = arrayOf("50/50", "60/40", "70/30", "80/20", "90/10")
     }
 
     private class TrailPoint(val x: Float, val y: Float, val timeMs: Long)

@@ -187,9 +187,16 @@ class SettingsActivity : AppCompatActivity() {
                 { "%.1f".format(it) }, { settings.healthLossCurve = it }
             )
             toggle(
-                c.body, "Perfect cut heals you", "A dead centre cut fills your health bar right back up.",
+                c.body, "Perfect cuts heal you", "Dead centre cuts give you health back.",
                 settings.perfectRestoresHealth
             ) { settings.perfectRestoresHealth = it }
+            slider(
+                c.body, "Healing per perfect in a row",
+                "First perfect heals this much, second heals twice, and so on. At 10 hp, ten perfects in a row refill the whole bar.",
+                GameSettings.MIN_PERFECT_HEAL_PER_STREAK, GameSettings.MAX_PERFECT_HEAL_PER_STREAK,
+                settings.perfectHealPerStreak,
+                { "%.0f hp".format(it) }, { settings.perfectHealPerStreak = it }
+            )
             toggle(
                 c.body, "Missing a shape ends the game", "Let one fall off the screen without cutting it and you lose.",
                 settings.missEndsRun
@@ -199,9 +206,16 @@ class SettingsActivity : AppCompatActivity() {
         card("STREAKS").let { c ->
             root.addView(c.wrapper)
             slider(
-                c.body, "Hot streak bonus", "Good cut after good cut? Each one adds this much extra score.",
+                c.body, "Good streak bonus", "Good cut after good cut (60/40 or better)? Each one adds this much extra score.",
                 GameSettings.MIN_COMBO_BONUS_PERCENT, GameSettings.MAX_COMBO_BONUS_PERCENT, settings.comboBonusPercent,
                 { "+${it.roundToInt()}%" }, { settings.comboBonusPercent = it }
+            )
+            slider(
+                c.body, "Perfect streak bonus",
+                "Dead centre cut after dead centre cut? Each one adds this much on top of the good streak bonus.",
+                GameSettings.MIN_PERFECT_STREAK_BONUS_PERCENT, GameSettings.MAX_PERFECT_STREAK_BONUS_PERCENT,
+                settings.perfectStreakBonusPercent,
+                { "+${it.roundToInt()}%" }, { settings.perfectStreakBonusPercent = it }
             )
             slider(
                 c.body, "Biggest hot streak bonus", "The most your streak bonus can ever grow to.",
@@ -239,9 +253,9 @@ class SettingsActivity : AppCompatActivity() {
             ) { settings.lowHealthSlowMo = it }
             slider(
                 c.body, "When to warn you", "Health drops below this much and the warning kicks in.",
-                GameSettings.MIN_LOW_HEALTH_THRESHOLD, GameSettings.MAX_LOW_HEALTH_THRESHOLD,
-                settings.lowHealthThreshold,
-                { "${(it * 100).roundToInt()}%" }, { settings.lowHealthThreshold = it }
+                GameSettings.MIN_LOW_HEALTH_AT.toFloat(), GameSettings.MAX_LOW_HEALTH_AT.toFloat(),
+                settings.lowHealthAt.toFloat(),
+                { "${it.roundToInt()} hp" }, { settings.lowHealthAt = it.roundToInt() }
             )
         }
 
@@ -487,7 +501,11 @@ class SettingsActivity : AppCompatActivity() {
         addView(pillButton("COPY ALL SETTINGS", primary = false) {
             copySettingsToClipboard()
         }.also {
-            (it.layoutParams as LinearLayout.LayoutParams).bottomMargin = dp(12f)
+            // A weighted, zero-width pill only works inside a row; in this column
+            // it needs a real width or it collapses and disappears.
+            it.layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(12f) }
         })
 
         addView(LinearLayout(this@SettingsActivity).apply {
@@ -537,11 +555,13 @@ class SettingsActivity : AppCompatActivity() {
             appendLine("  Bonus for being neat: ${settings.greatBonusPercent.roundToInt()}%")
             appendLine("  Health lost on a 60/40 cut: %.1f hp".format(settings.healthLossAtSixtyForty))
             appendLine("  Punish bad cuts extra: %.1f".format(settings.healthLossCurve))
-            appendLine("  Perfect cut heals you: ${onOff(settings.perfectRestoresHealth)}")
+            appendLine("  Perfect cuts heal you: ${onOff(settings.perfectRestoresHealth)}")
+            appendLine("  Healing per perfect in a row: %.0f hp".format(settings.perfectHealPerStreak))
             appendLine("  Missing a shape ends the game: ${onOff(settings.missEndsRun)}")
             appendLine()
             appendLine("STREAKS")
-            appendLine("  Hot streak bonus: ${settings.comboBonusPercent.roundToInt()}%")
+            appendLine("  Good streak bonus: ${settings.comboBonusPercent.roundToInt()}%")
+            appendLine("  Perfect streak bonus: ${settings.perfectStreakBonusPercent.roundToInt()}%")
             appendLine("  Biggest hot streak bonus: %.1fx".format(settings.maxComboMultiplier))
             appendLine("  Cold streak punishment: ${settings.coldStreakPenaltyPercent.roundToInt()}%")
             appendLine()
@@ -550,7 +570,7 @@ class SettingsActivity : AppCompatActivity() {
             appendLine("  How slow it goes: ${(settings.slowMoIntensity * 100).roundToInt()}%")
             appendLine("  How long it lasts: %.1fs".format(settings.slowMoDuration))
             appendLine("  Warning when health is low: ${onOff(settings.lowHealthSlowMo)}")
-            appendLine("  When to warn you: ${(settings.lowHealthThreshold * 100).roundToInt()}%")
+            appendLine("  When to warn you: ${settings.lowHealthAt} hp")
             appendLine()
             appendLine("LOOK & FEEL")
             appendLine("  Dotted helper line: ${onOff(settings.guideLineEnabled)}")

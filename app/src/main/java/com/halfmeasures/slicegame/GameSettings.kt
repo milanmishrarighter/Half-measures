@@ -60,10 +60,17 @@ data class GameSettings(
      * disproportionately more than a near miss.
      */
     var healthLossCurve: Float = DEFAULT_HEALTH_LOSS_CURVE,
-    /** A perfect cut refills the health bar. */
+    /** Perfect cuts heal. */
     var perfectRestoresHealth: Boolean = DEFAULT_PERFECT_RESTORES_HEALTH,
-    /** Score multiplier gained per consecutive great-or-better cut, as a percentage. */
+    /**
+     * Health restored per perfect in a row: the first heals this much, the second
+     * twice this, and so on, so a ten-perfect run refills a full bar.
+     */
+    var perfectHealPerStreak: Float = DEFAULT_PERFECT_HEAL_PER_STREAK,
+    /** Score bonus per consecutive great-or-better cut, as a percentage. */
     var comboBonusPercent: Float = DEFAULT_COMBO_BONUS_PERCENT,
+    /** Score bonus per consecutive *perfect* cut - stacks on top of the good-streak bonus. */
+    var perfectStreakBonusPercent: Float = DEFAULT_PERFECT_STREAK_BONUS_PERCENT,
     var maxComboMultiplier: Float = DEFAULT_MAX_COMBO_MULTIPLIER,
     /** Score cut per consecutive sloppy cut, as a percentage - a cold streak bites back. */
     var coldStreakPenaltyPercent: Float = DEFAULT_COLD_STREAK_PENALTY_PERCENT,
@@ -104,8 +111,8 @@ data class GameSettings(
     var slowMoDuration: Float = DEFAULT_SLOW_MO_DURATION,
     /** Drop into slow motion with a countdown when health gets critical. */
     var lowHealthSlowMo: Boolean = DEFAULT_LOW_HEALTH_SLOW_MO,
-    /** Health fraction that triggers the critical-health warning. */
-    var lowHealthThreshold: Float = DEFAULT_LOW_HEALTH_THRESHOLD
+    /** Health points at or below which the critical warning starts flashing. */
+    var lowHealthAt: Int = DEFAULT_LOW_HEALTH_AT
 ) {
     fun saveTo(context: Context) {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
@@ -130,6 +137,8 @@ data class GameSettings(
             .putFloat("health_loss_at_sixty_forty", healthLossAtSixtyForty)
             .putFloat("health_loss_curve", healthLossCurve)
             .putBoolean("perfect_restores_health", perfectRestoresHealth)
+            .putFloat("perfect_heal_per_streak", perfectHealPerStreak)
+            .putFloat("perfect_streak_bonus_percent", perfectStreakBonusPercent)
             .putFloat("combo_bonus_percent", comboBonusPercent)
             .putFloat("max_combo_multiplier", maxComboMultiplier)
             .putFloat("cold_streak_penalty_percent", coldStreakPenaltyPercent)
@@ -153,7 +162,7 @@ data class GameSettings(
             .putFloat("slow_mo_intensity", slowMoIntensity)
             .putFloat("slow_mo_duration", slowMoDuration)
             .putBoolean("low_health_slow_mo", lowHealthSlowMo)
-            .putFloat("low_health_threshold", lowHealthThreshold)
+            .putInt("low_health_at", lowHealthAt)
             .apply()
     }
 
@@ -180,6 +189,8 @@ data class GameSettings(
         const val DEFAULT_HEALTH_LOSS_AT_SIXTY_FORTY = 2f
         const val DEFAULT_HEALTH_LOSS_CURVE = 1.8f
         const val DEFAULT_PERFECT_RESTORES_HEALTH = true
+        const val DEFAULT_PERFECT_HEAL_PER_STREAK = 10f
+        const val DEFAULT_PERFECT_STREAK_BONUS_PERCENT = 30f
         const val DEFAULT_COMBO_BONUS_PERCENT = 15f
         const val DEFAULT_MAX_COMBO_MULTIPLIER = 4f
         const val DEFAULT_COLD_STREAK_PENALTY_PERCENT = 20f
@@ -203,7 +214,7 @@ data class GameSettings(
         const val DEFAULT_SLOW_MO_INTENSITY = 0.07f
         const val DEFAULT_SLOW_MO_DURATION = 2.6f
         const val DEFAULT_LOW_HEALTH_SLOW_MO = true
-        const val DEFAULT_LOW_HEALTH_THRESHOLD = 0.1f
+        const val DEFAULT_LOW_HEALTH_AT = 20
 
         const val MIN_SIZE_SCALE = 0.5f
         const val MAX_SIZE_SCALE = 3.0f
@@ -277,8 +288,12 @@ data class GameSettings(
         const val MAX_SLOW_MO_INTENSITY = 0.9f
         const val MIN_SLOW_MO_DURATION = 0.3f
         const val MAX_SLOW_MO_DURATION = 7f
-        const val MIN_LOW_HEALTH_THRESHOLD = 0.05f
-        const val MAX_LOW_HEALTH_THRESHOLD = 0.5f
+        const val MIN_LOW_HEALTH_AT = 5
+        const val MAX_LOW_HEALTH_AT = 80
+        const val MIN_PERFECT_HEAL_PER_STREAK = 0f
+        const val MAX_PERFECT_HEAL_PER_STREAK = 40f
+        const val MIN_PERFECT_STREAK_BONUS_PERCENT = 0f
+        const val MAX_PERFECT_STREAK_BONUS_PERCENT = 150f
 
         private const val PREFS_NAME = "half_measures_settings"
 
@@ -306,6 +321,8 @@ data class GameSettings(
                 healthLossAtSixtyForty = p.getFloat("health_loss_at_sixty_forty", DEFAULT_HEALTH_LOSS_AT_SIXTY_FORTY),
                 healthLossCurve = p.getFloat("health_loss_curve", DEFAULT_HEALTH_LOSS_CURVE),
                 perfectRestoresHealth = p.getBoolean("perfect_restores_health", DEFAULT_PERFECT_RESTORES_HEALTH),
+                perfectHealPerStreak = p.getFloat("perfect_heal_per_streak", DEFAULT_PERFECT_HEAL_PER_STREAK),
+                perfectStreakBonusPercent = p.getFloat("perfect_streak_bonus_percent", DEFAULT_PERFECT_STREAK_BONUS_PERCENT),
                 comboBonusPercent = p.getFloat("combo_bonus_percent", DEFAULT_COMBO_BONUS_PERCENT),
                 maxComboMultiplier = p.getFloat("max_combo_multiplier", DEFAULT_MAX_COMBO_MULTIPLIER),
                 coldStreakPenaltyPercent = p.getFloat("cold_streak_penalty_percent", DEFAULT_COLD_STREAK_PENALTY_PERCENT),
@@ -329,7 +346,7 @@ data class GameSettings(
                 slowMoIntensity = p.getFloat("slow_mo_intensity", DEFAULT_SLOW_MO_INTENSITY),
                 slowMoDuration = p.getFloat("slow_mo_duration", DEFAULT_SLOW_MO_DURATION),
                 lowHealthSlowMo = p.getBoolean("low_health_slow_mo", DEFAULT_LOW_HEALTH_SLOW_MO),
-                lowHealthThreshold = p.getFloat("low_health_threshold", DEFAULT_LOW_HEALTH_THRESHOLD)
+                lowHealthAt = p.getInt("low_health_at", DEFAULT_LOW_HEALTH_AT)
             )
         }
     }
