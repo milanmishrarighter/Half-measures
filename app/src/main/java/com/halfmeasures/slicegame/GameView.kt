@@ -66,6 +66,8 @@ class GameView @JvmOverloads constructor(
     private var bestScore = scores.getInt("best_score", 0)
     /** True when the run just finished beat the stored record. */
     private var beatBestScore = false
+    /** Seconds until the next firework goes up on a record-breaking run. */
+    private var fireworkTimer = 0f
     private var perfectStreak = 0
     private var bestStreak = 0
     private var bestPerfectStreak = 0
@@ -111,8 +113,14 @@ class GameView @JvmOverloads constructor(
     private val trailMaxAgeMs = 165L
 
     // ---- Buttons (laid out in onSizeChanged, hit-tested in onTouchEvent) ----
-    private val primaryButton = RectF()
-    private val secondaryButton = RectF()
+    /** The ready screen centres its buttons; the game-over screen stacks them under its card. */
+    private val readyPrimary = RectF()
+    private val readySecondary = RectF()
+    private val overPrimary = RectF()
+    private val overSecondary = RectF()
+    private val gameOverCard = RectF()
+    private val primaryButton: RectF get() = if (state == State.GAME_OVER) overPrimary else readyPrimary
+    private val secondaryButton: RectF get() = if (state == State.GAME_OVER) overSecondary else readySecondary
     private var pressedButton = 0 // 0 none, 1 primary, 2 secondary
 
     // ---- Paints, all reused ----
@@ -226,7 +234,7 @@ class GameView @JvmOverloads constructor(
         if (dangerRecovery > 0f) {
             dangerRecovery = (dangerRecovery - realDt).coerceAtLeast(0f)
             // Linear climb back to normal speed.
-            val progress = 1f - dangerRecovery / DANGER_RECOVERY_SECONDS
+            val progress = 1f - dangerRecovery / settings.slowMoDuration.coerceAtLeast(0.05f)
             timeScale = settings.slowMoIntensity + (1f - settings.slowMoIntensity) * progress
             return
         }
@@ -245,7 +253,7 @@ class GameView @JvmOverloads constructor(
     }
 
     private fun triggerDangerSequence() {
-        dangerRecovery = DANGER_RECOVERY_SECONDS
+        dangerRecovery = settings.slowMoDuration
         perfectSlowMo = 0f
         effects.addFlash(Theme.danger, 0.5f * settings.screenFlashStrength)
         pixels.flash(1.4f)
@@ -269,21 +277,46 @@ class GameView @JvmOverloads constructor(
         layoutButtons(w, h)
     }
 
+    /**
+     * Both overlays are laid out here. The game-over card is measured from its own
+     * contents and the buttons are stacked underneath it, with the whole block
+     * centred - so the card can never spill past its own edge onto the buttons.
+     */
     private fun layoutButtons(w: Int, h: Int) {
         val buttonWidth = min(w * 0.72f, 300f * density)
         val buttonHeight = 58f * density
+        val buttonGap = 14f * density
         val cx = w / 2f
-        val primaryTop = h * 0.62f
-        primaryButton.set(
-            cx - buttonWidth / 2f, primaryTop,
-            cx + buttonWidth / 2f, primaryTop + buttonHeight
+
+        val readyTop = h * 0.62f
+        readyPrimary.set(cx - buttonWidth / 2f, readyTop, cx + buttonWidth / 2f, readyTop + buttonHeight)
+        readySecondary.set(
+            cx - buttonWidth / 2f, readyTop + buttonHeight + buttonGap,
+            cx + buttonWidth / 2f, readyTop + buttonHeight * 2 + buttonGap
         )
-        val secondaryTop = primaryTop + buttonHeight + 16f * density
-        secondaryButton.set(
-            cx - buttonWidth / 2f, secondaryTop,
-            cx + buttonWidth / 2f, secondaryTop + buttonHeight
+
+        val cardHeight = measureGameOverCard()
+        val cardGap = 26f * density
+        val blockHeight = cardHeight + cardGap + buttonHeight * 2 + buttonGap
+        val blockTop = ((h - blockHeight) / 2f).coerceAtLeast(20f * density)
+
+        gameOverCard.set(w * 0.09f, blockTop, w * 0.91f, blockTop + cardHeight)
+        val overTop = gameOverCard.bottom + cardGap
+        overPrimary.set(cx - buttonWidth / 2f, overTop, cx + buttonWidth / 2f, overTop + buttonHeight)
+        overSecondary.set(
+            cx - buttonWidth / 2f, overTop + buttonHeight + buttonGap,
+            cx + buttonWidth / 2f, overTop + buttonHeight * 2 + buttonGap
         )
     }
+
+    /** Total height the game-over card needs for everything it draws. */
+    private fun measureGameOverCard(): Float =
+        CARD_HEADER_HEIGHT * density +
+            24f * density +
+            CARD_STAT_ROW_HEIGHT * density * 5 +
+            30f * density +
+            16f * density + CARD_BREAKDOWN_ROW_HEIGHT * density * cutBuckets.size +
+            CARD_BOTTOM_PADDING * density
 
     // ---------------------------------------------------------------------
     // Simulation
@@ -359,6 +392,8 @@ class GameView @JvmOverloads constructor(
             i--
         }
 
+        if (state == State.GAME_OVER && beatBestScore) updateFireworks(dt)
+
         effects.update(dt, gravity)
 
         displayedHealth += (health - displayedHealth) * min(1f, dt * 9f)
@@ -409,6 +444,29 @@ class GameView @JvmOverloads constructor(
         cutBuckets[grade.ordinal]++
     }
 
+    /**
+     * Celebration for a new record: pixel shells launched at a steady clip across
+     * the upper screen, each one popping into a ring of embers and sparks.
+     */
+    private fun updateFireworks(dt: Float) {
+        fireworkTimer -= dt
+        if (fireworkTimer > 0f || width <= 0) return
+        fireworkTimer = 0.22f + random.nextFloat() * 0.3f
+
+        val x = width * (0.12f + random.nextFloat() * 0.76f)
+        val y = height * (0.08f + random.nextFloat() * 0.34f)
+        val palette = Theme.shapePalette[random.nextInt(Theme.shapePalette.size)]
+        val color = if (random.nextFloat() < 0.4f) Theme.gold else palette[0]
+
+        // Chunky pixel debris, matching the background's blocky vocabulary.
+        pixels.burst(x, y, 2.4f)
+        pixels.flash(0.5f)
+        effects.radialBurst(x, y, color, 26, 460f, 1.5f)
+        effects.radialBurst(x, y, Theme.lighten(color, 0.4f), 14, 260f, 1.1f)
+        effects.shockwave(x, y, width * 0.22f, color, 0.5f, 7f)
+        effects.addEnergy(0.5f)
+    }
+
     /** -1 while the player is cold, +1 while they are hot; drives the backdrop's colour. */
     private fun streakWarmth(): Float = when {
         hotStreak >= 2 -> (hotStreak / 5f).coerceAtMost(1f)
@@ -452,6 +510,7 @@ class GameView @JvmOverloads constructor(
         if (score > bestScore) {
             bestScore = score
             beatBestScore = true
+            fireworkTimer = 0f
             scores.edit().putInt("best_score", bestScore).apply()
         }
         effects.addShake(0.7f * settings.cameraShakeStrength)
@@ -475,6 +534,7 @@ class GameView @JvmOverloads constructor(
         cutCount = 0
         endedOnMiss = false
         beatBestScore = false
+        fireworkTimer = 0f
         bestStreak = 0
         bestPerfectStreak = 0
         stage = 0
@@ -582,14 +642,19 @@ class GameView @JvmOverloads constructor(
     }
 
     /** How well a cut halved the shape, which drives score, health, and how loud the celebration is. */
-    private enum class Grade { PERFECT, GREAT, GOOD, FAIR, POOR }
+    /**
+     * Tiers a cut can land in, tightest first. GREAT is the band that keeps a good
+     * streak alive; GOOD and below are ordinary cuts that break it.
+     */
+    private enum class Grade { PERFECT, GREAT, GOOD, FAIR, POOR, MISS }
 
     private fun gradeFor(deviation: Float): Grade = when {
         deviation <= settings.perfectThreshold -> Grade.PERFECT
         deviation <= settings.greatThreshold -> Grade.GREAT
-        deviation <= 20f -> Grade.GOOD
-        deviation <= 32f -> Grade.FAIR
-        else -> Grade.POOR
+        deviation <= 10f -> Grade.GOOD
+        deviation <= 20f -> Grade.FAIR
+        deviation <= 30f -> Grade.POOR
+        else -> Grade.MISS
     }
 
     /** Returns true when the cut landed and the shape should be consumed. */
@@ -687,23 +752,29 @@ class GameView @JvmOverloads constructor(
      * sloppy ones eats into it and can start costing points outright.
      */
     private fun applyScore(deviation: Float, grade: Grade): Int {
-        val strong = grade == Grade.PERFECT || grade == Grade.GREAT
-        val sloppy = grade == Grade.FAIR || grade == Grade.POOR
+        val sloppy = grade == Grade.POOR || grade == Grade.MISS
 
-        if (grade == Grade.PERFECT) {
-            perfectCount++
-        }
-        if (strong) {
-            hotStreak++
-            coldStreak = 0
-            // A good streak survives a merely-great cut; a perfect streak does not.
-            perfectStreak = if (grade == Grade.PERFECT) perfectStreak + 1 else 0
-            bestPerfectStreak = max(bestPerfectStreak, perfectStreak)
-            bestStreak = max(bestStreak, hotStreak)
-        } else {
-            perfectStreak = 0
-            hotStreak = 0
-            if (sloppy) coldStreak++ else coldStreak = 0
+        // The two streaks are mutually exclusive: a perfect ends any good run and
+        // starts a perfect run, and a merely-great cut does the reverse.
+        when (grade) {
+            Grade.PERFECT -> {
+                perfectCount++
+                perfectStreak++
+                hotStreak = 0
+                coldStreak = 0
+                bestPerfectStreak = max(bestPerfectStreak, perfectStreak)
+            }
+            Grade.GREAT -> {
+                hotStreak++
+                perfectStreak = 0
+                coldStreak = 0
+                bestStreak = max(bestStreak, hotStreak)
+            }
+            else -> {
+                perfectStreak = 0
+                hotStreak = 0
+                if (sloppy) coldStreak++ else coldStreak = 0
+            }
         }
 
         val base = (100f - deviation * settings.scoreMissWeight).coerceAtLeast(0f)
@@ -734,10 +805,12 @@ class GameView @JvmOverloads constructor(
      * larger bonus on top. Both are additive so the ceiling stays predictable.
      */
     private fun comboMultiplier(): Float {
-        val goodSteps = (hotStreak - 1).coerceAtLeast(0)
-        val perfectSteps = (perfectStreak - 1).coerceAtLeast(0)
-        val bonus = goodSteps * settings.comboBonusPercent / 100f +
-            perfectSteps * settings.perfectStreakBonusPercent / 100f
+        // Only one streak can be live at a time, so whichever is running pays.
+        val bonus = if (perfectStreak > 0) {
+            (perfectStreak - 1).coerceAtLeast(0) * settings.perfectStreakBonusPercent / 100f
+        } else {
+            (hotStreak - 1).coerceAtLeast(0) * settings.comboBonusPercent / 100f
+        }
         return (1f + bonus).coerceAtMost(settings.maxComboMultiplier)
     }
 
@@ -787,7 +860,7 @@ class GameView @JvmOverloads constructor(
                 Grade.GREAT -> 34
                 Grade.GOOD -> 24
                 Grade.FAIR -> 18
-                Grade.POOR -> 12
+                else -> 12
             }
             val bladeSpeed = when (grade) {
                 Grade.PERFECT -> 620f
@@ -872,7 +945,8 @@ class GameView @JvmOverloads constructor(
         Grade.GREAT -> Theme.good
         Grade.GOOD -> Theme.accent
         Grade.FAIR -> Color.rgb(255, 190, 90)
-        Grade.POOR -> Theme.danger
+        Grade.POOR -> Color.rgb(255, 140, 80)
+        Grade.MISS -> Theme.danger
     }
 
     // ---------------------------------------------------------------------
@@ -1212,7 +1286,7 @@ class GameView @JvmOverloads constructor(
             Theme.textFaint
         }
         canvas.drawText(
-            if (critical) "CRITICAL" else "HEALTH",
+            if (critical) "LOW HEALTH" else "HEALTH",
             pad, barTop + barHeight + 20f * density, uiBoldPaint
         )
 
@@ -1271,34 +1345,63 @@ class GameView @JvmOverloads constructor(
         if (state != State.PLAYING || health <= 0 || health > settings.lowHealthAt) return
 
         // Two lamps a half-cycle apart, so the colour alternates rather than throbs.
-        val cycle = (elapsed * 2.6f) % 1f
-        val redLamp = (kotlin.math.cos(cycle * 6.2832f) * 0.5f + 0.5f)
+        val cycle = (elapsed * 2.4f) % 1f
+        val redLamp = (cos(cycle * 6.2832f) * 0.5f + 0.5f)
         val blueLamp = 1f - redLamp
 
-        val edge = width * 0.42f
+        val edge = width * 0.62f
         scrimPaint.shader = LinearGradient(
             0f, 0f, edge, 0f,
-            Theme.withAlpha(EMERGENCY_RED, 0.30f * redLamp), Color.TRANSPARENT,
+            Theme.withAlpha(EMERGENCY_RED, 0.62f * redLamp), Color.TRANSPARENT,
             Shader.TileMode.CLAMP
         )
         canvas.drawRect(0f, 0f, edge, height.toFloat(), scrimPaint)
 
         scrimPaint.shader = LinearGradient(
             width.toFloat(), 0f, width - edge, 0f,
-            Theme.withAlpha(EMERGENCY_BLUE, 0.30f * blueLamp), Color.TRANSPARENT,
+            Theme.withAlpha(EMERGENCY_BLUE, 0.62f * blueLamp), Color.TRANSPARENT,
             Shader.TileMode.CLAMP
         )
         canvas.drawRect(width - edge, 0f, width.toFloat(), height.toFloat(), scrimPaint)
+
+        // A sweep across the top and bottom edges as well, so the whole frame pulses.
+        val bandHeight = height * 0.16f
+        scrimPaint.shader = LinearGradient(
+            0f, 0f, 0f, bandHeight,
+            Theme.withAlpha(if (redLamp > 0.5f) EMERGENCY_RED else EMERGENCY_BLUE, 0.34f),
+            Color.TRANSPARENT, Shader.TileMode.CLAMP
+        )
+        canvas.drawRect(0f, 0f, width.toFloat(), bandHeight, scrimPaint)
+        scrimPaint.shader = LinearGradient(
+            0f, height.toFloat(), 0f, height - bandHeight,
+            Theme.withAlpha(if (redLamp > 0.5f) EMERGENCY_BLUE else EMERGENCY_RED, 0.34f),
+            Color.TRANSPARENT, Shader.TileMode.CLAMP
+        )
+        canvas.drawRect(0f, height - bandHeight, width.toFloat(), height.toFloat(), scrimPaint)
         scrimPaint.shader = null
 
-        val bannerPulse = (kotlin.math.cos(elapsed * 9f) * 0.5f + 0.5f)
+        // Headline sized like the PERFECT call-out, dead centre, breathing in and out.
+        val breathe = 0.5f + 0.5f * cos(elapsed * 5.5f)
+        val lampColor = if (redLamp > 0.5f) EMERGENCY_RED else EMERGENCY_BLUE
+        val cx = width / 2f
+        val cy = height * 0.5f
+
+        displayPaint.textAlign = Paint.Align.CENTER
+        displayPaint.textSize = 30f * density * (1f + 0.06f * breathe)
+
+        displayPaint.style = Paint.Style.STROKE
+        displayPaint.strokeWidth = 12f * density
+        displayPaint.color = Theme.withAlpha(lampColor, 0.28f * (0.5f + breathe))
+        canvas.drawText("LOW HEALTH", cx, cy, displayPaint)
+        displayPaint.style = Paint.Style.FILL
+
+        displayPaint.color = Theme.withAlpha(Color.WHITE, 0.7f + 0.3f * breathe)
+        canvas.drawText("LOW HEALTH", cx, cy, displayPaint)
+
         uiBoldPaint.textAlign = Paint.Align.CENTER
-        uiBoldPaint.textSize = 19f * density
-        uiBoldPaint.color = Theme.withAlpha(
-            if (redLamp > 0.5f) EMERGENCY_RED else EMERGENCY_BLUE,
-            0.55f + 0.45f * bannerPulse
-        )
-        canvas.drawText("CRITICAL", width / 2f, height * 0.16f, uiBoldPaint)
+        uiBoldPaint.textSize = 17f * density
+        uiBoldPaint.color = Theme.withAlpha(lampColor, 0.75f + 0.25f * breathe)
+        canvas.drawText("$health HP LEFT", cx, cy + 30f * density, uiBoldPaint)
     }
 
     // ---- Overlays ----
@@ -1331,33 +1434,27 @@ class GameView @JvmOverloads constructor(
     }
 
     private fun drawGameOverScreen(canvas: Canvas) {
-        scrimPaint.color = Color.argb(200, 3, 5, 12)
+        scrimPaint.color = Color.argb(205, 3, 5, 12)
         canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), scrimPaint)
 
-        val cx = width / 2f
-        val cardLeft = width * 0.09f
-        val cardRight = width * 0.91f
+        // Fireworks belong above the dimming scrim, not behind it.
+        if (beatBestScore) {
+            pixels.draw(canvas, pixelPaint, effects.energy)
+            drawShockwaves(canvas)
+            drawParticles(canvas)
+        }
+
+        val cardLeft = gameOverCard.left
+        val cardRight = gameOverCard.right
+        val cardTop = gameOverCard.top
+        val cx = gameOverCard.centerX()
         val padX = 28f * density
-        val rowStep = 26f * density
-        val breakdownRowHeight = 21f * density
+        val rowStep = CARD_STAT_ROW_HEIGHT * density
 
-        // Measure the card to its contents so the last row never crowds the edge.
-        val headerHeight = 152f * density
-        val statRowsHeight = rowStep * 5
-        val breakdownHeight = 16f * density + breakdownRowHeight * cutBuckets.size
-        val bottomPadding = 30f * density
-        val cardHeight = headerHeight + 24f * density + statRowsHeight +
-            18f * density + breakdownHeight + bottomPadding
-
-        val maxBottom = primaryButton.top - 26f * density
-        val cardTop = (maxBottom - cardHeight).coerceAtLeast(height * 0.06f)
-        val cardBottom = maxBottom
-
-        roundRect.set(cardLeft, cardTop, cardRight, cardBottom)
         val radius = 26f * density
         panelPaint.color = Theme.card
-        canvas.drawRoundRect(roundRect, radius, radius, panelPaint)
-        canvas.drawRoundRect(roundRect, radius, radius, panelStrokePaint)
+        canvas.drawRoundRect(gameOverCard, radius, radius, panelPaint)
+        canvas.drawRoundRect(gameOverCard, radius, radius, panelStrokePaint)
 
         val accentColor = if (endedOnMiss) Theme.danger else Theme.gold
 
@@ -1380,15 +1477,13 @@ class GameView @JvmOverloads constructor(
 
         uiPaint.textSize = 15f * density
         uiPaint.color = Theme.textFaint
-        canvas.drawText("FINAL SCORE", cx, cardTop + 130f * density, uiPaint)
+        canvas.drawText("FINAL SCORE", cx, cardTop + 132f * density, uiPaint)
 
-        // Divider
         rimPaint.strokeWidth = 1.5f
         rimPaint.color = Theme.hairline
-        val dividerY = cardTop + headerHeight
+        val dividerY = cardTop + CARD_HEADER_HEIGHT * density
         canvas.drawLine(cardLeft + padX, dividerY, cardRight - padX, dividerY, rimPaint)
 
-        // Headline run stats, in the order that tells the story of the run.
         val left = cardLeft + padX
         val right = cardRight - padX
         var rowY = dividerY + 30f * density
@@ -1402,9 +1497,9 @@ class GameView @JvmOverloads constructor(
         drawStatRow(canvas, left, right, rowY, "BEST PERFECT STREAK", "${bestPerfectStreak}x", Theme.gold)
         rowY += rowStep
         drawStatRow(canvas, left, right, rowY, "BEST GOOD STREAK", "${bestStreak}x", Theme.good)
-        rowY += rowStep + 12f * density
+        rowY += 30f * density
 
-        drawCutBreakdown(canvas, cardLeft, cardRight, rowY, breakdownRowHeight)
+        drawCutBreakdown(canvas, cardLeft, cardRight, rowY, CARD_BREAKDOWN_ROW_HEIGHT * density)
 
         drawButton(canvas, primaryButton, "RETRY", primary = true, pressed = pressedButton == 1)
         drawButton(canvas, secondaryButton, "SETTINGS", primary = false, pressed = pressedButton == 2)
@@ -1487,6 +1582,7 @@ class GameView @JvmOverloads constructor(
         1 -> Theme.good
         2 -> Theme.accent
         3 -> Color.rgb(255, 190, 90)
+        4 -> Color.rgb(255, 140, 80)
         else -> Theme.danger
     }
 
@@ -1559,14 +1655,18 @@ class GameView @JvmOverloads constructor(
     private companion object {
         /** Real seconds the critical-health countdown runs for. */
         /** Real seconds spent climbing linearly back to full speed afterwards. */
-        const val DANGER_RECOVERY_SECONDS = 1.1f
+        /** Game-over card metrics, in dp - shared by the measure pass and the draw. */
+        const val CARD_HEADER_HEIGHT = 156f
+        const val CARD_STAT_ROW_HEIGHT = 26f
+        const val CARD_BREAKDOWN_ROW_HEIGHT = 21f
+        const val CARD_BOTTOM_PADDING = 26f
 
         val EMERGENCY_RED = Color.rgb(255, 62, 74)
         val EMERGENCY_BLUE = Color.rgb(74, 138, 255)
 
         /** Accuracy buckets shown on the game-over card, widest miss last. */
         /** One per [Grade], showing the worst split that still lands in that tier. */
-        val CUT_BUCKET_LABELS = arrayOf("PERFECT", "60/40", "70/30", "80/20", "90/10")
+        val CUT_BUCKET_LABELS = arrayOf("PERFECT", "45/55", "60/40", "70/30", "80/20", "90/10")
     }
 
     private class TrailPoint(val x: Float, val y: Float, val timeMs: Long)
