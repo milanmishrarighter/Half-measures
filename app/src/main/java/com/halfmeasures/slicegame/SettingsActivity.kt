@@ -1,145 +1,37 @@
 package com.halfmeasures.slicegame
 
+import android.content.res.ColorStateList
 import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup
-import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.widget.SwitchCompat
 import kotlin.math.roundToInt
 
 /**
- * Lets the player tune every knob behind the spawn algorithm - shape size, launch
- * speed, gravity, spin, starting concurrency, how much score it takes to allow one
- * more shape on screen, the concurrency ceiling, and the gap between spawns - so
- * they can dial in the feel themselves. Built with plain widgets (no XML layout)
- * to match the rest of the app, which is entirely programmatic.
+ * Every mechanic in the game, exposed as a slider or a switch so the feel can be
+ * tuned in-app. Built programmatically to match the Canvas-drawn game surface -
+ * same palette, same typefaces, no XML layouts anywhere in the project.
  */
 class SettingsActivity : AppCompatActivity() {
 
     private lateinit var settings: GameSettings
-
     private val sliderSteps = 1000
+
+    private val density: Float get() = resources.displayMetrics.density
+    private fun dp(value: Float): Int = (value * density).roundToInt()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         settings = GameSettings.load(this)
-
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.rgb(13, 20, 33))
-            setPadding(48, 72, 48, 48)
-        }
-
-        val title = TextView(this).apply {
-            text = "Settings"
-            textSize = 30f
-            setTextColor(Color.WHITE)
-            setPadding(0, 0, 0, 48)
-        }
-        root.addView(title)
-
-        val section1 = sectionLabel("Shapes")
-        root.addView(section1)
-
-        addSlider(
-            root, "Size",
-            GameSettings.MIN_SIZE_SCALE, GameSettings.MAX_SIZE_SCALE, settings.sizeScale,
-            format = { "%.1fx".format(it) },
-            onChange = { settings.sizeScale = it }
-        )
-
-        addSlider(
-            root, "Launch speed (how fast they fly off the bottom)",
-            GameSettings.MIN_SPEED_SCALE, GameSettings.MAX_SPEED_SCALE, settings.speedScale,
-            format = { "%.1fx".format(it) },
-            onChange = { settings.speedScale = it }
-        )
-
-        addSlider(
-            root, "Gravity (higher = falls faster AND peaks lower)",
-            GameSettings.MIN_GRAVITY_SCALE, GameSettings.MAX_GRAVITY_SCALE, settings.gravityScale,
-            format = { "%.1fx".format(it) },
-            onChange = { settings.gravityScale = it }
-        )
-
-        addSlider(
-            root, "Spin speed",
-            GameSettings.MIN_ROTATION_SCALE, GameSettings.MAX_ROTATION_SCALE, settings.rotationScale,
-            format = { "%.1fx".format(it) },
-            onChange = { settings.rotationScale = it }
-        )
-
-        addSlider(
-            root, "Wall strength (0 = sides are transparent, shapes pass through; higher = bouncier)",
-            GameSettings.MIN_WALL_STRENGTH, GameSettings.MAX_WALL_STRENGTH, settings.wallStrength,
-            format = { "${(it * 100).roundToInt()}%" },
-            onChange = { settings.wallStrength = it }
-        )
-
-        root.addView(sectionLabel("Spawning"))
-
-        addSlider(
-            root, "Shapes on screen at the start (score 0)",
-            GameSettings.MIN_CONCURRENCY.toFloat(), GameSettings.MAX_CONCURRENCY_LIMIT.toFloat(),
-            settings.startConcurrency.toFloat(),
-            format = { "${it.roundToInt()}" },
-            onChange = { settings.startConcurrency = it.roundToInt() }
-        )
-
-        addSlider(
-            root, "Score needed to allow one more shape at once",
-            GameSettings.MIN_CONCURRENCY_STEP_SCORE.toFloat(), GameSettings.MAX_CONCURRENCY_STEP_SCORE.toFloat(),
-            settings.concurrencyStepScore.toFloat(),
-            format = { "${it.roundToInt()} pts" },
-            onChange = { settings.concurrencyStepScore = it.roundToInt() }
-        )
-
-        addSlider(
-            root, "Most shapes ever allowed on screen at once",
-            GameSettings.MIN_CONCURRENCY.toFloat(), GameSettings.MAX_CONCURRENCY_LIMIT.toFloat(),
-            settings.maxConcurrency.toFloat(),
-            format = { "${it.roundToInt()}" },
-            onChange = { settings.maxConcurrency = it.roundToInt() }
-        )
-
-        addSlider(
-            root, "Gap between spawns (while under the current cap)",
-            GameSettings.MIN_SPAWN_GAP_MS.toFloat(), GameSettings.MAX_SPAWN_GAP_MS.toFloat(),
-            settings.spawnGapMs.toFloat(),
-            format = { "%.1fs".format(it / 1000f) },
-            onChange = { settings.spawnGapMs = it.toLong() }
-        )
-
-        val buttonRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(0, 48, 0, 0)
-        }
-
-        val resetButton = Button(this).apply {
-            text = "Reset to defaults"
-            setOnClickListener {
-                settings = GameSettings()
-                settings.saveTo(this@SettingsActivity)
-                recreate()
-            }
-        }
-        buttonRow.addView(resetButton)
-
-        val doneButton = Button(this).apply {
-            text = "Done"
-            setOnClickListener { finish() }
-        }
-        buttonRow.addView(doneButton)
-
-        root.addView(buttonRow)
-
-        val scroll = ScrollView(this).apply { addView(root) }
-        setContentView(scroll)
+        setContentView(buildUi())
     }
 
     override fun onPause() {
@@ -147,53 +39,362 @@ class SettingsActivity : AppCompatActivity() {
         settings.saveTo(this)
     }
 
-    private fun sectionLabel(text: String): TextView = TextView(this).apply {
-        this.text = text
-        setTextColor(Color.argb(180, 255, 255, 255))
-        textSize = 13f
-        setPadding(0, 40, 0, 0)
+    private fun buildUi(): View {
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Theme.bgBottom)
+            setPadding(dp(20f), dp(28f), dp(20f), dp(28f))
+        }
+
+        root.addView(header())
+
+        card("SHAPES").let { c ->
+            root.addView(c.wrapper)
+            slider(
+                c.body, "Size", "How big the shapes are",
+                GameSettings.MIN_SIZE_SCALE, GameSettings.MAX_SIZE_SCALE, settings.sizeScale,
+                { "%.1fx".format(it) }, { settings.sizeScale = it }
+            )
+            slider(
+                c.body, "Launch speed", "How fast they leave the bottom",
+                GameSettings.MIN_SPEED_SCALE, GameSettings.MAX_SPEED_SCALE, settings.speedScale,
+                { "%.1fx".format(it) }, { settings.speedScale = it }
+            )
+            slider(
+                c.body, "Gravity", "Higher falls faster and peaks lower",
+                GameSettings.MIN_GRAVITY_SCALE, GameSettings.MAX_GRAVITY_SCALE, settings.gravityScale,
+                { "%.1fx".format(it) }, { settings.gravityScale = it }
+            )
+            slider(
+                c.body, "Spin speed", "How fast shapes rotate in flight",
+                GameSettings.MIN_ROTATION_SCALE, GameSettings.MAX_ROTATION_SCALE, settings.rotationScale,
+                { "%.1fx".format(it) }, { settings.rotationScale = it }
+            )
+            slider(
+                c.body, "Wall strength", "0% lets shapes drift off the sides, higher bounces them back",
+                GameSettings.MIN_WALL_STRENGTH, GameSettings.MAX_WALL_STRENGTH, settings.wallStrength,
+                { "${(it * 100).roundToInt()}%" }, { settings.wallStrength = it }
+            )
+            slider(
+                c.body, "Shape unlock pace", "Lower brings the hard shapes out sooner",
+                GameSettings.MIN_SHAPE_UNLOCK_PACE, GameSettings.MAX_SHAPE_UNLOCK_PACE, settings.shapeUnlockPace,
+                { "%.1fx".format(it) }, { settings.shapeUnlockPace = it }
+            )
+        }
+
+        card("SPAWNING").let { c ->
+            root.addView(c.wrapper)
+            slider(
+                c.body, "Shapes at the start", "How many can share the screen at score 0",
+                GameSettings.MIN_CONCURRENCY.toFloat(), GameSettings.MAX_CONCURRENCY_LIMIT.toFloat(),
+                settings.startConcurrency.toFloat(),
+                { "${it.roundToInt()}" }, { settings.startConcurrency = it.roundToInt() }
+            )
+            slider(
+                c.body, "Score per extra shape", "Score needed to allow one more at once",
+                GameSettings.MIN_CONCURRENCY_STEP_SCORE.toFloat(), GameSettings.MAX_CONCURRENCY_STEP_SCORE.toFloat(),
+                settings.concurrencyStepScore.toFloat(),
+                { "${it.roundToInt()} pts" }, { settings.concurrencyStepScore = it.roundToInt() }
+            )
+            slider(
+                c.body, "Maximum at once", "Hard ceiling on shapes on screen",
+                GameSettings.MIN_CONCURRENCY.toFloat(), GameSettings.MAX_CONCURRENCY_LIMIT.toFloat(),
+                settings.maxConcurrency.toFloat(),
+                { "${it.roundToInt()}" }, { settings.maxConcurrency = it.roundToInt() }
+            )
+            slider(
+                c.body, "Gap between spawns", "Wait before the next shape appears",
+                GameSettings.MIN_SPAWN_GAP_MS.toFloat(), GameSettings.MAX_SPAWN_GAP_MS.toFloat(),
+                settings.spawnGapMs.toFloat(),
+                { "%.1fs".format(it / 1000f) }, { settings.spawnGapMs = it.toLong() }
+            )
+        }
+
+        card("SCORING & HEALTH").let { c ->
+            root.addView(c.wrapper)
+            slider(
+                c.body, "Starting health", "Health you begin each run with",
+                GameSettings.MIN_START_HEALTH.toFloat(), GameSettings.MAX_START_HEALTH.toFloat(),
+                settings.startHealth.toFloat(),
+                { "${it.roundToInt()}" }, { settings.startHealth = it.roundToInt() }
+            )
+            slider(
+                c.body, "Perfect window", "How close to 50/50 still counts as perfect",
+                GameSettings.MIN_PERFECT_THRESHOLD, GameSettings.MAX_PERFECT_THRESHOLD, settings.perfectThreshold,
+                { "±%.1f%%".format(it) }, { settings.perfectThreshold = it }
+            )
+            slider(
+                c.body, "Score penalty", "Points lost per 1% off a perfect half",
+                GameSettings.MIN_SCORE_MISS_WEIGHT, GameSettings.MAX_SCORE_MISS_WEIGHT, settings.scoreMissWeight,
+                { "%.1f pts".format(it) }, { settings.scoreMissWeight = it }
+            )
+            slider(
+                c.body, "Health penalty", "Health lost per 1% off a perfect half",
+                GameSettings.MIN_HEALTH_LOSS_PER_DEVIATION, GameSettings.MAX_HEALTH_LOSS_PER_DEVIATION,
+                settings.healthLossPerDeviation,
+                { "%.2f hp".format(it) }, { settings.healthLossPerDeviation = it }
+            )
+            toggle(
+                c.body, "Perfect refills health", "A flawless cut restores the bar to full",
+                settings.perfectRestoresHealth
+            ) { settings.perfectRestoresHealth = it }
+            slider(
+                c.body, "Combo bonus", "Score multiplier gained per perfect in a row",
+                GameSettings.MIN_COMBO_BONUS_PERCENT, GameSettings.MAX_COMBO_BONUS_PERCENT, settings.comboBonusPercent,
+                { "+${it.roundToInt()}%" }, { settings.comboBonusPercent = it }
+            )
+            slider(
+                c.body, "Combo ceiling", "Highest multiplier a streak can reach",
+                GameSettings.MIN_MAX_COMBO_MULTIPLIER, GameSettings.MAX_MAX_COMBO_MULTIPLIER,
+                settings.maxComboMultiplier,
+                { "%.1fx".format(it) }, { settings.maxComboMultiplier = it }
+            )
+            toggle(
+                c.body, "Missing ends the run", "Letting a shape fall off screen is game over",
+                settings.missEndsRun
+            ) { settings.missEndsRun = it }
+        }
+
+        card("FEEL & EFFECTS").let { c ->
+            root.addView(c.wrapper)
+            toggle(
+                c.body, "Halving guide", "Dashed line showing the perfect cut",
+                settings.guideLineEnabled
+            ) { settings.guideLineEnabled = it }
+            slider(
+                c.body, "Guide visibility", "How strongly the guide shows",
+                GameSettings.MIN_GUIDE_LINE_OPACITY, GameSettings.MAX_GUIDE_LINE_OPACITY, settings.guideLineOpacity,
+                { "${(it * 100).roundToInt()}%" }, { settings.guideLineOpacity = it }
+            )
+            toggle(
+                c.body, "Particles", "Sparks and debris on every cut",
+                settings.particlesEnabled
+            ) { settings.particlesEnabled = it }
+            slider(
+                c.body, "Particle amount", "How much debris a cut throws",
+                GameSettings.MIN_PARTICLE_AMOUNT, GameSettings.MAX_PARTICLE_AMOUNT, settings.particleAmount,
+                { "%.1fx".format(it) }, { settings.particleAmount = it }
+            )
+            slider(
+                c.body, "Camera shake", "Screen kick on a good cut",
+                GameSettings.MIN_CAMERA_SHAKE_STRENGTH, GameSettings.MAX_CAMERA_SHAKE_STRENGTH,
+                settings.cameraShakeStrength,
+                { if (it <= 0.01f) "Off" else "%.1fx".format(it) }, { settings.cameraShakeStrength = it }
+            )
+            toggle(
+                c.body, "Vibration", "Haptic feedback on cuts and misses",
+                settings.vibrationEnabled
+            ) { settings.vibrationEnabled = it }
+            slider(
+                c.body, "Vibration strength", "How hard the phone buzzes",
+                GameSettings.MIN_VIBRATION_STRENGTH, GameSettings.MAX_VIBRATION_STRENGTH, settings.vibrationStrength,
+                { "${(it * 100).roundToInt()}%" }, { settings.vibrationStrength = it }
+            )
+            slider(
+                c.body, "Blade thickness", "Width of the swipe trail",
+                GameSettings.MIN_TRAIL_THICKNESS, GameSettings.MAX_TRAIL_THICKNESS, settings.trailThickness,
+                { "%.1fx".format(it) }, { settings.trailThickness = it }
+            )
+        }
+
+        root.addView(footer())
+
+        return ScrollView(this).apply {
+            setBackgroundColor(Theme.bgBottom)
+            isFillViewport = true
+            addView(root)
+        }
     }
 
-    private fun addSlider(
+    // ---------------------------------------------------------------------
+    // Building blocks
+    // ---------------------------------------------------------------------
+
+    private fun header(): View = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(dp(4f), 0, dp(4f), dp(20f))
+
+        addView(TextView(this@SettingsActivity).apply {
+            text = "SETTINGS"
+            typeface = Theme.display(this@SettingsActivity)
+            setTextColor(Theme.textPrimary)
+            textSize = 24f
+        })
+        addView(TextView(this@SettingsActivity).apply {
+            text = "Tune the game to taste. Changes apply on your next run."
+            typeface = Theme.ui(this@SettingsActivity)
+            setTextColor(Theme.textFaint)
+            textSize = 15f
+            setPadding(0, dp(4f), 0, 0)
+        })
+    }
+
+    private class Card(val wrapper: LinearLayout, val body: LinearLayout)
+
+    private fun card(title: String): Card {
+        val wrapper = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(18f) }
+        }
+
+        wrapper.addView(TextView(this).apply {
+            text = title
+            typeface = Theme.uiBold(this@SettingsActivity)
+            setTextColor(Theme.accent)
+            textSize = 13f
+            letterSpacing = 0.16f
+            setPadding(dp(6f), 0, 0, dp(8f))
+        })
+
+        val body = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = dp(18f).toFloat()
+                setColor(Theme.card)
+                setStroke(dp(1f), Theme.hairline)
+            }
+            setPadding(dp(18f), dp(6f), dp(18f), dp(14f))
+        }
+        wrapper.addView(body)
+        return Card(wrapper, body)
+    }
+
+    private fun rowLabel(title: String, subtitle: String): LinearLayout =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+
+            addView(TextView(this@SettingsActivity).apply {
+                text = title
+                typeface = Theme.uiBold(this@SettingsActivity)
+                setTextColor(Theme.textPrimary)
+                textSize = 17f
+            })
+            if (subtitle.isNotEmpty()) {
+                addView(TextView(this@SettingsActivity).apply {
+                    text = subtitle
+                    typeface = Theme.ui(this@SettingsActivity)
+                    setTextColor(Theme.textFaint)
+                    textSize = 13f
+                })
+            }
+        }
+
+    private fun slider(
         parent: LinearLayout,
-        label: String,
-        minValue: Float,
-        maxValue: Float,
+        title: String,
+        subtitle: String,
+        lowerBound: Float,
+        upperBound: Float,
         initial: Float,
         format: (Float) -> String,
         onChange: (Float) -> Unit
     ) {
-        val labelView = TextView(this).apply {
-            text = label
-            setTextColor(Color.WHITE)
-            textSize = 16f
-            setPadding(0, 32, 0, 8)
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(12f), 0, 0)
         }
-        parent.addView(labelView)
+        row.addView(rowLabel(title, subtitle))
 
         val valueView = TextView(this).apply {
             text = format(initial)
-            setTextColor(Color.argb(210, 255, 255, 255))
+            typeface = Theme.display(this@SettingsActivity)
+            setTextColor(Theme.accent)
             textSize = 14f
+            gravity = Gravity.END
+            setPadding(dp(10f), 0, 0, 0)
         }
+        row.addView(valueView)
+        parent.addView(row)
 
-        val seekBar = SeekBar(this).apply {
+        val bar = SeekBar(this).apply {
             max = sliderSteps
-            progress = (((initial - minValue) / (maxValue - minValue)) * sliderSteps).roundToInt().coerceIn(0, sliderSteps)
-            layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            progress = (((initial - lowerBound) / (upperBound - lowerBound)) * sliderSteps)
+                .roundToInt().coerceIn(0, sliderSteps)
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(2f) }
+
+            progressTintList = ColorStateList.valueOf(Theme.accent)
+            thumbTintList = ColorStateList.valueOf(Theme.accent)
+            progressBackgroundTintList = ColorStateList.valueOf(Theme.withAlpha(Color.WHITE, 0.16f))
+
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                    val value = minValue + (maxValue - minValue) * (progress.toFloat() / sliderSteps)
+                    val value = lowerBound + (upperBound - lowerBound) * (progress.toFloat() / sliderSteps)
                     valueView.text = format(value)
                     if (fromUser) onChange(value)
                 }
+
                 override fun onStartTrackingTouch(seekBar: SeekBar?) {}
                 override fun onStopTrackingTouch(seekBar: SeekBar?) {}
             })
         }
-        parent.addView(seekBar)
-
-        valueView.gravity = Gravity.END
-        parent.addView(valueView)
+        parent.addView(bar)
     }
+
+    private fun toggle(
+        parent: LinearLayout,
+        title: String,
+        subtitle: String,
+        initial: Boolean,
+        onChange: (Boolean) -> Unit
+    ) {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(14f), 0, dp(4f))
+        }
+        row.addView(rowLabel(title, subtitle))
+        row.addView(SwitchCompat(this).apply {
+            isChecked = initial
+            thumbTintList = ColorStateList.valueOf(Theme.accent)
+            trackTintList = ColorStateList.valueOf(Theme.withAlpha(Theme.accent, 0.4f))
+            setOnCheckedChangeListener { _, checked -> onChange(checked) }
+        })
+        parent.addView(row)
+    }
+
+    private fun footer(): View = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        setPadding(0, dp(4f), 0, 0)
+
+        addView(pillButton("RESET", primary = false) {
+            settings = GameSettings()
+            settings.saveTo(this@SettingsActivity)
+            recreate()
+        }.also {
+            (it.layoutParams as LinearLayout.LayoutParams).rightMargin = dp(12f)
+        })
+
+        addView(pillButton("DONE", primary = true) { finish() })
+    }
+
+    private fun pillButton(label: String, primary: Boolean, onClick: () -> Unit): TextView =
+        TextView(this).apply {
+            text = label
+            typeface = Theme.uiBold(this@SettingsActivity)
+            textSize = 17f
+            gravity = Gravity.CENTER
+            letterSpacing = 0.08f
+            setTextColor(if (primary) Color.rgb(6, 20, 26) else Theme.textPrimary)
+            setPadding(dp(18f), dp(15f), dp(18f), dp(15f))
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = dp(28f).toFloat()
+                if (primary) {
+                    setColor(Theme.accent)
+                } else {
+                    setColor(Theme.withAlpha(Color.WHITE, 0.07f))
+                    setStroke(dp(1f), Theme.hairline)
+                }
+            }
+            isClickable = true
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            setOnClickListener { onClick() }
+        }
 }

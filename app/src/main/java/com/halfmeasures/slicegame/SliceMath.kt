@@ -4,13 +4,18 @@ import kotlin.math.abs
 import kotlin.math.sqrt
 
 /**
- * Geometry helpers for slicing convex polygons with a straight line, in the
- * style of Fruit Ninja: the player's swipe defines a line, and any shape the
- * line passes through is split into two convex pieces.
+ * Geometry for slicing a polygon with a straight line.
+ *
+ * Everything here works for concave outlines (stars, crosses) as well as convex
+ * ones. Clipping uses Sutherland-Hodgman against a half-plane: for a concave
+ * subject the result can be a single ring joined by degenerate edges that lie
+ * *along* the cut line, but because those edges are collinear they contribute
+ * nothing to the shoelace sum - so the measured area is exact, and the rendered
+ * piece is visually correct since the seam has zero width.
  */
 object SliceMath {
 
-    /** Signed area (shoelace). Positive/negative depending on winding; magnitude is the area. */
+    /** Unsigned area of a polygon (shoelace). */
     fun polygonArea(pts: List<PointF2>): Float {
         if (pts.size < 3) return 0f
         var sum = 0f
@@ -22,45 +27,43 @@ object SliceMath {
         return abs(sum) / 2f
     }
 
-    /** Which side of the line (a->b) point p is on. >0 left, <0 right, 0 on the line. */
-    private fun side(ax: Float, ay: Float, bx: Float, by: Float, px: Float, py: Float): Float {
-        return (bx - ax) * (py - ay) - (by - ay) * (px - ax)
-    }
+    /** >0 left of a->b, <0 right, 0 on the line. */
+    private fun side(ax: Float, ay: Float, bx: Float, by: Float, px: Float, py: Float): Float =
+        (bx - ax) * (py - ay) - (by - ay) * (px - ax)
 
-    /**
-     * Splits a convex polygon by the infinite line through (ax,ay)-(bx,by).
-     * Returns a pair of polygons (side1, side2). Either side may be empty if
-     * the line does not actually cross the polygon.
-     */
-    fun splitPolygon(
+    /** Sutherland-Hodgman clip of [poly] to one side of the infinite line a->b. */
+    private fun clipToHalfPlane(
         poly: List<PointF2>,
-        ax: Float, ay: Float, bx: Float, by: Float
-    ): Pair<List<PointF2>, List<PointF2>> {
-        val left = ArrayList<PointF2>()
-        val right = ArrayList<PointF2>()
+        ax: Float, ay: Float, bx: Float, by: Float,
+        keepLeft: Boolean
+    ): List<PointF2> {
+        if (poly.size < 3) return emptyList()
+        val out = ArrayList<PointF2>(poly.size + 4)
         val n = poly.size
         for (i in 0 until n) {
             val cur = poly[i]
-            val next = poly[(i + 1) % n]
-            val curSide = side(ax, ay, bx, by, cur.x, cur.y)
-            val nextSide = side(ax, ay, bx, by, next.x, next.y)
+            val nxt = poly[(i + 1) % n]
+            val sCur = side(ax, ay, bx, by, cur.x, cur.y).let { if (keepLeft) it else -it }
+            val sNxt = side(ax, ay, bx, by, nxt.x, nxt.y).let { if (keepLeft) it else -it }
 
-            if (curSide >= 0) left.add(cur)
-            if (curSide <= 0) right.add(cur)
-
-            // Edge crosses the line: add the intersection point to both sides.
-            if (curSide != 0f && nextSide != 0f && (curSide > 0) != (nextSide > 0)) {
-                val t = curSide / (curSide - nextSide)
-                val ix = cur.x + t * (next.x - cur.x)
-                val iy = cur.y + t * (next.y - cur.y)
-                left.add(PointF2(ix, iy))
-                right.add(PointF2(ix, iy))
+            if (sCur >= 0f) out.add(cur)
+            if ((sCur > 0f && sNxt < 0f) || (sCur < 0f && sNxt > 0f)) {
+                val t = sCur / (sCur - sNxt)
+                out.add(PointF2(cur.x + t * (nxt.x - cur.x), cur.y + t * (nxt.y - cur.y)))
             }
         }
-        return Pair(left, right)
+        return out
     }
 
-    /** Shortest distance from point p to the infinite line through a-b. */
+    /** Both halves of [poly] about the infinite line a->b. Either may be empty. */
+    fun splitPolygon(
+        poly: List<PointF2>,
+        ax: Float, ay: Float, bx: Float, by: Float
+    ): Pair<List<PointF2>, List<PointF2>> = Pair(
+        clipToHalfPlane(poly, ax, ay, bx, by, keepLeft = true),
+        clipToHalfPlane(poly, ax, ay, bx, by, keepLeft = false)
+    )
+
     fun distancePointToLine(px: Float, py: Float, ax: Float, ay: Float, bx: Float, by: Float): Float {
         val dx = bx - ax
         val dy = by - ay
@@ -69,10 +72,7 @@ object SliceMath {
         return abs(dx * (ay - py) - (ax - px) * dy) / len
     }
 
-    /**
-     * Where does the perpendicular projection of p fall along segment a-b,
-     * expressed as a fraction (0 = at a, 1 = at b, can be outside [0,1]).
-     */
+    /** Where p projects onto segment a->b: 0 at a, 1 at b, outside [0,1] beyond the ends. */
     fun projectionFraction(px: Float, py: Float, ax: Float, ay: Float, bx: Float, by: Float): Float {
         val dx = bx - ax
         val dy = by - ay
@@ -82,29 +82,66 @@ object SliceMath {
     }
 
     /**
-     * A shape is considered sliced by a swipe segment (ax,ay)-(bx,by) if the
-     * infinite line through the segment actually passes within the shape's
-     * radius, AND that crossing point falls reasonably close to the segment
-     * itself (with a small margin to forgive coarse touch sampling on fast swipes).
+     * True when the swipe segment genuinely cuts the shape: the infinite line must
+     * put outline points on both sides (so it passes through material, not past it),
+     * and the crossing has to fall near the sampled segment - with a margin, because
+     * fast swipes are sampled coarsely.
      */
     fun segmentSlicesShape(shape: GameShape, ax: Float, ay: Float, bx: Float, by: Float): Boolean {
-        val dist = distancePointToLine(shape.x, shape.y, ax, ay, bx, by)
-        if (dist > shape.radius) return false
+        if (distancePointToLine(shape.x, shape.y, ax, ay, bx, by) > shape.radius * 1.2f) return false
+
         val frac = projectionFraction(shape.x, shape.y, ax, ay, bx, by)
-        val margin = 0.35f // allow the crossing to fall a bit beyond the sampled segment endpoints
-        return frac in (-margin)..(1f + margin)
+        val margin = 0.35f
+        if (frac < -margin || frac > 1f + margin) return false
+
+        var sawPositive = false
+        var sawNegative = false
+        for (p in shape.worldVertices()) {
+            val s = side(ax, ay, bx, by, p.x, p.y)
+            if (s > 0.5f) sawPositive = true else if (s < -0.5f) sawNegative = true
+            if (sawPositive && sawNegative) return true
+        }
+        return false
     }
 
-    /** Result of slicing one shape: the two resulting piece areas as a fraction of the whole. */
-    data class SliceResult(val areaA: Float, val areaB: Float) {
-        val total get() = areaA + areaB
-        val imbalancePercent get() = if (total <= 0f) 100f else abs(areaA - areaB) / total * 100f
+    /**
+     * Offset from the shape's centre, along the line's normal, at which a line in
+     * direction (dirX, dirY) splits [poly] into exactly equal areas.
+     *
+     * Moving the line along +normal strictly shrinks the far side, so the areas are
+     * monotonic in the offset and a bisection converges quickly. This is exact for
+     * every outline - including a triangle or star, where the halving line does not
+     * pass through the centroid.
+     */
+    fun bisectorOffset(
+        poly: List<PointF2>,
+        cx: Float, cy: Float,
+        dirX: Float, dirY: Float,
+        searchRadius: Float
+    ): Float {
+        val total = polygonArea(poly)
+        if (total <= 0f) return 0f
+        val half = total / 2f
+        val nx = -dirY
+        val ny = dirX
+
+        var lo = -searchRadius
+        var hi = searchRadius
+        repeat(26) {
+            val mid = (lo + hi) / 2f
+            val px = cx + nx * mid
+            val py = cy + ny * mid
+            val area = polygonArea(clipToHalfPlane(poly, px, py, px + dirX, py + dirY, keepLeft = true))
+            // Area on the kept side falls as the offset grows.
+            if (area > half) lo = mid else hi = mid
+        }
+        return (lo + hi) / 2f
     }
 
-    fun sliceShape(shape: GameShape, ax: Float, ay: Float, bx: Float, by: Float): SliceResult? {
-        val poly = shape.worldVertices()
-        val (left, right) = splitPolygon(poly, ax, ay, bx, by)
-        if (left.size < 3 || right.size < 3) return null
-        return SliceResult(polygonArea(left), polygonArea(right))
+    /** How far the bigger piece sits above a perfect 50%: 0 = flawless, 50 = total whiff. */
+    fun deviationPercent(areaA: Float, areaB: Float): Float {
+        val total = areaA + areaB
+        if (total <= 0f) return 50f
+        return (abs(areaA - areaB) / total * 50f).coerceIn(0f, 50f)
     }
 }

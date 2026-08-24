@@ -4,17 +4,111 @@ import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.random.Random
 
-enum class ShapeKind(val sides: Int, val displayName: String) {
-    TRIANGLE(3, "Triangle"),
-    SQUARE(4, "Square"),
-    PENTAGON(5, "Pentagon"),
-    HEXAGON(6, "Hexagon"),
-    CIRCLE(28, "Circle") // high side-count regular polygon reads as a circle
+data class PointF2(val x: Float, val y: Float)
+
+/**
+ * The catalogue of sliceable shapes. Each kind supplies its outline in unit
+ * space (roughly bounded by a radius-1 circle); [GameShape] scales, rotates and
+ * positions it. [unlockScore] gates when a kind starts appearing, so a run opens
+ * on easy round/blocky shapes and works up to spiky, concave ones that are much
+ * harder to halve by eye.
+ */
+enum class ShapeKind(
+    val displayName: String,
+    val unlockScore: Int,
+    private val builder: () -> List<PointF2>
+) {
+    CIRCLE("Circle", 0, { regular(36, 0f) }),
+    SQUARE("Square", 0, { regular(4, (Math.PI / 4).toFloat()) }),
+    CAPSULE("Capsule", 400, { capsule() }),
+    HEXAGON("Hexagon", 900, { regular(6, 0f) }),
+    DIAMOND("Diamond", 1500, { diamond() }),
+    OCTAGON("Octagon", 2200, { regular(8, (Math.PI / 8).toFloat()) }),
+    PENTAGON("Pentagon", 3000, { regular(5, (-Math.PI / 2).toFloat()) }),
+    TRIANGLE("Triangle", 4000, { regular(3, (-Math.PI / 2).toFloat()) }),
+    TRAPEZOID("Trapezoid", 5200, { trapezoid() }),
+    STAR6("Six-Point Star", 6500, { star(6, 0.58f) }),
+    CROSS("Cross", 8000, { cross() }),
+    STAR5("Star", 9500, { star(5, 0.42f) });
+
+    /** Outline in unit space, computed once per kind. */
+    val unitVertices: List<PointF2> by lazy(LazyThreadSafetyMode.NONE) { builder() }
+
+    /**
+     * Where the perfect halving line sits in unit space, measured along the normal
+     * of the shape's local +x axis. Because a shape rotates rigidly this is a
+     * constant per kind, so the on-screen guide costs nothing per frame. It is zero
+     * for centrally symmetric kinds and non-zero for the likes of a triangle, whose
+     * bisector does not pass through the centroid.
+     */
+    val bisectorOffsetUnit: Float by lazy(LazyThreadSafetyMode.NONE) {
+        SliceMath.bisectorOffset(unitVertices, 0f, 0f, 1f, 0f, 2f)
+    }
+
+    companion object {
+        private fun regular(sides: Int, angleOffset: Float): List<PointF2> =
+            (0 until sides).map { i ->
+                val t = angleOffset + (2.0 * Math.PI * i / sides).toFloat()
+                PointF2(cos(t), sin(t))
+            }
+
+        private fun star(points: Int, innerRatio: Float): List<PointF2> {
+            val verts = ArrayList<PointF2>(points * 2)
+            for (i in 0 until points * 2) {
+                val r = if (i % 2 == 0) 1f else innerRatio
+                val t = (-Math.PI / 2 + Math.PI * i / points).toFloat()
+                verts.add(PointF2(r * cos(t), r * sin(t)))
+            }
+            return verts
+        }
+
+        /** A rounded bar: straight sides with semicircular caps. */
+        private fun capsule(): List<PointF2> {
+            val halfLength = 0.62f   // centre of each cap
+            val capRadius = 0.46f
+            val steps = 12
+            val verts = ArrayList<PointF2>(steps * 2 + 2)
+            for (i in 0..steps) { // right cap, -90deg -> +90deg
+                val t = (-Math.PI / 2 + Math.PI * i / steps).toFloat()
+                verts.add(PointF2(halfLength + capRadius * cos(t), capRadius * sin(t)))
+            }
+            for (i in 0..steps) { // left cap, +90deg -> +270deg
+                val t = (Math.PI / 2 + Math.PI * i / steps).toFloat()
+                verts.add(PointF2(-halfLength + capRadius * cos(t), capRadius * sin(t)))
+            }
+            return verts
+        }
+
+        private fun diamond(): List<PointF2> = listOf(
+            PointF2(0f, -1f), PointF2(0.66f, 0f), PointF2(0f, 1f), PointF2(-0.66f, 0f)
+        )
+
+        private fun trapezoid(): List<PointF2> = listOf(
+            PointF2(-0.52f, -0.62f), PointF2(0.52f, -0.62f),
+            PointF2(0.95f, 0.62f), PointF2(-0.95f, 0.62f)
+        )
+
+        private fun cross(): List<PointF2> {
+            val a = 0.34f // half-width of the arms
+            val b = 1f    // arm reach
+            return listOf(
+                PointF2(-a, -b), PointF2(a, -b), PointF2(a, -a), PointF2(b, -a),
+                PointF2(b, a), PointF2(a, a), PointF2(a, b), PointF2(-a, b),
+                PointF2(-a, a), PointF2(-b, a), PointF2(-b, -a), PointF2(-a, -a)
+            )
+        }
+
+        /** Kinds available at [score], honouring the player's unlock-pace setting. */
+        fun unlockedAt(score: Int, pace: Float): List<ShapeKind> {
+            val unlocked = values().filter { it.unlockScore * pace <= score }
+            return if (unlocked.isEmpty()) listOf(CIRCLE, SQUARE) else unlocked
+        }
+    }
 }
 
 /**
- * A convex shape flying through the air. Represented as a regular polygon so every
- * shape can be split by a slice line with the same generic clipping math.
+ * A shape in flight. The outline is stored in unit space and transformed on
+ * demand, so any polygon - convex or concave - works with the same slicing math.
  */
 class GameShape(
     val kind: ShapeKind,
@@ -25,23 +119,39 @@ class GameShape(
     var vy: Float,
     var rotation: Float,
     val angularVelocity: Float,
-    val color: Int,
+    /** Index into [Theme.shapePalette]. */
+    val paletteIndex: Int,
     val spawnTimeMs: Long
 ) {
-    var sliced = false
+    val lightColor: Int get() = Theme.shapePalette[paletteIndex][0]
+    val deepColor: Int get() = Theme.shapePalette[paletteIndex][1]
 
-    /** Vertices in world space, in order, forming a convex polygon. */
-    fun worldVertices(): List<PointF2> {
-        val n = kind.sides
-        val verts = ArrayList<PointF2>(n)
-        for (i in 0 until n) {
-            val theta = rotation + (2 * Math.PI * i / n).toFloat()
-            verts.add(PointF2(x + radius * cos(theta), y + radius * sin(theta)))
+    /** How long the shape has been alive, in seconds - drives the spawn pop-in. */
+    var age = 0f
+        private set
+
+    /** Eases from 0 to 1 right after spawning so shapes scale in instead of appearing. */
+    val spawnScale: Float
+        get() {
+            val t = (age / 0.22f).coerceIn(0f, 1f)
+            val eased = 1f - (1f - t) * (1f - t)
+            return 0.55f + 0.45f * eased
         }
-        return verts
+
+    fun worldVertices(): List<PointF2> {
+        val c = cos(rotation)
+        val s = sin(rotation)
+        val r = radius * spawnScale
+        return kind.unitVertices.map { p ->
+            PointF2(
+                x + r * (p.x * c - p.y * s),
+                y + r * (p.x * s + p.y * c)
+            )
+        }
     }
 
     fun update(dtSeconds: Float, gravity: Float) {
+        age += dtSeconds
         vy += gravity * dtSeconds
         x += vx * dtSeconds
         y += vy * dtSeconds
@@ -54,60 +164,37 @@ class GameShape(
     }
 
     companion object {
-        private val palette = intArrayOf(
-            0xFFEF476F.toInt(),
-            0xFFFFD166.toInt(),
-            0xFF06D6A0.toInt(),
-            0xFF118AB2.toInt(),
-            0xFF9B5DE5.toInt(),
-            0xFFFF9F1C.toInt()
-        )
+        const val BASE_GRAVITY = 1500f          // px/s^2 before gravityScale
+        private const val BASE_LAUNCH_SPEED = 1600f
+        private const val BASE_HORIZONTAL_DRIFT = 220f
+        private const val BASE_SPIN = 5f
 
-        /** Base, unscaled gravity; [GameView] applies GameSettings.gravityScale on top of this. */
-        const val BASE_GRAVITY = 1500f // px/s^2
-
-        private const val BASE_LAUNCH_SPEED = 1600f // px/s, straight up before speedScale
-        private const val BASE_HORIZONTAL_DRIFT = 220f // px/s, max sideways speed before speedScale
-        private const val BASE_SPIN = 5f // rad/s, max spin before rotationScale
-
-        /**
-         * Launch velocity is independent of gravity here: [speedScale] scales how fast a
-         * shape leaves the bottom of the screen, while [GameView] separately scales gravity
-         * via GameSettings.gravityScale - exactly like the settings screen describes it
-         * ("higher gravity = faster fall AND a lower peak height").
-         *
-         * @param sizeScale multiplies the shape's radius (1.0 = base size).
-         * @param speedScale multiplies launch speed, both vertical and horizontal drift.
-         * @param rotationScale multiplies spin speed.
-         */
         fun spawnRandom(
             screenW: Int,
             screenH: Int,
             random: Random,
             nowMs: Long,
-            sizeScale: Float = 1f,
-            speedScale: Float = 1f,
-            rotationScale: Float = 1f
+            score: Int,
+            settings: GameSettings
         ): GameShape {
-            val kind = ShapeKind.values().random(random)
-            val radius = (((screenW * 0.06f) + random.nextFloat() * (screenW * 0.045f)) * sizeScale)
+            val pool = ShapeKind.unlockedAt(score, settings.shapeUnlockPace)
+            val kind = pool[random.nextInt(pool.size)]
+
+            val radius = (((screenW * 0.06f) + random.nextFloat() * (screenW * 0.045f)) * settings.sizeScale)
                 .coerceAtMost(screenW * 0.3f)
             val x = radius * 1.5f + random.nextFloat() * (screenW - radius * 3f)
             val y = screenH + radius
 
-            val vx = (random.nextFloat() - 0.5f) * 2f * BASE_HORIZONTAL_DRIFT * speedScale
-            val vy = -BASE_LAUNCH_SPEED * speedScale * (0.85f + random.nextFloat() * 0.3f)
+            val speed = settings.speedScale
+            val vx = (random.nextFloat() - 0.5f) * 2f * BASE_HORIZONTAL_DRIFT * speed
+            val vy = -BASE_LAUNCH_SPEED * speed * (0.85f + random.nextFloat() * 0.3f)
+            val spin = (random.nextFloat() - 0.5f) * 2f * BASE_SPIN * settings.rotationScale
 
-            val angularVelocity = (random.nextFloat() - 0.5f) * 2f * BASE_SPIN * rotationScale
-            val color = palette[random.nextInt(palette.size)]
             return GameShape(
-                kind, x, y, radius,
-                vx, vy,
-                random.nextFloat() * 6.28f, angularVelocity,
-                color, nowMs
+                kind, x, y, radius, vx, vy,
+                random.nextFloat() * 6.28f, spin,
+                random.nextInt(Theme.shapePalette.size), nowMs
             )
         }
     }
 }
-
-data class PointF2(val x: Float, val y: Float)
