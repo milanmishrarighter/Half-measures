@@ -82,8 +82,16 @@ data class GameSettings(
     var trailThickness: Float = DEFAULT_TRAIL_THICKNESS,
     /** Size of the floating score text after a cut. */
     var popupTextScale: Float = DEFAULT_POPUP_TEXT_SCALE,
-    /** How much the living backdrop drifts and shifts colour. 0 freezes it. */
+    /** How far the launch band creeps in from the sides each stage. */
+    var launchCentreCreep: Float = DEFAULT_LAUNCH_CENTRE_CREEP,
+    /** How fast the background embers drift. 0 freezes them. */
     var backgroundMotion: Float = DEFAULT_BACKGROUND_MOTION,
+    /** How many embers float in the background. */
+    var emberDensity: Float = DEFAULT_EMBER_DENSITY,
+    /** How strongly the embers glow. */
+    var emberBrightness: Float = DEFAULT_EMBER_BRIGHTNESS,
+    /** How big each ember pixel is. */
+    var emberSize: Float = DEFAULT_EMBER_SIZE,
     /** Full-screen colour flash on a great or perfect cut. */
     var screenFlashStrength: Float = DEFAULT_SCREEN_FLASH_STRENGTH,
 
@@ -135,7 +143,11 @@ data class GameSettings(
             .putFloat("vibration_strength", vibrationStrength)
             .putFloat("trail_thickness", trailThickness)
             .putFloat("popup_text_scale", popupTextScale)
+            .putFloat("launch_centre_creep", launchCentreCreep)
             .putFloat("background_motion", backgroundMotion)
+            .putFloat("ember_density", emberDensity)
+            .putFloat("ember_brightness", emberBrightness)
+            .putFloat("ember_size", emberSize)
             .putFloat("screen_flash_strength", screenFlashStrength)
             .putBoolean("slow_mo_on_perfect", slowMoOnPerfect)
             .putFloat("slow_mo_intensity", slowMoIntensity)
@@ -176,16 +188,20 @@ data class GameSettings(
         const val DEFAULT_GUIDE_LINE_OPACITY = 0.32f
         const val DEFAULT_PARTICLES_ENABLED = true
         const val DEFAULT_PARTICLE_AMOUNT = 1.6f
-        const val DEFAULT_CAMERA_SHAKE_STRENGTH = 1.35f
+        const val DEFAULT_CAMERA_SHAKE_STRENGTH = 0.68f
         const val DEFAULT_VIBRATION_ENABLED = true
         const val DEFAULT_VIBRATION_STRENGTH = 1.0f
         const val DEFAULT_TRAIL_THICKNESS = 1.0f
         const val DEFAULT_POPUP_TEXT_SCALE = 1.5f
+        const val DEFAULT_LAUNCH_CENTRE_CREEP = 0.05f
         const val DEFAULT_BACKGROUND_MOTION = 1.0f
-        const val DEFAULT_SCREEN_FLASH_STRENGTH = 1.0f
+        const val DEFAULT_EMBER_DENSITY = 1.0f
+        const val DEFAULT_EMBER_BRIGHTNESS = 1.0f
+        const val DEFAULT_EMBER_SIZE = 1.0f
+        const val DEFAULT_SCREEN_FLASH_STRENGTH = 0.6f
         const val DEFAULT_SLOW_MO_ON_PERFECT = true
-        const val DEFAULT_SLOW_MO_INTENSITY = 0.22f
-        const val DEFAULT_SLOW_MO_DURATION = 1.1f
+        const val DEFAULT_SLOW_MO_INTENSITY = 0.07f
+        const val DEFAULT_SLOW_MO_DURATION = 2.6f
         const val DEFAULT_LOW_HEALTH_SLOW_MO = true
         const val DEFAULT_LOW_HEALTH_THRESHOLD = 0.1f
 
@@ -245,14 +261,22 @@ data class GameSettings(
         const val MAX_TRAIL_THICKNESS = 2.5f
         const val MIN_POPUP_TEXT_SCALE = 0.6f
         const val MAX_POPUP_TEXT_SCALE = 3f
+        const val MIN_LAUNCH_CENTRE_CREEP = 0f
+        const val MAX_LAUNCH_CENTRE_CREEP = 0.12f
         const val MIN_BACKGROUND_MOTION = 0f
         const val MAX_BACKGROUND_MOTION = 2.5f
+        const val MIN_EMBER_DENSITY = 0f
+        const val MAX_EMBER_DENSITY = 3f
+        const val MIN_EMBER_BRIGHTNESS = 0f
+        const val MAX_EMBER_BRIGHTNESS = 2.5f
+        const val MIN_EMBER_SIZE = 0.4f
+        const val MAX_EMBER_SIZE = 3f
         const val MIN_SCREEN_FLASH_STRENGTH = 0f
         const val MAX_SCREEN_FLASH_STRENGTH = 2f
-        const val MIN_SLOW_MO_INTENSITY = 0.1f
+        const val MIN_SLOW_MO_INTENSITY = 0.02f
         const val MAX_SLOW_MO_INTENSITY = 0.9f
         const val MIN_SLOW_MO_DURATION = 0.3f
-        const val MAX_SLOW_MO_DURATION = 3f
+        const val MAX_SLOW_MO_DURATION = 7f
         const val MIN_LOW_HEALTH_THRESHOLD = 0.05f
         const val MAX_LOW_HEALTH_THRESHOLD = 0.5f
 
@@ -295,7 +319,11 @@ data class GameSettings(
                 vibrationStrength = p.getFloat("vibration_strength", DEFAULT_VIBRATION_STRENGTH),
                 trailThickness = p.getFloat("trail_thickness", DEFAULT_TRAIL_THICKNESS),
                 popupTextScale = p.getFloat("popup_text_scale", DEFAULT_POPUP_TEXT_SCALE),
+                launchCentreCreep = p.getFloat("launch_centre_creep", DEFAULT_LAUNCH_CENTRE_CREEP),
                 backgroundMotion = p.getFloat("background_motion", DEFAULT_BACKGROUND_MOTION),
+                emberDensity = p.getFloat("ember_density", DEFAULT_EMBER_DENSITY),
+                emberBrightness = p.getFloat("ember_brightness", DEFAULT_EMBER_BRIGHTNESS),
+                emberSize = p.getFloat("ember_size", DEFAULT_EMBER_SIZE),
                 screenFlashStrength = p.getFloat("screen_flash_strength", DEFAULT_SCREEN_FLASH_STRENGTH),
                 slowMoOnPerfect = p.getBoolean("slow_mo_on_perfect", DEFAULT_SLOW_MO_ON_PERFECT),
                 slowMoIntensity = p.getFloat("slow_mo_intensity", DEFAULT_SLOW_MO_INTENSITY),

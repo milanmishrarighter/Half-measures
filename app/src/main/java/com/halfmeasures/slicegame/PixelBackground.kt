@@ -1,249 +1,254 @@
 package com.halfmeasures.slicegame
 
 import android.graphics.Canvas
-import android.graphics.Color
 import android.graphics.Paint
-import kotlin.math.abs
-import kotlin.math.cos
+import android.graphics.Color
 import kotlin.math.roundToInt
 import kotlin.math.sin
-import kotlin.math.sqrt
 import kotlin.random.Random
 
 /**
- * A chunky pixel dance floor behind the play field.
+ * A quiet field of pixel embers behind the play field.
  *
- * The grid is deliberately low resolution and colour-banded so it reads as
- * retro pixel art rather than a smooth gradient. Cell brightness comes from a
- * plasma field plus ripples kicked off by cuts and touches, and the palette
- * shifts with the player's stage and drains toward red as health falls - so the
- * backdrop is always reporting how the run is going.
+ * Deliberately restrained: a sparse drift of small unlit squares rising like
+ * embers off a fire, plus a burst wherever the player touches or cuts. The only
+ * other element is a soft glow along the bottom edge whose colour reports the
+ * state of the run - it shifts with the difficulty stage, warms on a hot streak
+ * and bleeds red as health drains.
  */
 class PixelBackground(private val random: Random) {
 
-    private class Ripple(val cx: Float, val cy: Float, val strength: Float) {
-        var age = 0f
-        val alive: Boolean get() = age < 1.6f
-    }
-
-    /** A pixel mote drifting up from the floor, spawned where the player touches. */
-    private class Mote(
+    private class Ember(
         var x: Float,
         var y: Float,
+        var vx: Float,
         var vy: Float,
         val size: Float,
         val lifeSpan: Float,
-        val tint: Int
+        val swaySpeed: Float,
+        var swayPhase: Float,
+        /** Bursts die off; ambient embers recycle back to the bottom forever. */
+        val ambient: Boolean,
+        val bright: Boolean
     ) {
         var age = 0f
         val alive: Boolean get() = age < lifeSpan
-        val remaining: Float get() = (1f - age / lifeSpan).coerceIn(0f, 1f)
+
+        /** Fades in at birth and out at death so embers never pop. */
+        val fade: Float
+            get() {
+                val t = (age / lifeSpan).coerceIn(0f, 1f)
+                return when {
+                    t < 0.15f -> t / 0.15f
+                    t > 0.7f -> (1f - t) / 0.3f
+                    else -> 1f
+                }
+            }
     }
 
-    private var cols = 0
-    private var rows = 0
-    private var cellSize = 0f
     private var width = 0
     private var height = 0
+    private var pixel = 4f
 
-    private val ripples = ArrayList<Ripple>()
-    private val motes = ArrayList<Mote>()
+    private val embers = ArrayList<Ember>()
 
     private var time = 0f
     private var pulse = 0f
 
-    // Current palette, eased toward the target so stage changes glide rather than snap.
-    private var lowColor = STAGE_PALETTES[0][0]
-    private var midColor = STAGE_PALETTES[0][1]
-    private var highColor = STAGE_PALETTES[0][2]
+    // Eased so stage changes and health swings glide rather than snap.
+    private var glowColor = STAGE_PALETTES[0][1]
+    private var emberColor = STAGE_PALETTES[0][2]
+
+    // Player-tunable, refreshed from settings each frame.
+    private var density = 1f
+    private var brightness = 1f
+    private var sizeScale = 1f
+    private var drift = 1f
 
     fun resize(w: Int, h: Int) {
         if (w <= 0 || h <= 0) return
         width = w
         height = h
-        cols = 22
-        cellSize = w.toFloat() / cols
-        rows = (h / cellSize).toInt() + 1
-        ripples.clear()
-        motes.clear()
+        pixel = (w / 90f).coerceAtLeast(3f)
+        embers.clear()
     }
 
     fun reset() {
-        ripples.clear()
-        motes.clear()
+        embers.clear()
         pulse = 0f
     }
 
-    /** A cut, a bounce or a tap sends a wave across the floor. */
-    fun ripple(x: Float, y: Float, strength: Float) {
-        if (ripples.size > 18) ripples.removeAt(0)
-        ripples.add(Ripple(x, y, strength))
-    }
-
-    /** Whole-floor flash, for perfects and other big moments. */
+    /** A perfect cut brightens the whole field for a moment. */
     fun flash(amount: Float) {
-        pulse = (pulse + amount).coerceAtMost(2.2f)
+        pulse = (pulse + amount * 0.35f).coerceAtMost(1f)
     }
 
-    /**
-     * Touching the floor kicks pixels up out of it. The closer to the bottom of
-     * the screen, the more come up - the floor feels physical near its surface.
-     */
-    fun touch(x: Float, y: Float) {
+    /** A puff of embers wherever the player touched or a shape was cut. */
+    fun burst(x: Float, y: Float, strength: Float) {
         if (height <= 0) return
-        ripple(x, y, 0.85f)
-
-        val depth = (y / height).coerceIn(0f, 1f)
-        // Only the lower part of the screen throws motes, densest right at the floor.
-        if (depth < 0.55f) return
-        val strength = ((depth - 0.55f) / 0.45f).coerceIn(0f, 1f)
-        val count = (1 + strength * 4f).roundToInt()
+        val count = (7 * strength * density).roundToInt().coerceIn(1, 26)
         repeat(count) {
-            if (motes.size > 160) return@repeat
-            motes.add(
-                Mote(
-                    x = x + (random.nextFloat() - 0.5f) * cellSize * 3.2f,
-                    y = height + random.nextFloat() * cellSize,
-                    vy = -(90f + random.nextFloat() * 230f) * (0.5f + strength),
-                    size = cellSize * (0.28f + random.nextFloat() * 0.42f),
-                    lifeSpan = 0.7f + random.nextFloat() * 1.1f,
-                    tint = if (random.nextFloat() < 0.35f) highColor else midColor
+            if (embers.size > MAX_EMBERS) return@repeat
+            val angle = random.nextFloat() * 6.2832f
+            val speed = (35f + random.nextFloat() * 130f) * strength
+            embers.add(
+                Ember(
+                    x = x + (random.nextFloat() - 0.5f) * pixel * 5f,
+                    y = y + (random.nextFloat() - 0.5f) * pixel * 5f,
+                    vx = kotlin.math.cos(angle) * speed,
+                    // Biased upward, so a burst still reads as embers lifting off.
+                    vy = kotlin.math.sin(angle) * speed - 60f * strength,
+                    size = pixel * (0.7f + random.nextFloat() * 0.9f),
+                    lifeSpan = 0.8f + random.nextFloat() * 1.1f,
+                    swaySpeed = 1.4f + random.nextFloat() * 2.2f,
+                    swayPhase = random.nextFloat() * 6.2832f,
+                    ambient = false,
+                    bright = random.nextFloat() < 0.4f
                 )
             )
         }
     }
 
     /**
-     * @param energy excitement level from the effect system, brightens everything.
-     * @param healthFraction 0..1, drains the palette toward red as it falls.
+     * @param energy excitement from the effect system; lifts brightness a little.
+     * @param healthFraction 0..1, drains the glow toward red as it falls.
      * @param stage difficulty stage, which picks the base palette.
+     * @param warmth -1 on a cold streak, +1 on a hot one.
      */
-    fun update(dt: Float, energy: Float, healthFraction: Float, stage: Int) {
-        time += dt * (0.55f + 0.35f * energy.coerceAtMost(1.5f))
-        pulse = (pulse - dt * 2.6f).coerceAtLeast(0f)
+    fun update(
+        dt: Float,
+        energy: Float,
+        healthFraction: Float,
+        stage: Int,
+        warmth: Float,
+        emberDensity: Float,
+        emberBrightness: Float,
+        emberSize: Float,
+        driftSpeed: Float
+    ) {
+        density = emberDensity
+        brightness = emberBrightness
+        sizeScale = emberSize
+        drift = driftSpeed
 
-        var i = ripples.size - 1
+        time += dt
+        pulse = (pulse - dt * 1.4f).coerceAtLeast(0f)
+
+        easePaletteToward(stage, healthFraction, warmth)
+        topUpAmbient()
+
+        var i = embers.size - 1
         while (i >= 0) {
-            val r = ripples[i]
-            r.age += dt
-            if (!r.alive) ripples.removeAt(i)
+            val e = embers[i]
+            e.age += dt
+            e.swayPhase += e.swaySpeed * dt
+            e.x += (e.vx + sin(e.swayPhase) * 14f) * dt * drift
+            e.y += e.vy * dt * drift
+            if (!e.ambient) {
+                // Bursts slow down and settle; ambient embers keep their lazy rise.
+                e.vx *= 0.97f
+                e.vy = e.vy * 0.97f - 8f * dt
+            }
+            if (!e.alive || e.y < -pixel * 4f) embers.removeAt(i)
             i--
         }
-
-        i = motes.size - 1
-        while (i >= 0) {
-            val m = motes[i]
-            m.age += dt
-            m.y += m.vy * dt
-            m.vy *= 0.985f
-            if (!m.alive || m.y < -cellSize) motes.removeAt(i)
-            i--
-        }
-
-        easePaletteToward(stage, healthFraction)
     }
 
-    private fun easePaletteToward(stage: Int, healthFraction: Float) {
+    /** Keeps a steady population of drifting embers without ever spawning a crowd. */
+    private fun topUpAmbient() {
+        if (width <= 0) return
+        val target = (AMBIENT_BASE * density).roundToInt().coerceIn(0, MAX_EMBERS)
+        var ambientCount = 0
+        for (e in embers) if (e.ambient) ambientCount++
+        if (ambientCount >= target) return
+
+        // Add at most one per frame so the field fills in gently.
+        embers.add(
+            Ember(
+                x = random.nextFloat() * width,
+                // Start scattered up the screen on a cold start, then from the floor.
+                y = if (ambientCount < target / 2) random.nextFloat() * height else height + pixel * 2f,
+                vx = (random.nextFloat() - 0.5f) * 12f,
+                vy = -(14f + random.nextFloat() * 34f),
+                size = pixel * (0.5f + random.nextFloat() * 0.7f),
+                lifeSpan = 5f + random.nextFloat() * 7f,
+                swaySpeed = 0.5f + random.nextFloat() * 1.1f,
+                swayPhase = random.nextFloat() * 6.2832f,
+                ambient = true,
+                bright = random.nextFloat() < 0.25f
+            )
+        )
+    }
+
+    private fun easePaletteToward(stage: Int, healthFraction: Float, warmth: Float) {
         val palette = STAGE_PALETTES[stage.coerceIn(0, STAGE_PALETTES.size - 1)]
-        // Below a third health the floor bleeds red; at death's door it is fully alarmed.
+        // Below a third health the field bleeds red; at death's door it is fully alarmed.
         val alarm = (1f - healthFraction / 0.35f).coerceIn(0f, 1f)
 
-        val targetLow = Theme.lerpColor(palette[0], DANGER_PALETTE[0], alarm)
-        val targetMid = Theme.lerpColor(palette[1], DANGER_PALETTE[1], alarm)
-        val targetHigh = Theme.lerpColor(palette[2], DANGER_PALETTE[2], alarm)
+        var targetGlow = Theme.lerpColor(palette[1], DANGER_PALETTE[0], alarm)
+        var targetEmber = Theme.lerpColor(palette[2], DANGER_PALETTE[1], alarm)
 
-        val ease = 0.045f
-        lowColor = Theme.lerpColor(lowColor, targetLow, ease)
-        midColor = Theme.lerpColor(midColor, targetMid, ease)
-        highColor = Theme.lerpColor(highColor, targetHigh, ease)
+        // A hot streak warms the field toward gold, a cold one cools it toward grey.
+        if (warmth > 0f) {
+            targetGlow = Theme.lerpColor(targetGlow, HOT_GLOW, warmth * 0.55f)
+            targetEmber = Theme.lerpColor(targetEmber, HOT_EMBER, warmth * 0.65f)
+        } else if (warmth < 0f) {
+            targetGlow = Theme.lerpColor(targetGlow, COLD_GLOW, -warmth * 0.5f)
+            targetEmber = Theme.lerpColor(targetEmber, COLD_EMBER, -warmth * 0.5f)
+        }
+
+        val ease = 0.04f
+        glowColor = Theme.lerpColor(glowColor, targetGlow, ease)
+        emberColor = Theme.lerpColor(emberColor, targetEmber, ease)
     }
 
-    fun draw(canvas: Canvas, paint: Paint) {
-        if (cols <= 0 || rows <= 0) return
+    /** The horizon glow whose colour reports the state of the run. */
+    fun horizonColor(): Int = glowColor
 
-        val gap = (cellSize * 0.13f).coerceAtLeast(1f)
-        val drawSize = cellSize - gap
+    fun draw(canvas: Canvas, paint: Paint, energy: Float) {
+        if (embers.isEmpty()) return
         paint.style = Paint.Style.FILL
 
-        for (row in 0 until rows) {
-            val cy = row * cellSize + cellSize * 0.5f
-            val fy = row.toFloat() / rows
-            for (col in 0 until cols) {
-                val cx = col * cellSize + cellSize * 0.5f
-                val fx = col.toFloat() / cols
+        val lift = (1f + pulse * 0.8f + energy.coerceAtMost(1.5f) * 0.25f)
+        val bright = Theme.lighten(emberColor, 0.35f)
 
-                var v = plasma(fx, fy)
-                v += rippleAt(cx, cy)
-                // Brighter toward the floor, so the stage has a horizon.
-                v += fy * fy * 0.30f
-                v += pulse * 0.32f
-                v = v.coerceIn(0f, 1f)
+        for (e in embers) {
+            // Ambient embers sit well back; bursts read a touch stronger.
+            val base = if (e.ambient) 0.30f else 0.55f
+            val alpha = (base * e.fade * brightness * lift).coerceIn(0f, 0.85f)
+            if (alpha <= 0.01f) continue
 
-                // Quantise into bands - this is what makes it read as pixel art.
-                val banded = (v * BANDS).roundToInt() / BANDS.toFloat()
-                if (banded <= 0.001f) continue
-
-                paint.color = colorFor(banded)
-                canvas.drawRect(cx - drawSize / 2f, cy - drawSize / 2f,
-                    cx + drawSize / 2f, cy + drawSize / 2f, paint)
-            }
-        }
-
-        // Motes ride on top of the grid, snapped to the same pixel scale.
-        for (m in motes) {
-            val alpha = (m.remaining * 1.5f).coerceAtMost(1f)
-            paint.color = Theme.withAlpha(m.tint, alpha * 0.85f)
-            val s = m.size
-            canvas.drawRect(m.x - s, m.y - s, m.x + s, m.y + s, paint)
+            paint.color = Theme.withAlpha(if (e.bright) bright else emberColor, alpha)
+            // Snap to the pixel grid so every ember stays a crisp little square.
+            val s = (e.size * sizeScale).coerceAtLeast(1.5f)
+            val px = (e.x / pixel).roundToInt() * pixel
+            val py = (e.y / pixel).roundToInt() * pixel
+            canvas.drawRect(px - s, py - s, px + s, py + s, paint)
         }
     }
-
-    /** Three interfering waves, the classic demoscene plasma. */
-    private fun plasma(fx: Float, fy: Float): Float {
-        val a = sin(fx * 6.9f + time * 1.15f)
-        val b = sin(fy * 5.3f - time * 0.87f)
-        val c = sin((fx + fy) * 4.4f + time * 1.6f)
-        val d = cos(sqrt((fx - 0.5f) * (fx - 0.5f) + (fy - 0.5f) * (fy - 0.5f)) * 11f - time * 1.9f)
-        return ((a + b + c + d) / 4f) * 0.5f + 0.32f
-    }
-
-    private fun rippleAt(cx: Float, cy: Float): Float {
-        if (ripples.isEmpty()) return 0f
-        var total = 0f
-        for (r in ripples) {
-            val dx = cx - r.cx
-            val dy = cy - r.cy
-            val dist = sqrt(dx * dx + dy * dy)
-            val front = r.age * 950f
-            val band = abs(dist - front)
-            if (band > 190f) continue
-            val falloff = (1f - band / 190f)
-            val decay = (1f - r.age / 1.6f).coerceAtLeast(0f)
-            total += falloff * falloff * decay * r.strength * 0.85f
-        }
-        return total
-    }
-
-    private fun colorFor(v: Float): Int =
-        if (v < 0.5f) Theme.lerpColor(lowColor, midColor, v * 2f)
-        else Theme.lerpColor(midColor, highColor, (v - 0.5f) * 2f)
 
     companion object {
-        private const val BANDS = 7
+        private const val AMBIENT_BASE = 46
+        private const val MAX_EMBERS = 260
 
         /** Base palettes, one per difficulty stage, cycling once the list runs out. */
         private val STAGE_PALETTES = arrayOf(
-            intArrayOf(Color.rgb(8, 12, 30), Color.rgb(28, 52, 120), Color.rgb(92, 156, 255)),
-            intArrayOf(Color.rgb(10, 8, 32), Color.rgb(66, 34, 128), Color.rgb(168, 110, 255)),
-            intArrayOf(Color.rgb(6, 20, 26), Color.rgb(18, 92, 96), Color.rgb(82, 226, 205)),
-            intArrayOf(Color.rgb(26, 10, 26), Color.rgb(120, 30, 96), Color.rgb(255, 122, 196)),
-            intArrayOf(Color.rgb(26, 18, 6), Color.rgb(128, 78, 18), Color.rgb(255, 190, 78)),
-            intArrayOf(Color.rgb(4, 24, 14), Color.rgb(20, 106, 58), Color.rgb(110, 240, 150))
+            intArrayOf(Color.rgb(8, 12, 30), Color.rgb(34, 62, 130), Color.rgb(96, 150, 235)),
+            intArrayOf(Color.rgb(10, 8, 32), Color.rgb(70, 40, 132), Color.rgb(160, 116, 240)),
+            intArrayOf(Color.rgb(6, 20, 26), Color.rgb(24, 92, 96), Color.rgb(88, 210, 195)),
+            intArrayOf(Color.rgb(26, 10, 26), Color.rgb(118, 40, 100), Color.rgb(232, 124, 186)),
+            intArrayOf(Color.rgb(26, 18, 6), Color.rgb(122, 82, 26), Color.rgb(236, 180, 92)),
+            intArrayOf(Color.rgb(4, 24, 14), Color.rgb(26, 100, 62), Color.rgb(112, 220, 148))
         )
 
         private val DANGER_PALETTE = intArrayOf(
-            Color.rgb(30, 4, 8), Color.rgb(132, 18, 38), Color.rgb(255, 78, 96)
+            Color.rgb(112, 22, 38), Color.rgb(236, 86, 100)
         )
+
+        private val HOT_GLOW = Color.rgb(140, 84, 20)
+        private val HOT_EMBER = Color.rgb(255, 186, 88)
+        private val COLD_GLOW = Color.rgb(38, 44, 58)
+        private val COLD_EMBER = Color.rgb(120, 134, 156)
 
         fun paletteCount(): Int = STAGE_PALETTES.size
     }

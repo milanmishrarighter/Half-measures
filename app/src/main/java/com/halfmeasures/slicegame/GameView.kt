@@ -287,10 +287,15 @@ class GameView @JvmOverloads constructor(
         trailPoints.removeAll { nowMs - it.timeMs > trailMaxAgeMs }
 
         pixels.update(
-            dt * settings.backgroundMotion,
-            effects.energy,
-            if (maxHealth > 0) displayedHealth / maxHealth else 1f,
-            stage
+            dt = dt,
+            energy = effects.energy,
+            healthFraction = if (maxHealth > 0) displayedHealth / maxHealth else 1f,
+            stage = stage,
+            warmth = streakWarmth(),
+            emberDensity = settings.emberDensity,
+            emberBrightness = settings.emberBrightness,
+            emberSize = settings.emberSize,
+            driftSpeed = settings.backgroundMotion
         )
 
         if (state == State.PLAYING) {
@@ -379,9 +384,16 @@ class GameView @JvmOverloads constructor(
         effects.popup(headline, subline, width / 2f, height * 0.32f, Theme.gold, 0.85f)
         effects.addFlash(Theme.gold, 0.3f * settings.screenFlashStrength)
         pixels.flash(1.6f)
-        pixels.ripple(width / 2f, height * 0.5f, 1.4f)
+        pixels.burst(width / 2f, height * 0.5f, 1.0f)
         effects.addEnergy(1.2f)
         if (settings.vibrationEnabled) haptics.great(settings.vibrationStrength)
+    }
+
+    /** -1 while the player is cold, +1 while they are hot; drives the backdrop's colour. */
+    private fun streakWarmth(): Float = when {
+        hotStreak >= 2 -> (hotStreak / 5f).coerceAtMost(1f)
+        coldStreak >= 2 -> -(coldStreak / 4f).coerceAtMost(1f)
+        else -> 0f
     }
 
     private fun bounceOffWalls(s: GameShape) {
@@ -472,7 +484,7 @@ class GameView @JvmOverloads constructor(
                 lastTouchY = event.y
                 hasLastTouch = true
                 trailPoints.add(TrailPoint(event.x, event.y, System.currentTimeMillis()))
-                pixels.touch(event.x, event.y)
+                pixels.burst(event.x, event.y, 1.0f)
             }
 
             MotionEvent.ACTION_MOVE -> {
@@ -485,7 +497,7 @@ class GameView @JvmOverloads constructor(
                 handleSwipeSegment(event.x, event.y)
                 trailPoints.add(TrailPoint(event.x, event.y, nowMs))
                 // Dragging stirs the floor, densest near its surface.
-                pixels.touch(event.x, event.y)
+                pixels.burst(event.x, event.y, 1.0f)
             }
 
             MotionEvent.ACTION_UP -> {
@@ -777,7 +789,7 @@ class GameView @JvmOverloads constructor(
                 effects.addShake(1.5f * settings.cameraShakeStrength)
                 effects.addFlash(Theme.gold, 0.55f * settings.screenFlashStrength)
                 effects.addEnergy(1.6f)
-                pixels.ripple(shape.x, shape.y, 1.5f)
+                pixels.burst(shape.x, shape.y, 1.5f)
                 pixels.flash(1.5f)
             }
             Grade.GREAT -> {
@@ -786,22 +798,22 @@ class GameView @JvmOverloads constructor(
                 effects.addShake(0.8f * settings.cameraShakeStrength)
                 effects.addFlash(Theme.accent, 0.22f * settings.screenFlashStrength)
                 effects.addEnergy(0.9f)
-                pixels.ripple(shape.x, shape.y, 1.0f)
+                pixels.burst(shape.x, shape.y, 1.0f)
                 pixels.flash(0.65f)
             }
             Grade.GOOD -> {
                 effects.shockwave(shape.x, shape.y, r * 3f, Theme.good, 0.42f, 6f)
                 effects.addShake(0.35f * settings.cameraShakeStrength)
                 effects.addEnergy(0.35f)
-                pixels.ripple(shape.x, shape.y, 0.6f)
+                pixels.burst(shape.x, shape.y, 0.6f)
             }
             Grade.FAIR -> {
                 effects.addShake(0.2f * settings.cameraShakeStrength)
-                pixels.ripple(shape.x, shape.y, 0.35f)
+                pixels.burst(shape.x, shape.y, 0.35f)
             }
             Grade.POOR -> {
                 effects.addShake(0.12f * settings.cameraShakeStrength)
-                pixels.ripple(shape.x, shape.y, 0.25f)
+                pixels.burst(shape.x, shape.y, 0.25f)
             }
         }
 
@@ -859,11 +871,14 @@ class GameView @JvmOverloads constructor(
 
     private fun drawBackground(canvas: Canvas) {
         canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), bgPaint)
-        pixels.draw(canvas, pixelPaint)
+        pixels.draw(canvas, pixelPaint, effects.energy)
 
-        // A bright seam along the floor the shapes launch from, pulsing with excitement.
-        rimPaint.strokeWidth = 3f
-        rimPaint.color = Theme.withAlpha(Color.WHITE, 0.10f + 0.22f * effects.energy.coerceAtMost(1f))
+        // A quiet seam along the floor, tinted by how the run is going.
+        rimPaint.strokeWidth = 2f
+        rimPaint.color = Theme.withAlpha(
+            pixels.horizonColor(),
+            0.22f + 0.30f * effects.energy.coerceAtMost(1f)
+        )
         canvas.drawLine(0f, height * 0.995f, width.toFloat(), height * 0.995f, rimPaint)
     }
 
@@ -1354,7 +1369,7 @@ class GameView @JvmOverloads constructor(
         /** Real seconds the critical-health countdown runs for. */
         const val DANGER_COUNTDOWN_SECONDS = 3f
         /** Real seconds spent climbing linearly back to full speed afterwards. */
-        const val DANGER_RECOVERY_SECONDS = 1.2f
+        const val DANGER_RECOVERY_SECONDS = 2.2f
     }
 
     private class TrailPoint(val x: Float, val y: Float, val timeMs: Long)

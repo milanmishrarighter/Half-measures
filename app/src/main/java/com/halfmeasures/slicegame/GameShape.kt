@@ -172,7 +172,8 @@ class GameShape(
 
     companion object {
         const val BASE_GRAVITY = 1500f          // px/s^2 before gravityScale
-        private const val BASE_HORIZONTAL_DRIFT = 150f
+        /** Ceiling on sideways speed, so a shape thrown from the wing never streaks across. */
+        private const val MAX_HORIZONTAL_SPEED = 420f
         private const val BASE_SPIN = 3.4f
 
         /**
@@ -197,14 +198,34 @@ class GameShape(
 
             val radius = (((screenW * 0.06f) + random.nextFloat() * (screenW * 0.045f)) * settings.sizeScale)
                 .coerceAtMost(screenW * 0.3f)
-            val x = radius * 1.5f + random.nextFloat() * (screenW - radius * 3f)
-            val y = screenH + radius
 
             val gravity = BASE_GRAVITY * settings.gravityScale
             val apex = screenH * settings.flightHeight * (0.92f + random.nextFloat() * 0.16f)
             val vy = -sqrt(2f * gravity * apex)
 
-            val vx = (random.nextFloat() - 0.5f) * 2f * BASE_HORIZONTAL_DRIFT
+            /*
+             * Shapes are thrown in from the wings and arc toward the middle, so the
+             * player works across the screen rather than straight up. Early stages
+             * launch from the very edges; each stage lets the launch band creep
+             * further inward, until late runs can come from almost anywhere.
+             */
+            val fromLeft = random.nextBoolean()
+            val creep = (stage * settings.launchCentreCreep).coerceIn(0f, 0.42f)
+            val edge = radius * 1.2f
+            val bandStart = screenW * creep
+            val bandWidth = screenW * (0.12f + 0.10f * random.nextFloat())
+            val x = if (fromLeft) {
+                (edge + bandStart + random.nextFloat() * bandWidth)
+            } else {
+                (screenW - edge - bandStart - random.nextFloat() * bandWidth)
+            }.coerceIn(edge, screenW - edge)
+            val y = screenH + radius
+
+            // Aim the arc so it tops out near the middle, with a little scatter.
+            val timeToApex = -vy / gravity
+            val targetX = screenW * (0.5f + (random.nextFloat() - 0.5f) * 0.30f)
+            val vx = ((targetX - x) / timeToApex)
+                .coerceIn(-MAX_HORIZONTAL_SPEED, MAX_HORIZONTAL_SPEED)
             // Shapes tumble faster every stage, so late runs are harder to read.
             val spinScale = settings.rotationScale *
                 (1f + settings.rotationPerStagePercent / 100f * stage)

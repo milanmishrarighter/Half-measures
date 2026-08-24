@@ -109,6 +109,14 @@ class SettingsActivity : AppCompatActivity() {
                 settings.rotationPerStagePercent,
                 { "+${it.roundToInt()}%" }, { settings.rotationPerStagePercent = it }
             )
+            slider(
+                c.body, "Throw-in spread each level",
+                "Shapes get thrown in from the far sides. This is how much further toward the middle they can start each time you level up.",
+                GameSettings.MIN_LAUNCH_CENTRE_CREEP, GameSettings.MAX_LAUNCH_CENTRE_CREEP,
+                settings.launchCentreCreep,
+                { if (it <= 0.002f) "Sides only" else "+${(it * 100).roundToInt()}%" },
+                { settings.launchCentreCreep = it }
+            )
         }
 
         card("HOW MANY AT ONCE").let { c ->
@@ -266,7 +274,22 @@ class SettingsActivity : AppCompatActivity() {
                 { if (it <= 0.01f) "Off" else "%.1fx".format(it) }, { settings.screenFlashStrength = it }
             )
             slider(
-                c.body, "Dancing background", "How much the pixel floor behind the game wiggles and changes colour.",
+                c.body, "Ember count", "How many little sparks float in the background.",
+                GameSettings.MIN_EMBER_DENSITY, GameSettings.MAX_EMBER_DENSITY, settings.emberDensity,
+                { if (it <= 0.01f) "None" else "%.1fx".format(it) }, { settings.emberDensity = it }
+            )
+            slider(
+                c.body, "Ember glow", "How bright those background sparks are.",
+                GameSettings.MIN_EMBER_BRIGHTNESS, GameSettings.MAX_EMBER_BRIGHTNESS, settings.emberBrightness,
+                { if (it <= 0.01f) "Off" else "%.1fx".format(it) }, { settings.emberBrightness = it }
+            )
+            slider(
+                c.body, "Ember size", "How big each little spark square is.",
+                GameSettings.MIN_EMBER_SIZE, GameSettings.MAX_EMBER_SIZE, settings.emberSize,
+                { "%.1fx".format(it) }, { settings.emberSize = it }
+            )
+            slider(
+                c.body, "Ember drift speed", "How fast the sparks float upward.",
                 GameSettings.MIN_BACKGROUND_MOTION, GameSettings.MAX_BACKGROUND_MOTION, settings.backgroundMotion,
                 { if (it <= 0.01f) "Still" else "%.1fx".format(it) }, { settings.backgroundMotion = it }
             )
