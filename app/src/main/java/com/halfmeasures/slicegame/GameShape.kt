@@ -193,7 +193,7 @@ class GameShape(
             val poolSize = ShapeKind.unlockedCount(
                 stage, settings.startingShapeCount, settings.shapesPerStage
             )
-            val kind = values()[random.nextInt(poolSize)]
+            val kind = ShapeKind.values()[random.nextInt(poolSize)]
 
             val radius = (((screenW * 0.06f) + random.nextFloat() * (screenW * 0.045f)) * settings.sizeScale)
                 .coerceAtMost(screenW * 0.3f)
