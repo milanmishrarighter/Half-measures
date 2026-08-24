@@ -1,5 +1,8 @@
 package com.halfmeasures.slicegame
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
@@ -11,6 +14,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SwitchCompat
 import kotlin.math.roundToInt
@@ -477,19 +481,100 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun footer(): View = LinearLayout(this).apply {
-        orientation = LinearLayout.HORIZONTAL
+        orientation = LinearLayout.VERTICAL
         setPadding(0, dp(4f), 0, 0)
 
-        addView(pillButton("RESET", primary = false) {
-            settings = GameSettings()
-            settings.saveTo(this@SettingsActivity)
-            recreate()
+        addView(pillButton("COPY ALL SETTINGS", primary = false) {
+            copySettingsToClipboard()
         }.also {
-            (it.layoutParams as LinearLayout.LayoutParams).rightMargin = dp(12f)
+            (it.layoutParams as LinearLayout.LayoutParams).bottomMargin = dp(12f)
         })
 
-        addView(pillButton("DONE", primary = true) { finish() })
+        addView(LinearLayout(this@SettingsActivity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            addView(pillButton("RESET", primary = false) {
+                settings = GameSettings()
+                settings.saveTo(this@SettingsActivity)
+                recreate()
+            }.also {
+                (it.layoutParams as LinearLayout.LayoutParams).rightMargin = dp(12f)
+            })
+            addView(pillButton("DONE", primary = true) { finish() })
+        })
     }
+
+    /** Dumps every current value as plain text, ready to paste back for hardcoding. */
+    private fun copySettingsToClipboard() {
+        settings.saveTo(this)
+        val text = buildString {
+            appendLine("Half Measures settings")
+            appendLine()
+            appendLine("THE SHAPES")
+            appendLine("  Size: %.2fx".format(settings.sizeScale))
+            appendLine("  How high they fly: ${(settings.flightHeight * 100).roundToInt()}%")
+            appendLine("  Gravity: %.2fx".format(settings.gravityScale))
+            appendLine("  Spinning: %.2fx".format(settings.rotationScale))
+            appendLine("  Bouncy walls: ${(settings.wallStrength * 100).roundToInt()}%")
+            appendLine()
+            appendLine("GETTING HARDER")
+            appendLine("  Points per level: ${settings.stageScoreInterval}")
+            appendLine("  Shape types at level 1: ${settings.startingShapeCount}")
+            appendLine("  New shapes each level: ${settings.shapesPerStage}")
+            appendLine("  Extra shapes each level: ${settings.concurrencyPerStage}")
+            appendLine("  Extra spin each level: ${settings.rotationPerStagePercent.roundToInt()}%")
+            appendLine("  Throw-in spread each level: ${(settings.launchCentreCreep * 100).roundToInt()}%")
+            appendLine()
+            appendLine("HOW MANY AT ONCE")
+            appendLine("  Shapes in the air at level 1: ${settings.startConcurrency}")
+            appendLine("  Never more than: ${settings.maxConcurrency}")
+            appendLine("  Wait between shapes: %.1fs".format(settings.spawnGapMs / 1000f))
+            appendLine()
+            appendLine("POINTS & HEALTH")
+            appendLine("  Starting health: ${settings.startHealth}")
+            appendLine("  Counts as PERFECT: ±%.1f%%".format(settings.perfectThreshold))
+            appendLine("  Counts as GREAT: ±%.0f%%".format(settings.greatThreshold))
+            appendLine("  Points lost for being off: %.1f pts".format(settings.scoreMissWeight))
+            appendLine("  Bonus for being neat: ${settings.greatBonusPercent.roundToInt()}%")
+            appendLine("  Health lost on a 60/40 cut: %.1f hp".format(settings.healthLossAtSixtyForty))
+            appendLine("  Punish bad cuts extra: %.1f".format(settings.healthLossCurve))
+            appendLine("  Perfect cut heals you: ${onOff(settings.perfectRestoresHealth)}")
+            appendLine("  Missing a shape ends the game: ${onOff(settings.missEndsRun)}")
+            appendLine()
+            appendLine("STREAKS")
+            appendLine("  Hot streak bonus: ${settings.comboBonusPercent.roundToInt()}%")
+            appendLine("  Biggest hot streak bonus: %.1fx".format(settings.maxComboMultiplier))
+            appendLine("  Cold streak punishment: ${settings.coldStreakPenaltyPercent.roundToInt()}%")
+            appendLine()
+            appendLine("SLOW MOTION")
+            appendLine("  Slow-mo on a perfect cut: ${onOff(settings.slowMoOnPerfect)}")
+            appendLine("  How slow it goes: ${(settings.slowMoIntensity * 100).roundToInt()}%")
+            appendLine("  How long it lasts: %.1fs".format(settings.slowMoDuration))
+            appendLine("  Warning when health is low: ${onOff(settings.lowHealthSlowMo)}")
+            appendLine("  When to warn you: ${(settings.lowHealthThreshold * 100).roundToInt()}%")
+            appendLine()
+            appendLine("LOOK & FEEL")
+            appendLine("  Dotted helper line: ${onOff(settings.guideLineEnabled)}")
+            appendLine("  How clearly you see it: ${(settings.guideLineOpacity * 100).roundToInt()}%")
+            appendLine("  Sparks and bits: ${onOff(settings.particlesEnabled)}")
+            appendLine("  How many bits fly: %.2fx".format(settings.particleAmount))
+            appendLine("  Screen shake: %.2fx".format(settings.cameraShakeStrength))
+            appendLine("  Colour flash: %.2fx".format(settings.screenFlashStrength))
+            appendLine("  Ember count: %.2fx".format(settings.emberDensity))
+            appendLine("  Ember glow: %.2fx".format(settings.emberBrightness))
+            appendLine("  Ember size: %.2fx".format(settings.emberSize))
+            appendLine("  Ember drift speed: %.2fx".format(settings.backgroundMotion))
+            appendLine("  Knife trail thickness: %.2fx".format(settings.trailThickness))
+            appendLine("  Score text size: %.2fx".format(settings.popupTextScale))
+            appendLine("  Buzzing: ${onOff(settings.vibrationEnabled)}")
+            appendLine("  How hard it buzzes: ${(settings.vibrationStrength * 100).roundToInt()}%")
+        }
+
+        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+        clipboard?.setPrimaryClip(ClipData.newPlainText("Half Measures settings", text))
+        Toast.makeText(this, "Settings copied to clipboard", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun onOff(value: Boolean): String = if (value) "ON" else "OFF"
 
     private fun pillButton(label: String, primary: Boolean, onClick: () -> Unit): TextView =
         TextView(this).apply {

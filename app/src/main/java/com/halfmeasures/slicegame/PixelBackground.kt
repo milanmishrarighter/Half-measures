@@ -40,7 +40,7 @@ class PixelBackground(private val random: Random) {
                 val t = (age / lifeSpan).coerceIn(0f, 1f)
                 return when {
                     t < 0.15f -> t / 0.15f
-                    t > 0.7f -> (1f - t) / 0.3f
+                    t > 0.82f -> (1f - t) / 0.18f
                     else -> 1f
                 }
             }
@@ -169,9 +169,9 @@ class PixelBackground(private val random: Random) {
                 // Start scattered up the screen on a cold start, then from the floor.
                 y = if (ambientCount < target / 2) random.nextFloat() * height else height + pixel * 2f,
                 vx = (random.nextFloat() - 0.5f) * 12f,
-                vy = -(14f + random.nextFloat() * 34f),
+                vy = -(34f + random.nextFloat() * 62f),
                 size = pixel * (0.5f + random.nextFloat() * 0.7f),
-                lifeSpan = 5f + random.nextFloat() * 7f,
+                lifeSpan = 11f + random.nextFloat() * 9f,
                 swaySpeed = 0.5f + random.nextFloat() * 1.1f,
                 swayPhase = random.nextFloat() * 6.2832f,
                 ambient = true,

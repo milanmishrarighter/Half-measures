@@ -69,7 +69,12 @@ class GameView @JvmOverloads constructor(
     private var unlockedKinds = 0
 
     private var lastFrameTimeNanos = 0L
-    private var nextSpawnAtMs = 0L
+    /**
+     * Seconds until the next shape is thrown in. Counted down in *game* time, so
+     * slow motion holds the queue back instead of letting a crowd pile up and
+     * burst onto the screen the instant normal speed returns.
+     */
+    private var spawnCountdown = 0f
     private var elapsed = 0f
 
     // ---- Time control ----
@@ -303,9 +308,10 @@ class GameView @JvmOverloads constructor(
 
             val cap = (settings.startConcurrency + stage * settings.concurrencyPerStage)
                 .coerceIn(1, settings.maxConcurrency)
-            if (shapes.size < cap && nowMs >= nextSpawnAtMs && width > 0 && height > 0) {
+            spawnCountdown -= dt
+            if (shapes.size < cap && spawnCountdown <= 0f && width > 0 && height > 0) {
                 shapes.add(GameShape.spawnRandom(width, height, random, nowMs, stage, settings))
-                nextSpawnAtMs = nowMs + settings.spawnGapMs
+                spawnCountdown = settings.spawnGapMs / 1000f
             }
 
             // Critical health: hold a beat in slow motion so the danger registers.
@@ -389,6 +395,19 @@ class GameView @JvmOverloads constructor(
         if (settings.vibrationEnabled) haptics.great(settings.vibrationStrength)
     }
 
+    /**
+     * Tally of how every cut landed, bucketed by the split it produced, so the
+     * end-of-run card can show the player's accuracy spread rather than a single
+     * average. Bucket 0 is a dead-centre 50/50 and each step is five points wider.
+     */
+    private val cutBuckets = IntArray(CUT_BUCKET_LABELS.size)
+
+    private fun recordCutBucket(deviation: Float) {
+        // 0-2.5 lands in "50/50", then 5-point bands: 55/45, 60/40, and so on.
+        val index = ((deviation + 2.5f) / 5f).toInt().coerceIn(0, cutBuckets.size - 1)
+        cutBuckets[index]++
+    }
+
     /** -1 while the player is cold, +1 while they are hot; drives the backdrop's colour. */
     private fun streakWarmth(): Float = when {
         hotStreak >= 2 -> (hotStreak / 5f).coerceAtMost(1f)
@@ -462,7 +481,8 @@ class GameView @JvmOverloads constructor(
         dangerArmed = true
         pixels.reset()
         state = State.PLAYING
-        nextSpawnAtMs = System.currentTimeMillis() + 320
+        spawnCountdown = 0.32f
+        cutBuckets.fill(0)
     }
 
     // ---------------------------------------------------------------------
@@ -590,6 +610,11 @@ class GameView @JvmOverloads constructor(
 
         val bigger = (max(areaA, areaB) / (areaA + areaB) * 100f).roundToInt()
         val split = "$bigger / ${100 - bigger}"
+        recordCutBucket(deviation)
+
+        // Float the verdict well above the shape, clear of the flying halves and
+        // debris, so it is actually readable instead of buried in the explosion.
+        val popupY = (shape.y - shape.radius - 70f * density).coerceAtLeast(height * 0.14f)
         val headline = when {
             grade == Grade.PERFECT -> "PERFECT"
             gained < 0 -> "$gained"
@@ -1256,7 +1281,7 @@ class GameView @JvmOverloads constructor(
         val cx = width / 2f
         val cardLeft = width * 0.09f
         val cardRight = width * 0.91f
-        val cardTop = height * 0.20f
+        val cardTop = height * 0.12f
         val cardBottom = primaryButton.top - 26f * density
 
         roundRect.set(cardLeft, cardTop, cardRight, cardBottom)
@@ -1302,11 +1327,106 @@ class GameView @JvmOverloads constructor(
         uiPaint.color = Theme.textFaint
         canvas.drawText(
             "$cutCount cuts · $accuracy% perfect",
-            cx, statY + 38f * density, uiPaint
+            cx, statY + 34f * density, uiPaint
         )
+
+        drawCutBreakdown(canvas, cardLeft, cardRight, statY + 56f * density, cardBottom)
 
         drawButton(canvas, primaryButton, "RETRY", primary = true, pressed = pressedButton == 1)
         drawButton(canvas, secondaryButton, "SETTINGS", primary = false, pressed = pressedButton == 2)
+    }
+
+    /**
+     * How the run's cuts were distributed across accuracy bands, as a small bar
+     * chart. Only bands the player actually hit are listed, so the chart stays
+     * short, and the bars are scaled against the most common band.
+     */
+    private fun drawCutBreakdown(
+        canvas: Canvas,
+        cardLeft: Float,
+        cardRight: Float,
+        top: Float,
+        cardBottom: Float
+    ) {
+        val used = ArrayList<Int>(cutBuckets.size)
+        var peak = 0
+        for (i in cutBuckets.indices) {
+            if (cutBuckets[i] > 0) {
+                used.add(i)
+                peak = max(peak, cutBuckets[i])
+            }
+        }
+        if (used.isEmpty() || peak == 0) return
+
+        val padX = 28f * density
+        val rowHeight = 20f * density
+        val available = cardBottom - top - 26f * density
+        val maxRows = (available / rowHeight).toInt()
+        if (maxRows < 1) return
+
+        uiBoldPaint.textAlign = Paint.Align.LEFT
+        uiBoldPaint.textSize = 12f * density
+        uiBoldPaint.color = Theme.textFaint
+        canvas.drawText("HOW YOUR CUTS LANDED", cardLeft + padX, top, uiBoldPaint)
+
+        // If the player sprayed across more bands than fit, keep the most frequent.
+        val rows = if (used.size <= maxRows - 1) used
+        else used.sortedByDescending { cutBuckets[it] }.take(maxRows - 1).sorted()
+
+        val labelWidth = 46f * density
+        val countWidth = 34f * density
+        val barLeft = cardLeft + padX + labelWidth
+        val barRight = cardRight - padX - countWidth
+        val barSpan = (barRight - barLeft).coerceAtLeast(1f)
+
+        var y = top + 18f * density
+        for (index in rows) {
+            val count = cutBuckets[index]
+            val centerY = y + rowHeight * 0.5f
+
+            uiBoldPaint.textAlign = Paint.Align.LEFT
+            uiBoldPaint.textSize = 13f * density
+            uiBoldPaint.color = Theme.textSecondary
+            canvas.drawText(
+                CUT_BUCKET_LABELS[index],
+                cardLeft + padX,
+                centerY + 4.5f * density,
+                uiBoldPaint
+            )
+
+            val barHeight = 8f * density
+            roundRect.set(barLeft, centerY - barHeight / 2f, barRight, centerY + barHeight / 2f)
+            panelPaint.color = Theme.withAlpha(Color.WHITE, 0.07f)
+            canvas.drawRoundRect(roundRect, barHeight / 2f, barHeight / 2f, panelPaint)
+
+            val fraction = count.toFloat() / peak
+            roundRect.set(
+                barLeft, centerY - barHeight / 2f,
+                barLeft + barSpan * fraction, centerY + barHeight / 2f
+            )
+            panelPaint.color = bucketColor(index)
+            canvas.drawRoundRect(roundRect, barHeight / 2f, barHeight / 2f, panelPaint)
+
+            uiBoldPaint.textAlign = Paint.Align.RIGHT
+            uiBoldPaint.color = Theme.textPrimary
+            canvas.drawText(
+                count.toString(),
+                cardRight - padX,
+                centerY + 4.5f * density,
+                uiBoldPaint
+            )
+
+            y += rowHeight
+        }
+    }
+
+    /** Bands shade from gold at dead centre through to red at a total whiff. */
+    private fun bucketColor(index: Int): Int = when (index) {
+        0 -> Theme.gold
+        1 -> Theme.good
+        2 -> Theme.accent
+        3, 4 -> Color.rgb(255, 190, 90)
+        else -> Theme.danger
     }
 
     private fun drawStat(canvas: Canvas, cx: Float, cy: Float, value: String, label: String) {
@@ -1370,6 +1490,12 @@ class GameView @JvmOverloads constructor(
         const val DANGER_COUNTDOWN_SECONDS = 3f
         /** Real seconds spent climbing linearly back to full speed afterwards. */
         const val DANGER_RECOVERY_SECONDS = 2.2f
+
+        /** Accuracy buckets shown on the game-over card, widest miss last. */
+        val CUT_BUCKET_LABELS = arrayOf(
+            "50/50", "55/45", "60/40", "65/35", "70/30",
+            "75/25", "80/20", "85/15", "90/10", "95/5", "99/1"
+        )
     }
 
     private class TrailPoint(val x: Float, val y: Float, val timeMs: Long)
