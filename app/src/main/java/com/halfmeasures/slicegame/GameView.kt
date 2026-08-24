@@ -36,7 +36,12 @@ class GameView @JvmOverloads constructor(
     attrs: AttributeSet? = null
 ) : View(context, attrs), Choreographer.FrameCallback {
 
-    enum class State { READY, PLAYING, GAME_OVER }
+    /**
+     * READY and GAME_OVER show overlays; SETTLING is the beat in between, where the
+     * run is already over but the shapes still in the air are allowed to fall out
+     * of frame before the card slides in over an empty stage.
+     */
+    enum class State { READY, PLAYING, SETTLING, GAME_OVER }
 
     /** Opens the settings screen; wired up by the hosting activity. */
     var onOpenSettings: (() -> Unit)? = null
@@ -68,6 +73,16 @@ class GameView @JvmOverloads constructor(
     private var beatBestScore = false
     /** Seconds until the next firework goes up on a record-breaking run. */
     private var fireworkTimer = 0f
+    /** Seconds spent waiting for the last shapes to clear after the run ended. */
+    private var settleTimer = 0f
+    /** Seconds since the game-over card began revealing itself. */
+    private var cardReveal = 0f
+
+    // ---- Last-cut readout, shown under the score rather than over the action ----
+    private var lastCutLabel = ""
+    private var lastCutPoints = 0
+    private var lastCutColor = Theme.textPrimary
+    private var lastCutAge = 99f
     private var perfectStreak = 0
     private var bestStreak = 0
     private var bestPerfectStreak = 0
@@ -315,7 +330,7 @@ class GameView @JvmOverloads constructor(
             24f * density +
             CARD_STAT_ROW_HEIGHT * density * 5 +
             30f * density +
-            16f * density + CARD_BREAKDOWN_ROW_HEIGHT * density * cutBuckets.size +
+            16f * density + CARD_BREAKDOWN_ROW_HEIGHT * density * (cutBuckets.size - 1) +
             CARD_BOTTOM_PADDING * density
 
     // ---------------------------------------------------------------------
@@ -382,7 +397,21 @@ class GameView @JvmOverloads constructor(
                 health = 0
                 endRun()
             }
+        } else if (state == State.SETTLING) {
+            // Let whatever is still airborne drop away. Walls are off so nothing
+            // can be trapped bouncing, and none of it can be cut any more.
+            var i = shapes.size - 1
+            while (i >= 0) {
+                val s = shapes[i]
+                s.update(dt, gravity)
+                if (s.isOffScreen(width, height)) shapes.removeAt(i)
+                i--
+            }
+            updateSettling(dt)
         }
+
+        if (state == State.GAME_OVER) cardReveal += dt
+        lastCutAge += dt
 
         var i = pieces.size - 1
         while (i >= 0) {
@@ -392,7 +421,7 @@ class GameView @JvmOverloads constructor(
             i--
         }
 
-        if (state == State.GAME_OVER && beatBestScore) updateFireworks(dt)
+        if (state == State.GAME_OVER && beatBestScore && cardReveal > CARD_SCORE_AT) updateFireworks(dt)
 
         effects.update(dt, gravity)
 
@@ -451,10 +480,13 @@ class GameView @JvmOverloads constructor(
     private fun updateFireworks(dt: Float) {
         fireworkTimer -= dt
         if (fireworkTimer > 0f || width <= 0) return
-        fireworkTimer = 0.22f + random.nextFloat() * 0.3f
+        fireworkTimer = 0.18f + random.nextFloat() * 0.22f
 
-        val x = width * (0.12f + random.nextFloat() * 0.76f)
-        val y = height * (0.08f + random.nextFloat() * 0.34f)
+        // Centred on the score itself, so the celebration reads as being about it.
+        val scoreX = gameOverCard.centerX()
+        val scoreY = gameOverCard.top + 100f * density
+        val x = scoreX + (random.nextFloat() - 0.5f) * gameOverCard.width() * 0.85f
+        val y = scoreY + (random.nextFloat() - 0.5f) * 130f * density
         val palette = Theme.shapePalette[random.nextInt(Theme.shapePalette.size)]
         val color = if (random.nextFloat() < 0.4f) Theme.gold else palette[0]
 
@@ -463,7 +495,7 @@ class GameView @JvmOverloads constructor(
         pixels.flash(0.5f)
         effects.radialBurst(x, y, color, 26, 460f, 1.5f)
         effects.radialBurst(x, y, Theme.lighten(color, 0.4f), 14, 260f, 1.1f)
-        effects.shockwave(x, y, width * 0.22f, color, 0.5f, 7f)
+        effects.shockwave(x, y, width * 0.16f, color, 0.5f, 6f)
         effects.addEnergy(0.5f)
     }
 
@@ -506,7 +538,12 @@ class GameView @JvmOverloads constructor(
 
     private fun endRun() {
         if (state != State.PLAYING) return
-        state = State.GAME_OVER
+        // Hand over to the settling beat; the card waits until the stage is clear.
+        state = State.SETTLING
+        settleTimer = 0f
+        cardReveal = 0f
+        hasLastTouch = false
+        trailPoints.clear()
         if (score > bestScore) {
             bestScore = score
             beatBestScore = true
@@ -515,6 +552,20 @@ class GameView @JvmOverloads constructor(
         }
         effects.addShake(0.7f * settings.cameraShakeStrength)
         if (settings.vibrationEnabled) haptics.gameOver(settings.vibrationStrength)
+    }
+
+    /**
+     * Lets the remaining shapes fall away, then reveals the card. Capped so a shape
+     * wedged against a bouncy wall can never stall the ending.
+     */
+    private fun updateSettling(dt: Float) {
+        settleTimer += dt
+        if (shapes.isEmpty() || settleTimer > SETTLE_MAX_SECONDS) {
+            shapes.clear()
+            state = State.GAME_OVER
+            cardReveal = 0f
+            fireworkTimer = 0f
+        }
     }
 
     private fun startNewGame() {
@@ -535,6 +586,9 @@ class GameView @JvmOverloads constructor(
         endedOnMiss = false
         beatBestScore = false
         fireworkTimer = 0f
+        settleTimer = 0f
+        cardReveal = 0f
+        lastCutAge = 99f
         bestStreak = 0
         bestPerfectStreak = 0
         stage = 0
@@ -558,6 +612,7 @@ class GameView @JvmOverloads constructor(
     override fun onTouchEvent(event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                if (state == State.SETTLING) return true
                 if (state != State.PLAYING) {
                     pressedButton = when {
                         primaryButton.contains(event.x, event.y) -> 1
@@ -587,6 +642,7 @@ class GameView @JvmOverloads constructor(
             }
 
             MotionEvent.ACTION_UP -> {
+                if (state == State.SETTLING) return true
                 if (state != State.PLAYING) {
                     val released = pressedButton
                     pressedButton = 0
@@ -680,36 +736,31 @@ class GameView @JvmOverloads constructor(
         spawnCutEffects(shape, dirX, dirY, grade)
 
         val bigger = (max(areaA, areaB) / (areaA + areaB) * 100f).roundToInt()
-        val split = "$bigger / ${100 - bigger}"
+        val split = "$bigger/${100 - bigger}"
         recordCutBucket(grade)
 
-        // Float the verdict well above the shape, clear of the flying halves and
-        // debris, so it is actually readable instead of buried in the explosion.
+        // Over the shape, keep it to the bare verdict so the action stays readable.
         val popupY = (shape.y - shape.radius - 70f * density).coerceAtLeast(height * 0.14f)
-        val headline = when {
-            grade == Grade.PERFECT -> "PERFECT"
-            gained < 0 -> "$gained"
-            else -> "+$gained"
-        }
-        val subline = when {
-            grade == Grade.PERFECT -> "+$gained" + streakSuffix()
-            grade == Grade.GREAT -> "GREAT  ·  $split" + streakSuffix()
-            coldStreak >= 2 -> "COLD STREAK  ·  $split"
-            else -> split
-        }
         effects.popup(
-            headline = headline,
-            subline = subline,
-            x = shape.x,
-            y = shape.y,
-            color = if (gained < 0) Theme.danger else gradeColor(grade),
-            emphasis = when {
-                grade == Grade.PERFECT -> 1f
-                grade == Grade.GREAT -> 0.6f
-                coldStreak >= 2 -> 0.5f
-                else -> 0f
-            }
+            headline = if (grade == Grade.PERFECT) "PERFECT" else split,
+            subline = "",
+            x = shape.x.coerceIn(width * 0.22f, width * 0.78f),
+            y = popupY,
+            color = gradeColor(grade),
+            emphasis = if (grade == Grade.PERFECT) 1f else 0f
         )
+
+        // The wordier feedback - grade, points, streak - collects under the score.
+        lastCutLabel = when (grade) {
+            Grade.PERFECT -> "PERFECT"
+            Grade.GREAT -> "GREAT"
+            Grade.GOOD -> "GOOD"
+            Grade.FAIR -> "OKAY"
+            else -> "SLOPPY"
+        }
+        lastCutPoints = gained
+        lastCutColor = gradeColor(grade)
+        lastCutAge = 0f
 
         if (settings.vibrationEnabled) {
             when (grade) {
@@ -971,14 +1022,16 @@ class GameView @JvmOverloads constructor(
         drawFlash(canvas)
         drawCriticalWarning(canvas)
         drawPopups(canvas)
-        if (state == State.PLAYING) {
+        // The HUD stays up through the settling beat so the final score is visible
+        // right until the card takes over.
+        if (state == State.PLAYING || state == State.SETTLING) {
             drawHud(canvas)
         }
 
         when (state) {
             State.READY -> drawReadyScreen(canvas)
             State.GAME_OVER -> drawGameOverScreen(canvas)
-            State.PLAYING -> {}
+            State.PLAYING, State.SETTLING -> {}
         }
     }
 
@@ -1258,10 +1311,10 @@ class GameView @JvmOverloads constructor(
                 frac > 0.25f -> Theme.gold
                 else -> Theme.danger
             }
-            // Critical health alternates red and blue like an emergency light.
+            // The bar breathes in time with the full-screen warning.
             if (critical) {
-                val lamp = 0.5f + 0.5f * sin(elapsed * 8.2f)
-                healthColor = Theme.lerpColor(EMERGENCY_RED, EMERGENCY_BLUE, lamp)
+                val breath = 0.5f + 0.5f * cos(elapsed * 3.1f)
+                healthColor = Theme.lerpColor(EMERGENCY_RED, Color.WHITE, breath * 0.45f)
             }
             roundRect.set(pad, barTop, pad + barWidth * frac, barTop + barHeight)
             panelPaint.color = healthColor
@@ -1278,7 +1331,7 @@ class GameView @JvmOverloads constructor(
         uiBoldPaint.textAlign = Paint.Align.LEFT
         uiBoldPaint.textSize = 15f * density
         uiBoldPaint.color = if (critical) {
-            Theme.lerpColor(EMERGENCY_RED, EMERGENCY_BLUE, 0.5f + 0.5f * sin(elapsed * 8.2f))
+            Theme.lerpColor(EMERGENCY_RED, Color.WHITE, (0.5f + 0.5f * cos(elapsed * 3.1f)) * 0.45f)
         } else {
             Theme.textFaint
         }
@@ -1312,92 +1365,93 @@ class GameView @JvmOverloads constructor(
         uiPaint.color = Theme.textFaint
         canvas.drawText("SCORE", width / 2f, barTop + barHeight + 80f * density, uiPaint)
 
-        val streakY = barTop + barHeight + 108f * density
-        if (hotStreak > 1) {
-            // Hot streak: swells and glows as it climbs.
-            val multiplier = comboMultiplier()
-            val beat = 1f + 0.06f * sin(elapsed * 9f)
+        // Everything wordy about the last cut lives here, under the score, rather
+        // than over the shapes where it competed with the debris.
+        val feedY = barTop + barHeight + 106f * density
+        if (lastCutAge < LAST_CUT_HOLD) {
+            val fade = (1f - lastCutAge / LAST_CUT_HOLD).coerceIn(0f, 1f)
+            val pop = if (lastCutAge < 0.12f) 1f + 0.25f * (1f - lastCutAge / 0.12f) else 1f
             uiBoldPaint.textAlign = Paint.Align.CENTER
-            uiBoldPaint.textSize = 21f * density * beat
+            uiBoldPaint.textSize = 20f * density * pop
+            uiBoldPaint.color = Theme.withAlpha(lastCutColor, fade)
+            canvas.drawText("$lastCutLabel  +$lastCutPoints", width / 2f, feedY, uiBoldPaint)
+        }
+
+        val streakY = feedY + 30f * density
+        if (perfectStreak > 1) {
+            val beat = 1f + 0.07f * sin(elapsed * 10f)
+            uiBoldPaint.textAlign = Paint.Align.CENTER
+            uiBoldPaint.textSize = 22f * density * beat
             uiBoldPaint.color = Theme.gold
             canvas.drawText(
-                "${hotStreak}x STREAK  ·  ${"%.1f".format(multiplier)}x SCORE",
+                "${perfectStreak}x PERFECT  ·  ${"%.1f".format(comboMultiplier())}x",
+                width / 2f, streakY, uiBoldPaint
+            )
+        } else if (hotStreak > 1) {
+            val beat = 1f + 0.05f * sin(elapsed * 9f)
+            uiBoldPaint.textAlign = Paint.Align.CENTER
+            uiBoldPaint.textSize = 20f * density * beat
+            uiBoldPaint.color = Theme.good
+            canvas.drawText(
+                "${hotStreak}x STREAK  ·  ${"%.1f".format(comboMultiplier())}x",
                 width / 2f, streakY, uiBoldPaint
             )
         } else if (coldStreak > 1) {
             val beat = 0.5f + 0.5f * sin(elapsed * 12f)
             uiBoldPaint.textAlign = Paint.Align.CENTER
-            uiBoldPaint.textSize = 21f * density
+            uiBoldPaint.textSize = 20f * density
             uiBoldPaint.color = Theme.lerpColor(Theme.danger, Color.WHITE, beat * 0.5f)
             canvas.drawText("${coldStreak}x COLD  ·  SCORE FALLING", width / 2f, streakY, uiBoldPaint)
         }
     }
 
     /**
-     * The critical-health warning: a red-and-blue wash alternating like an
-     * ambulance light, plus a pulsing CRITICAL banner. Runs for as long as health
-     * stays low rather than for a fixed countdown.
+     * The low-health warning is one slow red breath over the whole scene, drawn
+     * between the action and the headline so the entire screen reads as alarmed
+     * while the shapes stay visible through it.
      */
     private fun drawCriticalWarning(canvas: Canvas) {
         if (state != State.PLAYING || health <= 0 || health > settings.lowHealthAt) return
 
-        // Two lamps a half-cycle apart, so the colour alternates rather than throbs.
-        val cycle = (elapsed * 2.4f) % 1f
-        val redLamp = (cos(cycle * 6.2832f) * 0.5f + 0.5f)
-        val blueLamp = 1f - redLamp
+        // A single slow cycle, so it breathes like a warning lamp rather than strobing.
+        val breath = 0.5f + 0.5f * cos(elapsed * 3.1f)
 
-        val edge = width * 0.62f
+        scrimPaint.shader = null
+        scrimPaint.color = Theme.withAlpha(EMERGENCY_RED, 0.09f + 0.20f * breath)
+        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), scrimPaint)
+
+        // Heavier at the edges so the middle of the play area stays readable.
+        val edge = width * 0.34f
         scrimPaint.shader = LinearGradient(
             0f, 0f, edge, 0f,
-            Theme.withAlpha(EMERGENCY_RED, 0.62f * redLamp), Color.TRANSPARENT,
-            Shader.TileMode.CLAMP
+            Theme.withAlpha(EMERGENCY_RED, 0.26f * breath), Color.TRANSPARENT, Shader.TileMode.CLAMP
         )
         canvas.drawRect(0f, 0f, edge, height.toFloat(), scrimPaint)
-
         scrimPaint.shader = LinearGradient(
             width.toFloat(), 0f, width - edge, 0f,
-            Theme.withAlpha(EMERGENCY_BLUE, 0.62f * blueLamp), Color.TRANSPARENT,
-            Shader.TileMode.CLAMP
+            Theme.withAlpha(EMERGENCY_RED, 0.26f * breath), Color.TRANSPARENT, Shader.TileMode.CLAMP
         )
         canvas.drawRect(width - edge, 0f, width.toFloat(), height.toFloat(), scrimPaint)
-
-        // A sweep across the top and bottom edges as well, so the whole frame pulses.
-        val bandHeight = height * 0.16f
-        scrimPaint.shader = LinearGradient(
-            0f, 0f, 0f, bandHeight,
-            Theme.withAlpha(if (redLamp > 0.5f) EMERGENCY_RED else EMERGENCY_BLUE, 0.34f),
-            Color.TRANSPARENT, Shader.TileMode.CLAMP
-        )
-        canvas.drawRect(0f, 0f, width.toFloat(), bandHeight, scrimPaint)
-        scrimPaint.shader = LinearGradient(
-            0f, height.toFloat(), 0f, height - bandHeight,
-            Theme.withAlpha(if (redLamp > 0.5f) EMERGENCY_BLUE else EMERGENCY_RED, 0.34f),
-            Color.TRANSPARENT, Shader.TileMode.CLAMP
-        )
-        canvas.drawRect(0f, height - bandHeight, width.toFloat(), height.toFloat(), scrimPaint)
         scrimPaint.shader = null
 
-        // Headline sized like the PERFECT call-out, dead centre, breathing in and out.
-        val breathe = 0.5f + 0.5f * cos(elapsed * 5.5f)
-        val lampColor = if (redLamp > 0.5f) EMERGENCY_RED else EMERGENCY_BLUE
         val cx = width / 2f
         val cy = height * 0.5f
 
         displayPaint.textAlign = Paint.Align.CENTER
-        displayPaint.textSize = 30f * density * (1f + 0.06f * breathe)
+        displayPaint.textSize = 30f * density * (1f + 0.06f * breath)
 
         displayPaint.style = Paint.Style.STROKE
         displayPaint.strokeWidth = 12f * density
-        displayPaint.color = Theme.withAlpha(lampColor, 0.28f * (0.5f + breathe))
+        displayPaint.color = Theme.withAlpha(EMERGENCY_RED, 0.30f + 0.35f * breath)
         canvas.drawText("LOW HEALTH", cx, cy, displayPaint)
         displayPaint.style = Paint.Style.FILL
 
-        displayPaint.color = Theme.withAlpha(Color.WHITE, 0.7f + 0.3f * breathe)
+        displayPaint.color = Theme.withAlpha(Color.WHITE, 0.72f + 0.28f * breath)
         canvas.drawText("LOW HEALTH", cx, cy, displayPaint)
 
         uiBoldPaint.textAlign = Paint.Align.CENTER
         uiBoldPaint.textSize = 17f * density
-        uiBoldPaint.color = Theme.withAlpha(lampColor, 0.75f + 0.25f * breathe)
+        uiBoldPaint.color = Theme.withAlpha(EMERGENCY_RED, 0.8f + 0.2f * breath)
         canvas.drawText("$health HP LEFT", cx, cy + 30f * density, uiBoldPaint)
     }
 
@@ -1430,17 +1484,26 @@ class GameView @JvmOverloads constructor(
         drawButton(canvas, secondaryButton, "SETTINGS", primary = false, pressed = pressedButton == 2)
     }
 
+    /** 0 until [at], then eases to 1 - the stagger behind the card's reveal. */
+    private fun revealAlpha(at: Float, span: Float = 0.3f): Float {
+        val t = ((cardReveal - at) / span).coerceIn(0f, 1f)
+        return 1f - (1f - t) * (1f - t)
+    }
+
     private fun drawGameOverScreen(canvas: Canvas) {
-        scrimPaint.color = Color.argb(205, 3, 5, 12)
+        // The scrim fades in with the card rather than slamming on.
+        val scrimAlpha = revealAlpha(0f, 0.4f)
+        scrimPaint.shader = null
+        scrimPaint.color = Color.argb((205 * scrimAlpha).toInt(), 3, 5, 12)
         canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), scrimPaint)
 
-        // Fireworks belong above the dimming scrim, not behind it.
         if (beatBestScore) {
             pixels.draw(canvas, pixelPaint, effects.energy)
             drawShockwaves(canvas)
             drawParticles(canvas)
         }
 
+        val boxAlpha = revealAlpha(0f, 0.32f)
         val cardLeft = gameOverCard.left
         val cardRight = gameOverCard.right
         val cardTop = gameOverCard.top
@@ -1448,16 +1511,36 @@ class GameView @JvmOverloads constructor(
         val padX = 28f * density
         val rowStep = CARD_STAT_ROW_HEIGHT * density
 
-        val radius = 26f * density
-        panelPaint.color = Theme.card
-        canvas.drawRoundRect(gameOverCard, radius, radius, panelPaint)
-        canvas.drawRoundRect(gameOverCard, radius, radius, panelStrokePaint)
+        // The whole card eases up into place from slightly small and low.
+        canvas.save()
+        val scale = 0.94f + 0.06f * boxAlpha
+        canvas.translate(0f, (1f - boxAlpha) * 26f * density)
+        canvas.scale(scale, scale, cx, gameOverCard.centerY())
 
+        val radius = 26f * density
+        panelPaint.shader = null
+        panelPaint.color = Theme.withAlpha(Theme.card, boxAlpha)
+        canvas.drawRoundRect(gameOverCard, radius, radius, panelPaint)
+        panelStrokePaint.color = Theme.withAlpha(Theme.hairline, boxAlpha)
+        canvas.drawRoundRect(gameOverCard, radius, radius, panelStrokePaint)
+        panelStrokePaint.color = Theme.hairline
+
+        val titleAlpha = revealAlpha(CARD_TITLE_AT)
         val accentColor = if (endedOnMiss) Theme.danger else Theme.gold
 
         uiBoldPaint.textAlign = Paint.Align.CENTER
         uiBoldPaint.textSize = 17f * density
-        uiBoldPaint.color = if (beatBestScore) Theme.gold else accentColor
+        if (beatBestScore) {
+            // A record headline blinks and swells so it cannot be mistaken for the
+            // ordinary end-of-run line.
+            val blink = 0.55f + 0.45f * cos(cardReveal * 7.5f)
+            uiBoldPaint.textSize = 19f * density * (1f + 0.09f * blink)
+            uiBoldPaint.color = Theme.withAlpha(
+                Theme.lerpColor(Theme.gold, Color.WHITE, blink * 0.7f), titleAlpha
+            )
+        } else {
+            uiBoldPaint.color = Theme.withAlpha(accentColor, titleAlpha)
+        }
         canvas.drawText(
             when {
                 beatBestScore -> "NEW BEST!"
@@ -1467,17 +1550,27 @@ class GameView @JvmOverloads constructor(
             cx, cardTop + 40f * density, uiBoldPaint
         )
 
+        // The score lands with a flash that settles into its final colour.
+        val scoreAlpha = revealAlpha(CARD_SCORE_AT, 0.26f)
+        val scoreFlash = (1f - ((cardReveal - CARD_SCORE_AT) / 0.45f)).coerceIn(0f, 1f)
         displayPaint.textAlign = Paint.Align.CENTER
-        displayPaint.textSize = 52f * density
-        displayPaint.color = if (beatBestScore) Theme.gold else Theme.textPrimary
+        displayPaint.textSize = 52f * density * (1f + 0.14f * scoreFlash)
+        displayPaint.color = Theme.withAlpha(
+            Theme.lerpColor(
+                if (beatBestScore) Theme.gold else Theme.textPrimary,
+                Color.WHITE,
+                scoreFlash
+            ),
+            scoreAlpha
+        )
         canvas.drawText(score.toString(), cx, cardTop + 112f * density, displayPaint)
 
         uiPaint.textSize = 15f * density
-        uiPaint.color = Theme.textFaint
+        uiPaint.color = Theme.withAlpha(Theme.textFaint, scoreAlpha)
         canvas.drawText("FINAL SCORE", cx, cardTop + 132f * density, uiPaint)
 
         rimPaint.strokeWidth = 1.5f
-        rimPaint.color = Theme.hairline
+        rimPaint.color = Theme.withAlpha(Theme.hairline, revealAlpha(CARD_ROWS_AT - 0.1f))
         val dividerY = cardTop + CARD_HEADER_HEIGHT * density
         canvas.drawLine(cardLeft + padX, dividerY, cardRight - padX, dividerY, rimPaint)
 
@@ -1485,21 +1578,28 @@ class GameView @JvmOverloads constructor(
         val right = cardRight - padX
         var rowY = dividerY + 30f * density
 
-        drawStatRow(canvas, left, right, rowY, "BEST SCORE", bestScore.toString(), Theme.accent)
+        // Stats arrive one at a time rather than all at once.
+        drawStatRow(canvas, left, right, rowY, "BEST SCORE", bestScore.toString(), Theme.accent, 0)
         rowY += rowStep
-        drawStatRow(canvas, left, right, rowY, "CUTS SURVIVED", cutCount.toString(), Theme.textPrimary)
+        drawStatRow(canvas, left, right, rowY, "CUTS SURVIVED", cutCount.toString(), Theme.textPrimary, 1)
         rowY += rowStep
-        drawStatRow(canvas, left, right, rowY, "PERFECT CUTS", perfectCount.toString(), Theme.gold)
+        drawStatRow(canvas, left, right, rowY, "PERFECT CUTS", perfectCount.toString(), Theme.gold, 2)
         rowY += rowStep
-        drawStatRow(canvas, left, right, rowY, "BEST PERFECT STREAK", "${bestPerfectStreak}x", Theme.gold)
+        drawStatRow(canvas, left, right, rowY, "BEST PERFECT STREAK", "${bestPerfectStreak}x", Theme.gold, 3)
         rowY += rowStep
-        drawStatRow(canvas, left, right, rowY, "BEST GOOD STREAK", "${bestStreak}x", Theme.good)
+        drawStatRow(canvas, left, right, rowY, "BEST GOOD STREAK", "${bestStreak}x", Theme.good, 4)
         rowY += 30f * density
 
         drawCutBreakdown(canvas, cardLeft, cardRight, rowY, CARD_BREAKDOWN_ROW_HEIGHT * density)
 
-        drawButton(canvas, primaryButton, "RETRY", primary = true, pressed = pressedButton == 1)
-        drawButton(canvas, secondaryButton, "SETTINGS", primary = false, pressed = pressedButton == 2)
+        canvas.restore()
+
+        // Buttons come in last, once the card has finished settling.
+        val buttonAlpha = revealAlpha(CARD_ROWS_AT + CARD_ROW_STAGGER * 5 + CARD_BREAKDOWN_STAGGER * 5)
+        if (buttonAlpha > 0.01f) {
+            drawButton(canvas, primaryButton, "RETRY", primary = true, pressed = pressedButton == 1, alpha = buttonAlpha)
+            drawButton(canvas, secondaryButton, "SETTINGS", primary = false, pressed = pressedButton == 2, alpha = buttonAlpha)
+        }
     }
 
     /**
@@ -1521,7 +1621,9 @@ class GameView @JvmOverloads constructor(
 
         uiBoldPaint.textAlign = Paint.Align.LEFT
         uiBoldPaint.textSize = 12f * density
-        uiBoldPaint.color = Theme.textFaint
+        uiBoldPaint.color = Theme.withAlpha(
+            Theme.textFaint, revealAlpha(CARD_ROWS_AT + CARD_ROW_STAGGER * 5)
+        )
         canvas.drawText("HOW YOUR CUTS LANDED", cardLeft + padX, top, uiBoldPaint)
 
         val labelWidth = 46f * density
@@ -1531,13 +1633,21 @@ class GameView @JvmOverloads constructor(
         val barSpan = (barRight - barLeft).coerceAtLeast(1f)
 
         var y = top + 16f * density
-        for (index in cutBuckets.indices) {
+        // Band 0 is PERFECT, already reported as its own stat above - listing it
+        // here again would just repeat the same number.
+        var shown = 0
+        for (index in 1 until cutBuckets.size) {
             val count = cutBuckets[index]
+            val rowAlpha = revealAlpha(CARD_ROWS_AT + CARD_ROW_STAGGER * 5 + CARD_BREAKDOWN_STAGGER * shown)
+            shown++
+            if (rowAlpha <= 0.01f) break
             val centerY = y + rowHeight * 0.5f
 
             uiBoldPaint.textAlign = Paint.Align.LEFT
             uiBoldPaint.textSize = 13f * density
-            uiBoldPaint.color = if (count > 0) Theme.textSecondary else Theme.textFaint
+            uiBoldPaint.color = Theme.withAlpha(
+                if (count > 0) Theme.textSecondary else Theme.textFaint, rowAlpha
+            )
             canvas.drawText(
                 CUT_BUCKET_LABELS[index],
                 cardLeft + padX,
@@ -1547,21 +1657,24 @@ class GameView @JvmOverloads constructor(
 
             val barHeight = 8f * density
             roundRect.set(barLeft, centerY - barHeight / 2f, barRight, centerY + barHeight / 2f)
-            panelPaint.color = Theme.withAlpha(Color.WHITE, 0.07f)
+            panelPaint.color = Theme.withAlpha(Color.WHITE, 0.07f * rowAlpha)
             canvas.drawRoundRect(roundRect, barHeight / 2f, barHeight / 2f, panelPaint)
 
             if (count > 0 && peak > 0) {
-                val fraction = count.toFloat() / peak
+                // The bar itself wipes out from the left as the row arrives.
+                val fraction = count.toFloat() / peak * rowAlpha
                 roundRect.set(
                     barLeft, centerY - barHeight / 2f,
                     barLeft + barSpan * fraction, centerY + barHeight / 2f
                 )
-                panelPaint.color = bucketColor(index)
+                panelPaint.color = Theme.withAlpha(bucketColor(index), rowAlpha)
                 canvas.drawRoundRect(roundRect, barHeight / 2f, barHeight / 2f, panelPaint)
             }
 
             uiBoldPaint.textAlign = Paint.Align.RIGHT
-            uiBoldPaint.color = if (count > 0) Theme.textPrimary else Theme.textFaint
+            uiBoldPaint.color = Theme.withAlpha(
+                if (count > 0) Theme.textPrimary else Theme.textFaint, rowAlpha
+            )
             canvas.drawText(
                 count.toString(),
                 cardRight - padX,
@@ -1591,17 +1704,23 @@ class GameView @JvmOverloads constructor(
         y: Float,
         label: String,
         value: String,
-        valueColor: Int
+        valueColor: Int,
+        order: Int
     ) {
+        val alpha = revealAlpha(CARD_ROWS_AT + CARD_ROW_STAGGER * order)
+        if (alpha <= 0.01f) return
+        // Each row slides the last few pixels into place as it fades up.
+        val slide = (1f - alpha) * 10f * density
+
         uiBoldPaint.textAlign = Paint.Align.LEFT
         uiBoldPaint.textSize = 14f * density
-        uiBoldPaint.color = Theme.textFaint
-        canvas.drawText(label, left, y, uiBoldPaint)
+        uiBoldPaint.color = Theme.withAlpha(Theme.textFaint, alpha)
+        canvas.drawText(label, left + slide, y, uiBoldPaint)
 
         uiBoldPaint.textAlign = Paint.Align.RIGHT
         uiBoldPaint.textSize = 17f * density
-        uiBoldPaint.color = valueColor
-        canvas.drawText(value, right, y, uiBoldPaint)
+        uiBoldPaint.color = Theme.withAlpha(valueColor, alpha)
+        canvas.drawText(value, right - slide, y, uiBoldPaint)
     }
 
     private fun drawChip(canvas: Canvas, cx: Float, cy: Float, text: String) {
@@ -1618,7 +1737,14 @@ class GameView @JvmOverloads constructor(
         canvas.drawText(text, cx, cy + 5f * density, uiBoldPaint)
     }
 
-    private fun drawButton(canvas: Canvas, rect: RectF, label: String, primary: Boolean, pressed: Boolean) {
+    private fun drawButton(
+        canvas: Canvas,
+        rect: RectF,
+        label: String,
+        primary: Boolean,
+        pressed: Boolean,
+        alpha: Float = 1f
+    ) {
         val radius = rect.height() / 2f
         val inset = if (pressed) 2f * density else 0f
         roundRect.set(rect.left + inset, rect.top + inset, rect.right - inset, rect.bottom - inset)
@@ -1626,21 +1752,24 @@ class GameView @JvmOverloads constructor(
         if (primary) {
             panelPaint.shader = LinearGradient(
                 roundRect.left, roundRect.top, roundRect.right, roundRect.bottom,
-                Theme.accent, Theme.accentDeep, Shader.TileMode.CLAMP
+                Theme.withAlpha(Theme.accent, alpha), Theme.withAlpha(Theme.accentDeep, alpha),
+                Shader.TileMode.CLAMP
             )
-            panelPaint.color = Color.WHITE
             canvas.drawRoundRect(roundRect, radius, radius, panelPaint)
             panelPaint.shader = null
         } else {
-            panelPaint.color = Theme.withAlpha(Color.WHITE, if (pressed) 0.14f else 0.08f)
+            panelPaint.color = Theme.withAlpha(Color.WHITE, (if (pressed) 0.14f else 0.08f) * alpha)
             canvas.drawRoundRect(roundRect, radius, radius, panelPaint)
-            panelStrokePaint.color = Theme.hairline
+            panelStrokePaint.color = Theme.withAlpha(Theme.hairline, alpha)
             canvas.drawRoundRect(roundRect, radius, radius, panelStrokePaint)
+            panelStrokePaint.color = Theme.hairline
         }
 
         uiBoldPaint.textAlign = Paint.Align.CENTER
         uiBoldPaint.textSize = 22f * density
-        uiBoldPaint.color = if (primary) Color.rgb(6, 20, 26) else Theme.textPrimary
+        uiBoldPaint.color = Theme.withAlpha(
+            if (primary) Color.rgb(6, 20, 26) else Theme.textPrimary, alpha
+        )
         val baseline = roundRect.centerY() - (uiBoldPaint.descent() + uiBoldPaint.ascent()) / 2f
         canvas.drawText(label, roundRect.centerX(), baseline, uiBoldPaint)
     }
@@ -1659,7 +1788,18 @@ class GameView @JvmOverloads constructor(
         const val CARD_BOTTOM_PADDING = 26f
 
         val EMERGENCY_RED = Color.rgb(255, 62, 74)
-        val EMERGENCY_BLUE = Color.rgb(74, 138, 255)
+
+        /** Seconds the last-cut readout stays under the score. */
+        const val LAST_CUT_HOLD = 1.1f
+        /** Longest the ending waits for airborne shapes to clear. */
+        const val SETTLE_MAX_SECONDS = 2.6f
+
+        // Reveal timings for the game-over card, in seconds.
+        const val CARD_TITLE_AT = 0.26f
+        const val CARD_SCORE_AT = 0.46f
+        const val CARD_ROWS_AT = 0.80f
+        const val CARD_ROW_STAGGER = 0.11f
+        const val CARD_BREAKDOWN_STAGGER = 0.09f
 
         /** Accuracy buckets shown on the game-over card, widest miss last. */
         /** One per [Grade], showing the worst split that still lands in that tier. */
