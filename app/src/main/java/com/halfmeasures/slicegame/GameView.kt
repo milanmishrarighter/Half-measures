@@ -66,6 +66,8 @@ class GameView @JvmOverloads constructor(
     var onWatchRewardedAd: ((() -> Unit, (String, Boolean) -> Unit, () -> Unit) -> Unit)? = null
     /** Abandons an ad that was asked for but never appeared. */
     var onCancelPendingAd: (() -> Unit)? = null
+    /** Asks for an ad to be fetched, so a failed press makes the next one likelier. */
+    var onPreloadAd: (() -> Unit)? = null
     /** Whether an ad is loaded right now. Nothing is offered when it is not. */
     var isRewardedAdReady: (() -> Boolean)? = null
 
@@ -521,7 +523,8 @@ class GameView @JvmOverloads constructor(
         val visualHeight = designHeight * CARD_SCALE
 
         val rows = if (continueOffered) 3 else 2
-        val cardGap = 20f * density
+        // Wide enough to seat the "could not load an ad" line when there is one.
+        val cardGap = 30f * density
         val blockHeight = visualHeight + cardGap + rowHeight * rows + gap * (rows - 1)
         val blockTop = ((h - blockHeight) / 2f).coerceAtLeast(12f * density)
 
@@ -899,17 +902,17 @@ class GameView @JvmOverloads constructor(
     }
 
     /**
-     * A continue is only offered when there is an ad actually loaded to pay for it.
-     * Dangling the option in front of a player who is offline, and then failing,
-     * would be worse than never offering.
+     * Whether the card shows a continue at all. Deliberately not conditional on an
+     * ad being loaded: a button that comes and goes is worse than one that is
+     * always there and occasionally says it could not fetch an ad. The failure is
+     * reported on the card instead.
      */
     private fun canOfferContinue(): Boolean {
         if (!settings.continuesEnabled) return false
         // A cap of zero means no cap: a good run can be bought back as many times
         // as the player is willing to sit through an ad for.
         val cap = settings.continuesPerRun
-        if (cap > 0 && continuesUsed >= cap) return false
-        return isRewardedAdReady?.invoke() == true
+        return cap <= 0 || continuesUsed < cap
     }
 
     private fun enterGameOver() {
@@ -988,7 +991,10 @@ class GameView @JvmOverloads constructor(
         // that is not loaded should read as "not right now" on the card the player
         // is already looking at, never as a screen they then have to escape.
         if (show == null || isRewardedAdReady?.invoke() != true) {
-            settleAd(purpose, earned = false, reason = "No ad ready - try again in a moment", userBackedOut = false)
+            // Kick a fetch on the way out, so pressing again in a few seconds has a
+            // real chance of working rather than failing the same way.
+            onPreloadAd?.invoke()
+            settleAd(purpose, earned = false, reason = "Could not load an ad - try again", userBackedOut = false)
             return
         }
         pendingAdPurpose = purpose
@@ -2509,14 +2515,18 @@ class GameView @JvmOverloads constructor(
         canvas.drawText("Score $score kept", cx, cy + 44f * density, uiPaint)
     }
 
-    /** A one-line explanation when an ad did not pay out, so it is not silent. */
+    /**
+     * Why an ad did not pay out. The continue button is always there now, so this
+     * line is what a press that could not fetch an ad turns into - it has to be
+     * legible as a failure rather than read as decoration.
+     */
     private fun drawAdNotice(canvas: Canvas, cy: Float) {
         if (adNoticeAge > AD_NOTICE_HOLD || adNotice.isEmpty()) return
         val fade = (1f - adNoticeAge / AD_NOTICE_HOLD).coerceIn(0f, 1f)
-        uiPaint.textAlign = Paint.Align.CENTER
-        uiPaint.textSize = 14f * density
-        uiPaint.color = Theme.withAlpha(Theme.textFaint, fade)
-        canvas.drawText(adNotice, width / 2f, cy, uiPaint)
+        uiBoldPaint.textAlign = Paint.Align.CENTER
+        uiBoldPaint.textSize = 14f * density
+        uiBoldPaint.color = Theme.withAlpha(Theme.danger, fade)
+        canvas.drawText(adNotice, width / 2f, cy, uiBoldPaint)
     }
 
     private fun drawReadyScreen(canvas: Canvas) {
@@ -2673,7 +2683,7 @@ class GameView @JvmOverloads constructor(
             drawContinueButton(canvas, buttonAlpha)
             drawButton(canvas, primaryButton, "RETRY", primary = true, pressed = pressedButton == 1, alpha = buttonAlpha, textSize = label)
             drawButton(canvas, overQuaternary, "MAIN MENU", primary = false, pressed = pressedButton == 4, alpha = buttonAlpha, textSize = label)
-            drawAdNotice(canvas, overQuaternary.bottom + 20f * density)
+            drawAdNotice(canvas, gameOverCardVisual.bottom + 20f * density)
         }
     }
 
@@ -2889,7 +2899,7 @@ class GameView @JvmOverloads constructor(
         const val GAME_OVER_BUTTON_HEIGHT = 50f
 
         /** How much of its designed size the score card is actually drawn at. */
-        const val CARD_SCALE = 0.7f
+        const val CARD_SCALE = 0.85f
 
         const val CARD_HEADER_HEIGHT = 156f
         const val CARD_STAT_ROW_HEIGHT = 26f

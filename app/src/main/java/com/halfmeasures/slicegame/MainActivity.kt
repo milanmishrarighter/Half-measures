@@ -49,6 +49,7 @@ class MainActivity : AppCompatActivity() {
                     onPresented
                 )
             }
+            onPreloadAd = { ads.load() }
             onCancelPendingAd = {
                 endAdPresentation()
                 ads.abandonPending()
