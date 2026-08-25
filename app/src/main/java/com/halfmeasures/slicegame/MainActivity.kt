@@ -18,6 +18,9 @@ class MainActivity : AppCompatActivity() {
             onOpenSettings = {
                 startActivity(Intent(this@MainActivity, SettingsActivity::class.java))
             }
+            onOpenInstructions = {
+                startActivity(Intent(this@MainActivity, InstructionsActivity::class.java))
+            }
         }
         setContentView(gameView)
         hideSystemBars()

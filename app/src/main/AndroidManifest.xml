@@ -25,6 +25,12 @@
             android:exported="false"
             android:label="Settings"
             android:theme="@style/Theme.HalfMeasures" />
+
+        <activity
+            android:name=".InstructionsActivity"
+            android:exported="false"
+            android:label="How to play"
+            android:theme="@style/Theme.HalfMeasures" />
     </application>
 
 </manifest>

@@ -43,6 +43,8 @@ class GameView @JvmOverloads constructor(
 
     /** Opens the settings screen; wired up by the hosting activity. */
     var onOpenSettings: (() -> Unit)? = null
+    /** Opens the how-to-play screen; wired up by the hosting activity. */
+    var onOpenInstructions: (() -> Unit)? = null
 
     private var settings = GameSettings.load(context)
     private val scores = context.getSharedPreferences("half_measures_scores", Context.MODE_PRIVATE)
@@ -73,6 +75,9 @@ class GameView @JvmOverloads constructor(
     private var fireworkTimer = 0f
     /** Seconds spent waiting for the last shapes to clear after the run ended. */
     private var settleTimer = 0f
+    /** Countdowns driving the idle demo that plays behind the title screen. */
+    private var menuSpawnTimer = 0f
+    private var menuCutTimer = 0f
     /** Seconds since the game-over card began revealing itself. */
     private var cardReveal = 0f
 
@@ -135,11 +140,14 @@ class GameView @JvmOverloads constructor(
     /** The ready screen centres its buttons; the game-over screen stacks them under its card. */
     private val readyPrimary = RectF()
     private val readySecondary = RectF()
+    private val readyTertiary = RectF()
     private val overPrimary = RectF()
     private val overSecondary = RectF()
+    private val overTertiary = RectF()
     private val gameOverCard = RectF()
     private val primaryButton: RectF get() = if (state == State.GAME_OVER) overPrimary else readyPrimary
     private val secondaryButton: RectF get() = if (state == State.GAME_OVER) overSecondary else readySecondary
+    private val tertiaryButton: RectF get() = if (state == State.GAME_OVER) overTertiary else readyTertiary
     private var pressedButton = 0 // 0 none, 1 primary, 2 secondary
 
     // ---- Paints, all reused ----
@@ -301,17 +309,21 @@ class GameView @JvmOverloads constructor(
         val buttonGap = 14f * density
         val cx = w / 2f
 
-        val readyTop = h * 0.62f
+        val readyTop = h * 0.58f
         readyPrimary.set(cx - buttonWidth / 2f, readyTop, cx + buttonWidth / 2f, readyTop + buttonHeight)
         readySecondary.set(
             cx - buttonWidth / 2f, readyTop + buttonHeight + buttonGap,
             cx + buttonWidth / 2f, readyTop + buttonHeight * 2 + buttonGap
         )
+        readyTertiary.set(
+            cx - buttonWidth / 2f, readyTop + (buttonHeight + buttonGap) * 2,
+            cx + buttonWidth / 2f, readyTop + buttonHeight * 3 + buttonGap * 2
+        )
 
         val cardHeight = measureGameOverCard()
-        val cardGap = 26f * density
-        val blockHeight = cardHeight + cardGap + buttonHeight * 2 + buttonGap
-        val blockTop = ((h - blockHeight) / 2f).coerceAtLeast(20f * density)
+        val cardGap = 22f * density
+        val blockHeight = cardHeight + cardGap + buttonHeight * 3 + buttonGap * 2
+        val blockTop = ((h - blockHeight) / 2f).coerceAtLeast(16f * density)
 
         gameOverCard.set(w * 0.09f, blockTop, w * 0.91f, blockTop + cardHeight)
         val overTop = gameOverCard.bottom + cardGap
@@ -319,6 +331,10 @@ class GameView @JvmOverloads constructor(
         overSecondary.set(
             cx - buttonWidth / 2f, overTop + buttonHeight + buttonGap,
             cx + buttonWidth / 2f, overTop + buttonHeight * 2 + buttonGap
+        )
+        overTertiary.set(
+            cx - buttonWidth / 2f, overTop + (buttonHeight + buttonGap) * 2,
+            cx + buttonWidth / 2f, overTop + buttonHeight * 3 + buttonGap * 2
         )
     }
 
@@ -328,7 +344,7 @@ class GameView @JvmOverloads constructor(
             24f * density +
             CARD_STAT_ROW_HEIGHT * density * 5 +
             30f * density +
-            16f * density + CARD_BREAKDOWN_ROW_HEIGHT * density * (cutBuckets.size - 1) +
+            26f * density + CARD_BREAKDOWN_ROW_HEIGHT * density * (cutBuckets.size - 1) +
             CARD_BOTTOM_PADDING * density
 
     // ---------------------------------------------------------------------
@@ -395,6 +411,8 @@ class GameView @JvmOverloads constructor(
                 health = 0
                 endRun()
             }
+        } else if (state == State.READY) {
+            updateMenuDemo(dt, nowMs)
         } else if (state == State.SETTLING) {
             // Let whatever is still airborne drop away. Walls are off so nothing
             // can be trapped bouncing, and none of it can be cut any more.
@@ -549,6 +567,80 @@ class GameView @JvmOverloads constructor(
         if (settings.vibrationEnabled) haptics.gameOver(settings.vibrationStrength)
     }
 
+    /**
+     * A slow, silent demo behind the title screen: shapes drift up and an unseen
+     * blade halves one every so often. It uses the real shapes and the real
+     * slicing, just without scoring, so the menu shows the game rather than a
+     * mock-up of it.
+     */
+    private fun updateMenuDemo(dt: Float, nowMs: Long) {
+        if (width <= 0 || height <= 0) return
+
+        menuSpawnTimer -= dt
+        if (menuSpawnTimer <= 0f && shapes.size < 3) {
+            menuSpawnTimer = 0.9f + random.nextFloat() * 0.8f
+            shapes.add(GameShape.spawnRandom(width, height, random, nowMs, 0, settings))
+        }
+
+        var i = shapes.size - 1
+        while (i >= 0) {
+            val shape = shapes[i]
+            shape.update(dt, gravity)
+            if (shape.isOffScreen(width, height)) shapes.removeAt(i)
+            i--
+        }
+
+        menuCutTimer -= dt
+        if (menuCutTimer <= 0f) {
+            menuCutTimer = 0.7f + random.nextFloat() * 0.7f
+            demoSliceOne()
+        }
+    }
+
+    /** Halves whichever demo shape is nearest the top of its arc. */
+    private fun demoSliceOne() {
+        var best: GameShape? = null
+        for (shape in shapes) {
+            // Near the apex, where a real player would take the shot.
+            if (shape.y > height * 0.72f || shape.y < height * 0.12f) continue
+            if (best == null || shape.y < best.y) best = shape
+        }
+        val shape = best ?: return
+
+        val angle = random.nextFloat() * 3.1416f
+        val reach = shape.radius * 2.4f
+        val ax = shape.x - cos(angle) * reach
+        val ay = shape.y - sin(angle) * reach
+        val bx = shape.x + cos(angle) * reach
+        val by = shape.y + sin(angle) * reach
+
+        val poly = shape.worldVertices()
+        val (left, right) = SliceMath.splitPolygon(poly, ax, ay, bx, by)
+        if (left.size < 3 || right.size < 3) return
+
+        shapes.remove(shape)
+        val len = sqrt((bx - ax) * (bx - ax) + (by - ay) * (by - ay)).coerceAtLeast(0.001f)
+        val dirX = (bx - ax) / len
+        val dirY = (by - ay) / len
+        spawnPieces(shape, left, right, dirX, dirY)
+
+        if (settings.particlesEnabled) {
+            effects.burst(
+                x = shape.x, y = shape.y,
+                dirX = dirX, dirY = dirY,
+                spread = shape.radius * 0.8f,
+                color = tintedLight(shape.paletteIndex),
+                count = (12 * settings.particleAmount).roundToInt().coerceIn(2, 40),
+                speed = 320f,
+                sizeScale = 1f
+            )
+        }
+        // A brief ghost of the blade, so the cut reads as a cut.
+        val nowMs = System.currentTimeMillis()
+        trailPoints.add(TrailPoint(ax, ay, nowMs))
+        trailPoints.add(TrailPoint(bx, by, nowMs))
+    }
+
     /** Half the perfect-cut slow motion: long enough to register, short enough not to drag. */
     private fun lowHealthSlowMoSeconds(): Float =
         (settings.slowMoDuration * 0.5f).coerceAtLeast(0.05f)
@@ -585,6 +677,8 @@ class GameView @JvmOverloads constructor(
         endedOnMiss = false
         beatBestScore = false
         fireworkTimer = 0f
+        menuSpawnTimer = 0f
+        menuCutTimer = 0.8f
         settleTimer = 0f
         cardReveal = 0f
         lastCutAge = 99f
@@ -620,8 +714,15 @@ class GameView @JvmOverloads constructor(
                     pressedButton = when {
                         primaryButton.contains(event.x, event.y) -> 1
                         secondaryButton.contains(event.x, event.y) -> 2
+                        tertiaryButton.contains(event.x, event.y) -> 3
                         else -> 0
                     }
+                    // The title screen also lets the player swipe the start button
+                    // open like a shape, so track the finger for that.
+                    lastTouchX = event.x
+                    lastTouchY = event.y
+                    hasLastTouch = true
+                    trailPoints.add(TrailPoint(event.x, event.y, System.currentTimeMillis()))
                     return true
                 }
                 lastTouchX = event.x
@@ -632,6 +733,17 @@ class GameView @JvmOverloads constructor(
             }
 
             MotionEvent.ACTION_MOVE -> {
+                if (state == State.READY) {
+                    // Draw a blade on the menu and let it cut the start button.
+                    val menuNow = System.currentTimeMillis()
+                    for (i in 0 until event.historySize) {
+                        trailPoints.add(TrailPoint(event.getHistoricalX(i), event.getHistoricalY(i), menuNow))
+                        handleMenuSwipe(event.getHistoricalX(i), event.getHistoricalY(i))
+                    }
+                    trailPoints.add(TrailPoint(event.x, event.y, menuNow))
+                    handleMenuSwipe(event.x, event.y)
+                    return true
+                }
                 if (state != State.PLAYING) return true
                 val nowMs = System.currentTimeMillis()
                 for (i in 0 until event.historySize) {
@@ -649,12 +761,17 @@ class GameView @JvmOverloads constructor(
                 if (state != State.PLAYING) {
                     val released = pressedButton
                     pressedButton = 0
+                    hasLastTouch = false
                     when {
                         released == 1 && primaryButton.contains(event.x, event.y) -> {
                             if (settings.vibrationEnabled) haptics.tick(settings.vibrationStrength)
                             startNewGame()
                         }
                         released == 2 && secondaryButton.contains(event.x, event.y) -> {
+                            if (settings.vibrationEnabled) haptics.tick(settings.vibrationStrength)
+                            onOpenInstructions?.invoke()
+                        }
+                        released == 3 && tertiaryButton.contains(event.x, event.y) -> {
                             if (settings.vibrationEnabled) haptics.tick(settings.vibrationStrength)
                             onOpenSettings?.invoke()
                         }
@@ -670,6 +787,62 @@ class GameView @JvmOverloads constructor(
             }
         }
         return true
+    }
+
+    /**
+     * On the title screen a swipe is a blade like any other: dragging it through
+     * the start button cuts it open and begins the run. The other buttons are
+     * ordinary taps, so a stray swipe cannot dump the player into settings.
+     */
+    private fun handleMenuSwipe(x: Float, y: Float) {
+        if (!hasLastTouch) {
+            lastTouchX = x
+            lastTouchY = y
+            hasLastTouch = true
+            return
+        }
+        val ax = lastTouchX
+        val ay = lastTouchY
+        lastTouchX = x
+        lastTouchY = y
+
+        val dx = x - ax
+        val dy = y - ay
+        if (dx * dx + dy * dy < 36f) return
+
+        // Only a swipe that travels across the button counts, not a slow drag
+        // that happens to start inside it.
+        val entered = readyPrimary.contains(ax, ay)
+        val exited = readyPrimary.contains(x, y)
+        if (entered == exited) return
+
+        pressedButton = 0
+        sliceStartButton(ax, ay, x, y)
+    }
+
+    /** Bursts the start button apart along the swipe, then begins the run. */
+    private fun sliceStartButton(ax: Float, ay: Float, bx: Float, by: Float) {
+        val cx = readyPrimary.centerX()
+        val cy = readyPrimary.centerY()
+        val len = sqrt((bx - ax) * (bx - ax) + (by - ay) * (by - ay)).coerceAtLeast(0.001f)
+
+        if (settings.particlesEnabled) {
+            effects.burst(
+                x = cx, y = cy,
+                dirX = (bx - ax) / len, dirY = (by - ay) / len,
+                spread = readyPrimary.width() * 0.5f,
+                color = Theme.accent,
+                count = (34 * settings.particleAmount).roundToInt().coerceIn(4, 120),
+                speed = 620f,
+                sizeScale = 1.4f
+            )
+        }
+        effects.shockwave(cx, cy, readyPrimary.width() * 0.9f, Theme.accent, 0.5f, 10f)
+        effects.addFlash(Theme.accent, 0.3f * settings.screenFlashStrength)
+        effects.addShake(0.6f * settings.cameraShakeStrength)
+        pixels.burst(cx, cy, 1.6f)
+        if (settings.vibrationEnabled) haptics.great(settings.vibrationStrength)
+        startNewGame()
     }
 
     private fun handleSwipeSegment(x: Float, y: Float) {
@@ -730,8 +903,11 @@ class GameView @JvmOverloads constructor(
         val grade = gradeFor(deviation)
         cutCount++
 
-        applyHealth(deviation, grade)
+        // Score first: it advances the streaks, and the heal is sized from the
+        // perfect streak. Doing it the other way round meant the first perfect
+        // healed for a streak of zero, which is to say not at all.
         val gained = applyScore(deviation, grade)
+        applyHealth(deviation, grade)
 
         val len = sqrt((bx - ax) * (bx - ax) + (by - ay) * (by - ay)).coerceAtLeast(0.001f)
         val dirX = (bx - ax) / len
@@ -790,8 +966,8 @@ class GameView @JvmOverloads constructor(
      */
     private fun applyHealth(deviation: Float, grade: Grade) {
         if (grade == Grade.PERFECT && settings.perfectRestoresHealth) {
-            // The streak has already been advanced by applyScore, so the first
-            // perfect heals one step, the second two, and ten refills a full bar.
+            // applyScore has already advanced the streak, so the first perfect in a
+            // row heals one step, the second two, and ten refill a full bar.
             val heal = (perfectStreak * settings.perfectHealPerStreak).roundToInt()
             health = (health + heal).coerceIn(0, maxHealth)
             return
@@ -1455,30 +1631,38 @@ class GameView @JvmOverloads constructor(
     // ---- Overlays ----
 
     private fun drawReadyScreen(canvas: Canvas) {
-        scrimPaint.color = Color.argb(170, 4, 6, 14)
+        // Lighter than the game-over scrim: the demo behind it should still read.
+        scrimPaint.shader = null
+        scrimPaint.color = Color.argb(150, 4, 6, 14)
         canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), scrimPaint)
 
         val cx = width / 2f
+        val titleY = height * 0.24f
 
         displayPaint.textAlign = Paint.Align.CENTER
         displayPaint.textSize = 30f * density
         displayPaint.color = Theme.textPrimary
-        canvas.drawText("HALF", cx, height * 0.29f, displayPaint)
+        canvas.drawText("HALF", cx, titleY, displayPaint)
         displayPaint.color = Theme.accent
-        canvas.drawText("MEASURES", cx, height * 0.29f + 38f * density, displayPaint)
+        canvas.drawText("MEASURES", cx, titleY + 38f * density, displayPaint)
 
         uiPaint.textSize = 19f * density
         uiPaint.color = Theme.textSecondary
-        canvas.drawText("Slice every shape exactly in half.", cx, height * 0.29f + 78f * density, uiPaint)
-        uiPaint.color = Theme.textFaint
-        canvas.drawText("Follow the dashed line. Miss nothing.", cx, height * 0.29f + 102f * density, uiPaint)
+        canvas.drawText("Slice every shape exactly in half.", cx, titleY + 76f * density, uiPaint)
+
+        // A gentle nudge that the button itself can be cut.
+        val hintPulse = 0.55f + 0.45f * (0.5f + 0.5f * sin(elapsed * 2.4f))
+        uiPaint.textSize = 15f * density
+        uiPaint.color = Theme.withAlpha(Theme.accent, hintPulse)
+        canvas.drawText("Tap PLAY - or slice straight through it.", cx, titleY + 100f * density, uiPaint)
 
         if (bestScore > 0) {
-            drawChip(canvas, cx, height * 0.47f, "BEST  $bestScore")
+            drawChip(canvas, cx, height * 0.45f, "BEST  $bestScore")
         }
 
         drawButton(canvas, primaryButton, "PLAY", primary = true, pressed = pressedButton == 1)
-        drawButton(canvas, secondaryButton, "SETTINGS", primary = false, pressed = pressedButton == 2)
+        drawButton(canvas, secondaryButton, "HOW TO PLAY", primary = false, pressed = pressedButton == 2)
+        drawButton(canvas, tertiaryButton, "SETTINGS", primary = false, pressed = pressedButton == 3)
     }
 
     /** 0 until [at], then eases to 1 - the stagger behind the card's reveal. */
@@ -1595,7 +1779,8 @@ class GameView @JvmOverloads constructor(
         val buttonAlpha = revealAlpha(CARD_ROWS_AT + CARD_ROW_STAGGER * 5 + CARD_BREAKDOWN_STAGGER * 5)
         if (buttonAlpha > 0.01f) {
             drawButton(canvas, primaryButton, "RETRY", primary = true, pressed = pressedButton == 1, alpha = buttonAlpha)
-            drawButton(canvas, secondaryButton, "SETTINGS", primary = false, pressed = pressedButton == 2, alpha = buttonAlpha)
+            drawButton(canvas, secondaryButton, "HOW TO GET BETTER", primary = false, pressed = pressedButton == 2, alpha = buttonAlpha)
+            drawButton(canvas, tertiaryButton, "SETTINGS", primary = false, pressed = pressedButton == 3, alpha = buttonAlpha)
         }
     }
 
@@ -1616,13 +1801,22 @@ class GameView @JvmOverloads constructor(
 
         val padX = 28f * density
 
-        displayPaint.textAlign = Paint.Align.LEFT
-        displayPaint.textSize = 12f * density
-        displayPaint.color = Theme.withAlpha(
-            Theme.textSecondary, revealAlpha(CARD_ROWS_AT + CARD_ROW_STAGGER * 5)
+        val headingAlpha = revealAlpha(CARD_ROWS_AT + CARD_ROW_STAGGER * 5)
+
+        // A rule above the heading separates the distribution from the stats.
+        rimPaint.strokeWidth = 1.5f
+        rimPaint.color = Theme.withAlpha(Theme.hairline, headingAlpha)
+        canvas.drawLine(
+            cardLeft + padX, top - 16f * density,
+            cardRight - padX, top - 16f * density, rimPaint
         )
-        canvas.drawText("HOW YOUR CUTS LANDED", cardLeft + padX, top, displayPaint)
-        displayPaint.textAlign = Paint.Align.CENTER
+
+        uiBoldPaint.textAlign = Paint.Align.LEFT
+        uiBoldPaint.textSize = 13f * density
+        uiBoldPaint.letterSpacing = 0.14f
+        uiBoldPaint.color = Theme.withAlpha(Theme.textSecondary, headingAlpha)
+        canvas.drawText("HOW YOUR CUTS LANDED", cardLeft + padX, top, uiBoldPaint)
+        uiBoldPaint.letterSpacing = 0f
 
         val labelWidth = 46f * density
         val countWidth = 34f * density
