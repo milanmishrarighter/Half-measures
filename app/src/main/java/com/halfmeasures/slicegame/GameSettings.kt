@@ -116,7 +116,15 @@ data class GameSettings(
     /** Drop into slow motion with a countdown when health gets critical. */
     var lowHealthSlowMo: Boolean = DEFAULT_LOW_HEALTH_SLOW_MO,
     /** Health points at or below which the critical warning starts flashing. */
-    var lowHealthAt: Int = DEFAULT_LOW_HEALTH_AT
+    var lowHealthAt: Int = DEFAULT_LOW_HEALTH_AT,
+
+    // ---- Ads ----
+    /** How many times one run may be revived by watching an ad. 0 turns it off. */
+    var continuesPerRun: Int = DEFAULT_CONTINUES_PER_RUN,
+    /** Every Nth game of a session needs an ad before it will start. 0 turns it off. */
+    var adGateEvery: Int = DEFAULT_AD_GATE_EVERY,
+    /** Health a revived run comes back with, as a fraction of the full bar. */
+    var continueHealthFraction: Float = DEFAULT_CONTINUE_HEALTH_FRACTION
 ) {
     fun saveTo(context: Context) {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
@@ -167,6 +175,9 @@ data class GameSettings(
             .putFloat("slow_mo_duration", slowMoDuration)
             .putBoolean("low_health_slow_mo", lowHealthSlowMo)
             .putInt("low_health_at", lowHealthAt)
+            .putInt("continues_per_run", continuesPerRun)
+            .putInt("ad_gate_every", adGateEvery)
+            .putFloat("continue_health_fraction", continueHealthFraction)
             .apply()
     }
 
@@ -219,6 +230,16 @@ data class GameSettings(
         const val DEFAULT_SLOW_MO_DURATION = 2.6f
         const val DEFAULT_LOW_HEALTH_SLOW_MO = true
         const val DEFAULT_LOW_HEALTH_AT = 20
+        const val DEFAULT_CONTINUES_PER_RUN = 1
+        const val DEFAULT_AD_GATE_EVERY = 10
+        const val DEFAULT_CONTINUE_HEALTH_FRACTION = 1.0f
+
+        const val MIN_CONTINUES_PER_RUN = 0
+        const val MAX_CONTINUES_PER_RUN = 5
+        const val MIN_AD_GATE_EVERY = 0
+        const val MAX_AD_GATE_EVERY = 25
+        const val MIN_CONTINUE_HEALTH_FRACTION = 0.25f
+        const val MAX_CONTINUE_HEALTH_FRACTION = 1.0f
 
         const val MIN_SIZE_SCALE = 0.5f
         const val MAX_SIZE_SCALE = 3.0f
@@ -350,7 +371,11 @@ data class GameSettings(
                 slowMoIntensity = p.getFloat("slow_mo_intensity", DEFAULT_SLOW_MO_INTENSITY),
                 slowMoDuration = p.getFloat("slow_mo_duration", DEFAULT_SLOW_MO_DURATION),
                 lowHealthSlowMo = p.getBoolean("low_health_slow_mo", DEFAULT_LOW_HEALTH_SLOW_MO),
-                lowHealthAt = p.getInt("low_health_at", DEFAULT_LOW_HEALTH_AT)
+                lowHealthAt = p.getInt("low_health_at", DEFAULT_LOW_HEALTH_AT),
+                continuesPerRun = p.getInt("continues_per_run", DEFAULT_CONTINUES_PER_RUN),
+                adGateEvery = p.getInt("ad_gate_every", DEFAULT_AD_GATE_EVERY),
+                continueHealthFraction =
+                    p.getFloat("continue_health_fraction", DEFAULT_CONTINUE_HEALTH_FRACTION)
             )
         }
     }

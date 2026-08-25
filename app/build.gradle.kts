@@ -35,4 +35,6 @@ android {
 dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
+    // Rewarded ads. 23.0.x is the last line that targets compileSdk 34.
+    implementation("com.google.android.gms:play-services-ads:23.0.0")
 }

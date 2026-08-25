@@ -15,6 +15,7 @@ import android.view.Choreographer
 import android.view.MotionEvent
 import android.view.View
 
+import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
@@ -39,12 +40,34 @@ class GameView @JvmOverloads constructor(
      * run is already over but the shapes still in the air are allowed to fall out
      * of frame before the card slides in over an empty stage.
      */
-    enum class State { READY, PLAYING, PAUSED, SETTLING, GAME_OVER }
+    enum class State {
+        READY, PLAYING, PAUSED, SETTLING,
+        /** Died, but an ad could buy the run back. Times out into GAME_OVER. */
+        CONTINUE_OFFER,
+        /** Every Nth game of a session asks for an ad before it will start. */
+        AD_GATE,
+        /** An ad is on screen; the game is parked until it answers. */
+        AD_PENDING,
+        /** 3, 2, 1 before a bought-back run picks up again. */
+        RESUMING,
+        GAME_OVER
+    }
+
+    /** What the ad currently being watched is being watched for. */
+    private enum class AdPurpose { NONE, CONTINUE, GATE }
 
     /** Opens the settings screen; wired up by the hosting activity. */
     var onOpenSettings: (() -> Unit)? = null
     /** Opens the how-to-play screen; wired up by the hosting activity. */
     var onOpenInstructions: (() -> Unit)? = null
+    /**
+     * Plays a rewarded ad. The first callback fires only once the reward is
+     * genuinely earned; the second fires on every other outcome, with a reason and
+     * whether the user backed out themselves (as opposed to the ad failing).
+     */
+    var onWatchRewardedAd: ((() -> Unit, (String, Boolean) -> Unit) -> Unit)? = null
+    /** Whether an ad is loaded right now. Nothing is offered when it is not. */
+    var isRewardedAdReady: (() -> Boolean)? = null
 
     private var settings = GameSettings.load(context)
     private val scores = context.getSharedPreferences("half_measures_scores", Context.MODE_PRIVATE)
@@ -57,9 +80,10 @@ class GameView @JvmOverloads constructor(
     fun refreshSettings() {
         settings = GameSettings.load(context)
         gravity = GameShape.BASE_GRAVITY * settings.gravityScale
-        // A paused run is still a run: leaving it alone means resuming with the
-        // health it was paused on rather than a free refill.
-        if (state != State.PLAYING && state != State.PAUSED) {
+        // Only the title screen picks up a new starting-health setting. Every
+        // other state is mid-run - including the moments either side of an ad -
+        // and refilling the bar there would hand out a free heal.
+        if (state == State.READY) {
             health = settings.startHealth
             maxHealth = settings.startHealth
         }
@@ -82,6 +106,20 @@ class GameView @JvmOverloads constructor(
     private var menuCutTimer = 0f
     /** Seconds since the game-over card began revealing itself. */
     private var cardReveal = 0f
+
+    // ---- Ads ----
+    /** Continues already spent on this run. */
+    private var continuesUsed = 0
+    /** Seconds left on the continue offer before it declines itself. */
+    private var offerTimer = 0f
+    /** Seconds left of the 3-2-1 before a continued run resumes. */
+    private var resumeCountdown = 0f
+    /** Where to go back to if the player walks away from the ad gate. */
+    private var adGateReturn = State.READY
+    private var pendingAdPurpose = AdPurpose.NONE
+    /** A short line explaining why an ad did not pay out, if one did not. */
+    private var adNotice = ""
+    private var adNoticeAge = 99f
 
     // ---- Last-cut readout, shown under the score rather than over the action ----
     private var lastCutLabel = ""
@@ -154,16 +192,26 @@ class GameView @JvmOverloads constructor(
     private val pauseCard = RectF()
     private val pauseResume = RectF()
     private val pauseMenu = RectF()
+    /** The two ad overlays share a card shape and a two-button footer. */
+    private val adCard = RectF()
+    private val adPrimary = RectF()
+    private val adSecondary = RectF()
     private val primaryButton: RectF get() = when (state) {
         State.GAME_OVER -> overPrimary
         State.PAUSED -> pauseResume
+        State.CONTINUE_OFFER, State.AD_GATE -> adPrimary
         else -> readyPrimary
     }
     private val secondaryButton: RectF get() = when (state) {
         State.GAME_OVER -> overSecondary
         State.PAUSED -> pauseMenu
+        State.CONTINUE_OFFER, State.AD_GATE -> adSecondary
         else -> readySecondary
     }
+
+    /** The states that are a card with two buttons and nothing else running. */
+    private fun isOverlayState(): Boolean =
+        state == State.PAUSED || state == State.CONTINUE_OFFER || state == State.AD_GATE
     private val tertiaryButton: RectF get() = if (state == State.GAME_OVER) overTertiary else readyTertiary
     private var pressedButton = 0 // 0 none, 1 primary, 2 secondary, 3 tertiary, 4 quaternary
 
@@ -255,12 +303,27 @@ class GameView @JvmOverloads constructor(
         lastFrameTimeNanos = frameTimeNanos
         realDt = min(realDt, 1f / 30f) // after a stall, step conservatively instead of teleporting
 
-        if (state == State.PAUSED) {
+        if (state == State.PAUSED || state == State.AD_PENDING) {
             // A pause stops the world outright: no simulation, no timers, no embers.
             // Only the overlay is redrawn, so the run resumes exactly where it stood.
+            // An ad is the same thing with someone else's screen on top.
             invalidate()
             Choreographer.getInstance().postFrameCallback(this)
             return
+        }
+
+        adNoticeAge += realDt
+        // These two run on real time: they are announcements to the player, not
+        // part of the simulation, so slow motion must not stretch them.
+        if (state == State.CONTINUE_OFFER) {
+            offerTimer -= realDt
+            if (offerTimer <= 0f) enterGameOver()
+        } else if (state == State.RESUMING) {
+            resumeCountdown -= realDt
+            if (resumeCountdown <= 0f) {
+                state = State.PLAYING
+                spawnCountdown = 0.5f
+            }
         }
 
         // The alert and the speed ramp both run on real time, so slow motion
@@ -363,6 +426,20 @@ class GameView @JvmOverloads constructor(
         }
 
         layoutPauseOverlay(w, h, buttonWidth, buttonHeight, buttonGap)
+
+        // The ad cards are taller than the pause card: they carry a headline and
+        // an explanation as well as the two buttons.
+        val adWidth = min(w * 0.84f, 360f * density)
+        val adHeight = 208f * density + buttonHeight * 2 + buttonGap
+        val adTop = (h - adHeight) / 2f
+        adCard.set(cx - adWidth / 2f, adTop, cx + adWidth / 2f, adTop + adHeight)
+        val adInner = min(buttonWidth, adWidth - 40f * density)
+        val adFirstTop = adTop + 188f * density
+        adPrimary.set(cx - adInner / 2f, adFirstTop, cx + adInner / 2f, adFirstTop + buttonHeight)
+        adSecondary.set(
+            cx - adInner / 2f, adFirstTop + buttonHeight + buttonGap,
+            cx + adInner / 2f, adFirstTop + buttonHeight * 2 + buttonGap
+        )
     }
 
     /**
@@ -704,9 +781,116 @@ class GameView @JvmOverloads constructor(
         settleTimer += dt
         if (shapes.isEmpty() || settleTimer > SETTLE_MAX_SECONDS) {
             shapes.clear()
-            state = State.GAME_OVER
-            cardReveal = 0f
-            fireworkTimer = 0f
+            if (canOfferContinue()) {
+                state = State.CONTINUE_OFFER
+                offerTimer = AdConfig.CONTINUE_OFFER_SECONDS
+                pressedButton = 0
+            } else {
+                enterGameOver()
+            }
+        }
+    }
+
+    /**
+     * A continue is only offered when there is an ad actually loaded to pay for it.
+     * Dangling the option in front of a player who is offline, and then failing,
+     * would be worse than never offering.
+     */
+    private fun canOfferContinue(): Boolean =
+        continuesUsed < settings.continuesPerRun && isRewardedAdReady?.invoke() == true
+
+    private fun enterGameOver() {
+        state = State.GAME_OVER
+        cardReveal = 0f
+        fireworkTimer = 0f
+        pressedButton = 0
+    }
+
+    /**
+     * Buys the run back. The score, the stage and every stat carry over untouched -
+     * that is the whole point - but the health bar refills and the board is cleared
+     * so the player is not dropped straight back into the shape that killed them.
+     */
+    private fun grantContinue() {
+        continuesUsed++
+        shapes.clear()
+        pieces.clear()
+        trailPoints.clear()
+        effects.clear()
+        health = max(1, (maxHealth * settings.continueHealthFraction).roundToInt())
+        displayedHealth = health.toFloat()
+        endedOnMiss = false
+        dangerArmed = true
+        dangerAlert = 0f
+        dangerRecovery = 0f
+        perfectSlowMo = 0f
+        timeScale = 1f
+        perfectStreak = 0
+        hotStreak = 0
+        coldStreak = 0
+        lastCutAge = 99f
+        pressedButton = 0
+        hasLastTouch = false
+        resumeCountdown = AdConfig.RESUME_COUNTDOWN_SECONDS
+        state = State.RESUMING
+        lastFrameTimeNanos = 0L
+    }
+
+    /**
+     * Every request to start a game goes through here, so the session gate catches
+     * PLAY, RETRY and a sliced start button alike. The gate is skipped when no ad
+     * is loaded: a toll nobody can pay is just a locked door.
+     */
+    private fun requestNewGame() {
+        if (PlaySession.nextGameIsGated(settings.adGateEvery) && isRewardedAdReady?.invoke() == true) {
+            adGateReturn = state
+            pressedButton = 0
+            state = State.AD_GATE
+            return
+        }
+        startNewGame()
+    }
+
+    private fun requestAd(purpose: AdPurpose) {
+        val show = onWatchRewardedAd
+        if (show == null) {
+            settleAd(purpose, earned = false, reason = "Ads unavailable", userBackedOut = false)
+            return
+        }
+        pendingAdPurpose = purpose
+        pressedButton = 0
+        state = State.AD_PENDING
+        // Posted rather than called straight through: the SDK can answer
+        // synchronously on a failure, and re-entering a state change from inside
+        // the call that caused it is how you get a screen stuck half-way.
+        show(
+            { post { settleAd(purpose, earned = true, reason = "", userBackedOut = false) } },
+            { reason, backedOut ->
+                post { settleAd(purpose, earned = false, reason = reason, userBackedOut = backedOut) }
+            }
+        )
+    }
+
+    /** The single place every ad outcome lands, so no path can strand the game. */
+    private fun settleAd(purpose: AdPurpose, earned: Boolean, reason: String, userBackedOut: Boolean) {
+        pendingAdPurpose = AdPurpose.NONE
+        if (!earned) {
+            adNotice = reason
+            adNoticeAge = 0f
+        }
+        when (purpose) {
+            AdPurpose.CONTINUE -> if (earned) grantContinue() else enterGameOver()
+            AdPurpose.GATE -> {
+                // Backing out of an ad that was there to watch puts the gate back
+                // up. An ad that would not play is not the player's fault, so the
+                // game starts anyway rather than locking them out.
+                if (!earned && userBackedOut) {
+                    state = State.AD_GATE
+                } else {
+                    startNewGame()
+                }
+            }
+            AdPurpose.NONE -> {}
         }
     }
 
@@ -716,6 +900,22 @@ class GameView @JvmOverloads constructor(
      */
     fun pauseIfPlaying() {
         if (state == State.PLAYING) pauseGame()
+    }
+
+    /**
+     * Safety net for an ad that never answers. Every outcome is supposed to come
+     * back through a callback, but if one is ever dropped the game would sit on the
+     * LOADING AD screen forever, so coming back to the foreground with the ad gone
+     * settles it as a decline. The delay lets a real callback win the race.
+     */
+    fun checkStrandedAd() {
+        if (state != State.AD_PENDING) return
+        val purpose = pendingAdPurpose
+        postDelayed({
+            if (state == State.AD_PENDING && pendingAdPurpose == purpose) {
+                settleAd(purpose, earned = false, reason = "Ad did not finish", userBackedOut = true)
+            }
+        }, STRANDED_AD_GRACE_MS)
     }
 
     /** Freezes the run where it stands and raises the pause card. */
@@ -762,6 +962,7 @@ class GameView @JvmOverloads constructor(
         stage = 0
         pixels.reset()
         bodyShaders.clear()
+        continuesUsed = 0
         state = State.READY
         lastFrameTimeNanos = 0L
     }
@@ -804,6 +1005,8 @@ class GameView @JvmOverloads constructor(
         bodyShaders.clear()
         backgroundColor = Theme.stageBackground(0)
         accentColor = Theme.stageAccent(0)
+        continuesUsed = 0
+        PlaySession.countGame()
         state = State.PLAYING
         spawnCountdown = 0.32f
         cutBuckets.fill(0)
@@ -816,11 +1019,13 @@ class GameView @JvmOverloads constructor(
     override fun onTouchEvent(event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                if (state == State.SETTLING) return true
-                if (state == State.PAUSED) {
+                if (state == State.SETTLING || state == State.AD_PENDING || state == State.RESUMING) {
+                    return true
+                }
+                if (isOverlayState()) {
                     pressedButton = when {
-                        pauseResume.contains(event.x, event.y) -> 1
-                        pauseMenu.contains(event.x, event.y) -> 2
+                        primaryButton.contains(event.x, event.y) -> 1
+                        secondaryButton.contains(event.x, event.y) -> 2
                         else -> 0
                     }
                     return true
@@ -853,7 +1058,7 @@ class GameView @JvmOverloads constructor(
             }
 
             MotionEvent.ACTION_MOVE -> {
-                if (state == State.PAUSED) return true
+                if (isOverlayState() || state == State.AD_PENDING || state == State.RESUMING) return true
                 if (state == State.READY) {
                     // Draw a blade on the menu and let it cut the start button.
                     val menuNow = System.currentTimeMillis()
@@ -878,15 +1083,34 @@ class GameView @JvmOverloads constructor(
             }
 
             MotionEvent.ACTION_UP -> {
-                if (state == State.SETTLING) return true
-                if (state == State.PAUSED) {
+                if (state == State.SETTLING || state == State.AD_PENDING || state == State.RESUMING) {
+                    return true
+                }
+                if (isOverlayState()) {
                     val released = pressedButton
                     pressedButton = 0
-                    when {
-                        released == 1 && pauseResume.contains(event.x, event.y) -> resumeGame()
-                        released == 2 && pauseMenu.contains(event.x, event.y) -> returnToMenu()
+                    val onPrimary = released == 1 && primaryButton.contains(event.x, event.y)
+                    val onSecondary = released == 2 && secondaryButton.contains(event.x, event.y)
+                    if ((onPrimary || onSecondary) && settings.vibrationEnabled) {
+                        haptics.tick(settings.vibrationStrength)
                     }
-                    if (released != 0 && settings.vibrationEnabled) haptics.tick(settings.vibrationStrength)
+                    when (state) {
+                        State.PAUSED -> {
+                            if (onPrimary) resumeGame()
+                            if (onSecondary) returnToMenu()
+                        }
+                        State.CONTINUE_OFFER -> {
+                            if (onPrimary) requestAd(AdPurpose.CONTINUE)
+                            if (onSecondary) enterGameOver()
+                        }
+                        State.AD_GATE -> {
+                            if (onPrimary) requestAd(AdPurpose.GATE)
+                            // Walking away from the gate goes back where they came
+                            // from - the title screen, or the card they died on.
+                            if (onSecondary) state = adGateReturn
+                        }
+                        else -> {}
+                    }
                     return true
                 }
                 if (state != State.PLAYING) {
@@ -896,7 +1120,7 @@ class GameView @JvmOverloads constructor(
                     when {
                         released == 1 && primaryButton.contains(event.x, event.y) -> {
                             if (settings.vibrationEnabled) haptics.tick(settings.vibrationStrength)
-                            startNewGame()
+                            requestNewGame()
                         }
                         released == 2 && secondaryButton.contains(event.x, event.y) -> {
                             if (settings.vibrationEnabled) haptics.tick(settings.vibrationStrength)
@@ -977,7 +1201,7 @@ class GameView @JvmOverloads constructor(
         effects.addShake(0.6f * settings.cameraShakeStrength)
         pixels.burst(cx, cy, 1.6f)
         if (settings.vibrationEnabled) haptics.great(settings.vibrationStrength)
-        startNewGame()
+        requestNewGame()
     }
 
     private fun handleSwipeSegment(x: Float, y: Float) {
@@ -1340,7 +1564,9 @@ class GameView @JvmOverloads constructor(
         drawPopups(canvas)
         // The HUD stays up through the settling beat so the final score is visible
         // right until the card takes over.
-        if (state == State.PLAYING || state == State.SETTLING || state == State.PAUSED) {
+        if (state == State.PLAYING || state == State.SETTLING ||
+            state == State.PAUSED || state == State.RESUMING
+        ) {
             drawHud(canvas)
         }
 
@@ -1348,6 +1574,10 @@ class GameView @JvmOverloads constructor(
             State.READY -> drawReadyScreen(canvas)
             State.GAME_OVER -> drawGameOverScreen(canvas)
             State.PAUSED -> drawPauseScreen(canvas)
+            State.CONTINUE_OFFER -> drawContinueOffer(canvas)
+            State.AD_GATE -> drawAdGate(canvas)
+            State.AD_PENDING -> drawAdPending(canvas)
+            State.RESUMING -> drawResumeCountdown(canvas)
             State.PLAYING, State.SETTLING -> {}
         }
     }
@@ -1825,6 +2055,171 @@ class GameView @JvmOverloads constructor(
         drawButton(canvas, pauseMenu, "MAIN MENU", primary = false, pressed = pressedButton == 2)
     }
 
+    /** The shared shell behind both ad cards: scrim, panel, headline, body line. */
+    private fun drawAdCard(canvas: Canvas, eyebrow: String, eyebrowColor: Int, headline: String, body: String) {
+        scrimPaint.shader = null
+        scrimPaint.color = Color.argb(214, 2, 3, 8)
+        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), scrimPaint)
+
+        val radius = 24f * density
+        panelPaint.shader = null
+        panelPaint.alpha = 255
+        panelPaint.color = Theme.card
+        canvas.drawRoundRect(adCard, radius, radius, panelPaint)
+        panelStrokePaint.color = Theme.hairline
+        canvas.drawRoundRect(adCard, radius, radius, panelStrokePaint)
+
+        val cx = adCard.centerX()
+
+        uiBoldPaint.textAlign = Paint.Align.CENTER
+        uiBoldPaint.textSize = 14f * density
+        uiBoldPaint.letterSpacing = 0.18f
+        uiBoldPaint.color = eyebrowColor
+        canvas.drawText(eyebrow, cx, adCard.top + 34f * density, uiBoldPaint)
+        uiBoldPaint.letterSpacing = 0f
+
+        displayPaint.textAlign = Paint.Align.CENTER
+        displayPaint.textSize = 26f * density
+        displayPaint.color = Theme.textPrimary
+        canvas.drawText(headline, cx, adCard.top + 76f * density, displayPaint)
+
+        uiPaint.textAlign = Paint.Align.CENTER
+        uiPaint.textSize = 16f * density
+        uiPaint.color = Theme.textSecondary
+        drawWrapped(canvas, body, cx, adCard.top + 108f * density, adCard.width() - 44f * density, uiPaint)
+    }
+
+    /**
+     * Centred word wrap. The ad copy is a sentence rather than a label, and a
+     * single drawText would run straight off the side of the card.
+     */
+    private fun drawWrapped(canvas: Canvas, text: String, cx: Float, top: Float, maxWidth: Float, paint: Paint) {
+        val words = text.split(' ')
+        val line = StringBuilder()
+        var y = top
+        val step = paint.textSize * 1.28f
+        for (word in words) {
+            val candidate = if (line.isEmpty()) word else "$line $word"
+            if (paint.measureText(candidate) > maxWidth && line.isNotEmpty()) {
+                canvas.drawText(line.toString(), cx, y, paint)
+                y += step
+                line.setLength(0)
+                line.append(word)
+            } else {
+                line.setLength(0)
+                line.append(candidate)
+            }
+        }
+        if (line.isNotEmpty()) canvas.drawText(line.toString(), cx, y, paint)
+    }
+
+    private fun drawContinueOffer(canvas: Canvas) {
+        drawAdCard(
+            canvas,
+            "SECOND CHANCE", Theme.gold,
+            "KEEP GOING?",
+            "Watch a short ad and carry on from $score with a fresh health bar."
+        )
+
+        val cx = adCard.centerX()
+
+        // A draining bar, because the offer expires. The number under it says how
+        // long is left in plain seconds so the pressure is legible, not just felt.
+        val fraction = (offerTimer / AdConfig.CONTINUE_OFFER_SECONDS).coerceIn(0f, 1f)
+        val barWidth = adCard.width() - 56f * density
+        val barLeft = cx - barWidth / 2f
+        val barTop = adCard.top + 152f * density
+        val barHeight = 7f * density
+
+        panelPaint.shader = null
+        panelPaint.alpha = 255
+        roundRect.set(barLeft, barTop, barLeft + barWidth, barTop + barHeight)
+        panelPaint.color = Theme.withAlpha(Color.WHITE, 0.10f)
+        canvas.drawRoundRect(roundRect, barHeight / 2f, barHeight / 2f, panelPaint)
+
+        roundRect.set(barLeft, barTop, barLeft + barWidth * fraction, barTop + barHeight)
+        panelPaint.color = if (fraction < 0.3f) Theme.danger else Theme.gold
+        canvas.drawRoundRect(roundRect, barHeight / 2f, barHeight / 2f, panelPaint)
+
+        uiBoldPaint.textAlign = Paint.Align.CENTER
+        uiBoldPaint.textSize = 14f * density
+        uiBoldPaint.color = Theme.textFaint
+        canvas.drawText(
+            "${ceil(offerTimer.toDouble()).toInt().coerceAtLeast(0)}s",
+            cx, barTop + 26f * density, uiBoldPaint
+        )
+
+        drawButton(canvas, adPrimary, "WATCH AD", primary = true, pressed = pressedButton == 1)
+        drawButton(canvas, adSecondary, "NO THANKS", primary = false, pressed = pressedButton == 2)
+    }
+
+    private fun drawAdGate(canvas: Canvas) {
+        val every = settings.adGateEvery
+        drawAdCard(
+            canvas,
+            "AD BREAK", Theme.accent,
+            "GAME ${PlaySession.nextGameNumber()}",
+            "Every ${every}th game needs a short ad. Closing the app resets the count."
+        )
+        drawButton(canvas, adPrimary, "WATCH AD", primary = true, pressed = pressedButton == 1)
+        drawButton(canvas, adSecondary, "NOT NOW", primary = false, pressed = pressedButton == 2)
+    }
+
+    /** Held while someone else's screen is up, so nothing flickers underneath. */
+    private fun drawAdPending(canvas: Canvas) {
+        scrimPaint.shader = null
+        scrimPaint.color = Color.argb(240, 2, 3, 8)
+        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), scrimPaint)
+
+        uiBoldPaint.textAlign = Paint.Align.CENTER
+        uiBoldPaint.textSize = 16f * density
+        uiBoldPaint.letterSpacing = 0.18f
+        uiBoldPaint.color = Theme.textFaint
+        canvas.drawText("LOADING AD", width / 2f, height / 2f, uiBoldPaint)
+        uiBoldPaint.letterSpacing = 0f
+    }
+
+    /** 3, 2, 1 over the cleared board before a bought-back run picks up. */
+    private fun drawResumeCountdown(canvas: Canvas) {
+        scrimPaint.shader = null
+        scrimPaint.color = Color.argb(150, 2, 3, 8)
+        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), scrimPaint)
+
+        val cx = width / 2f
+        val cy = height * 0.46f
+        val seconds = ceil(resumeCountdown.toDouble()).toInt().coerceAtLeast(1)
+        // Each digit swells as it lands and shrinks as its second runs out.
+        val within = resumeCountdown - (seconds - 1)
+        val pop = 1f + 0.35f * (1f - within).coerceIn(0f, 1f)
+
+        displayPaint.textAlign = Paint.Align.CENTER
+        displayPaint.textSize = 96f * density / pop
+        displayPaint.color = Theme.withAlpha(Theme.accent, (within * 1.4f).coerceIn(0.15f, 1f))
+        canvas.drawText(seconds.toString(), cx, cy, displayPaint)
+
+        uiBoldPaint.textAlign = Paint.Align.CENTER
+        uiBoldPaint.textSize = 18f * density
+        uiBoldPaint.letterSpacing = 0.16f
+        uiBoldPaint.color = Theme.textSecondary
+        canvas.drawText("BACK IN", cx, cy - 92f * density, uiBoldPaint)
+        uiBoldPaint.letterSpacing = 0f
+
+        uiPaint.textAlign = Paint.Align.CENTER
+        uiPaint.textSize = 16f * density
+        uiPaint.color = Theme.textFaint
+        canvas.drawText("Score $score kept", cx, cy + 44f * density, uiPaint)
+    }
+
+    /** A one-line explanation when an ad did not pay out, so it is not silent. */
+    private fun drawAdNotice(canvas: Canvas, cy: Float) {
+        if (adNoticeAge > AD_NOTICE_HOLD || adNotice.isEmpty()) return
+        val fade = (1f - adNoticeAge / AD_NOTICE_HOLD).coerceIn(0f, 1f)
+        uiPaint.textAlign = Paint.Align.CENTER
+        uiPaint.textSize = 14f * density
+        uiPaint.color = Theme.withAlpha(Theme.textFaint, fade)
+        canvas.drawText(adNotice, width / 2f, cy, uiPaint)
+    }
+
     private fun drawReadyScreen(canvas: Canvas) {
         // The demo behind this is scenery, not the subject: held well back so the
         // title and the buttons are what the eye lands on.
@@ -1856,6 +2251,7 @@ class GameView @JvmOverloads constructor(
             drawChip(canvas, cx, height * 0.43f, "BEST  $bestScore")
         }
 
+        drawAdNotice(canvas, primaryButton.top - 14f * density)
         drawButton(canvas, primaryButton, "PLAY", primary = true, pressed = pressedButton == 1)
         drawButton(canvas, secondaryButton, "HOW TO PLAY", primary = false, pressed = pressedButton == 2)
         drawButton(canvas, tertiaryButton, "SETTINGS", primary = false, pressed = pressedButton == 3)
@@ -1979,6 +2375,7 @@ class GameView @JvmOverloads constructor(
             drawButton(canvas, secondaryButton, "HOW TO PLAY", primary = false, pressed = pressedButton == 2, alpha = buttonAlpha, textSize = small)
             drawButton(canvas, tertiaryButton, "SETTINGS", primary = false, pressed = pressedButton == 3, alpha = buttonAlpha, textSize = small)
             drawButton(canvas, overQuaternary, "MAIN MENU", primary = false, pressed = pressedButton == 4, alpha = buttonAlpha, textSize = small)
+            drawAdNotice(canvas, overQuaternary.bottom + 20f * density)
         }
     }
 
@@ -2180,6 +2577,12 @@ class GameView @JvmOverloads constructor(
         /** Game-over card metrics, in dp - shared by the measure pass and the draw. */
         /** Side of the square pause target, in dp. */
         const val PAUSE_BUTTON_SIZE = 34f
+
+        /** Seconds a failed-ad explanation stays on screen. */
+        const val AD_NOTICE_HOLD = 5f
+
+        /** How long a real ad callback is given to win the stranded-ad race. */
+        const val STRANDED_AD_GRACE_MS = 1500L
 
         const val CARD_HEADER_HEIGHT = 156f
         const val CARD_STAT_ROW_HEIGHT = 26f

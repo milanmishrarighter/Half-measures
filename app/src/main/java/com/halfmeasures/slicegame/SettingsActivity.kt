@@ -332,6 +332,33 @@ class SettingsActivity : AppCompatActivity() {
             )
         }
 
+        card("ADS").let { c ->
+            root.addView(c.wrapper)
+            slider(
+                c.body, "Continues per run",
+                "When you die you can watch an ad to carry on with the same score. This is how many times that is offered in one run.",
+                GameSettings.MIN_CONTINUES_PER_RUN.toFloat(), GameSettings.MAX_CONTINUES_PER_RUN.toFloat(),
+                settings.continuesPerRun.toFloat(),
+                { if (it.roundToInt() == 0) "Off" else "${it.roundToInt()}" },
+                { settings.continuesPerRun = it.roundToInt() }
+            )
+            slider(
+                c.body, "Health you come back with",
+                "How full the bar is when an ad brings you back.",
+                GameSettings.MIN_CONTINUE_HEALTH_FRACTION, GameSettings.MAX_CONTINUE_HEALTH_FRACTION,
+                settings.continueHealthFraction,
+                { "${(it * 100).roundToInt()}%" }, { settings.continueHealthFraction = it }
+            )
+            slider(
+                c.body, "Ad before every Nth game",
+                "Every this many games in one sitting, the next one needs an ad watched before it starts. Closing the app resets the count.",
+                GameSettings.MIN_AD_GATE_EVERY.toFloat(), GameSettings.MAX_AD_GATE_EVERY.toFloat(),
+                settings.adGateEvery.toFloat(),
+                { if (it.roundToInt() == 0) "Off" else "Every ${it.roundToInt()}" },
+                { settings.adGateEvery = it.roundToInt() }
+            )
+        }
+
         root.addView(footer())
 
         return ScrollView(this).apply {
@@ -587,6 +614,11 @@ class SettingsActivity : AppCompatActivity() {
             appendLine("  Score text size: %.2fx".format(settings.popupTextScale))
             appendLine("  Buzzing: ${onOff(settings.vibrationEnabled)}")
             appendLine("  How hard it buzzes: ${(settings.vibrationStrength * 100).roundToInt()}%")
+            appendLine()
+            appendLine("ADS")
+            appendLine("  Continues per run: ${settings.continuesPerRun}")
+            appendLine("  Health you come back with: ${(settings.continueHealthFraction * 100).roundToInt()}%")
+            appendLine("  Ad before every Nth game: ${settings.adGateEvery}")
         }
 
         val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
