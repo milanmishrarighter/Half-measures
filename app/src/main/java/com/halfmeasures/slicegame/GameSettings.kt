@@ -47,7 +47,11 @@ data class GameSettings(
     var startHealth: Int = DEFAULT_START_HEALTH,
     /** Deviation at or below this counts as a PERFECT cut. */
     var perfectThreshold: Float = DEFAULT_PERFECT_THRESHOLD,
-    /** Deviation at or below this counts as a GREAT cut - 10 means 60/40 or better. */
+    /**
+     * Deviation at or below this counts as a GREAT cut and keeps a good streak
+     * alive - 5 means a 45/55 split or better. Kept below the 60/40 band so that
+     * band always has room to exist.
+     */
     var greatThreshold: Float = DEFAULT_GREAT_THRESHOLD,
     /** Points lost per point of deviation, from a 100-point perfect cut. */
     var scoreMissWeight: Float = DEFAULT_SCORE_MISS_WEIGHT,
@@ -183,7 +187,7 @@ data class GameSettings(
         const val DEFAULT_SPAWN_GAP_MS = 1000L
         const val DEFAULT_START_HEALTH = 100
         const val DEFAULT_PERFECT_THRESHOLD = 1.5f
-        const val DEFAULT_GREAT_THRESHOLD = 10f
+        const val DEFAULT_GREAT_THRESHOLD = 5f
         const val DEFAULT_SCORE_MISS_WEIGHT = 1.0f
         const val DEFAULT_GREAT_BONUS_PERCENT = 25f
         const val DEFAULT_HEALTH_LOSS_AT_SIXTY_FORTY = 2f
@@ -245,7 +249,7 @@ data class GameSettings(
         const val MIN_PERFECT_THRESHOLD = 0.2f
         const val MAX_PERFECT_THRESHOLD = 10f
         const val MIN_GREAT_THRESHOLD = 2f
-        const val MAX_GREAT_THRESHOLD = 25f
+        const val MAX_GREAT_THRESHOLD = 9f
         const val MIN_SCORE_MISS_WEIGHT = 0f
         const val MAX_SCORE_MISS_WEIGHT = 3f
         const val MIN_GREAT_BONUS_PERCENT = 0f

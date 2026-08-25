@@ -87,6 +87,50 @@ object Theme {
             Typeface.defaultFromStyle(fallbackStyle)
         }
 
+    /**
+     * The colour the whole scene drifts through as the player levels up: deep
+     * indigo, through violet and magenta, out to teal and green. Used flat as the
+     * backdrop and blended into the shapes, so a level change reads as a shift in
+     * the light rather than as a banner.
+     */
+    private val stageRamp = intArrayOf(
+        Color.rgb(12, 16, 38),   // indigo
+        Color.rgb(26, 16, 48),   // violet
+        Color.rgb(40, 14, 46),   // plum
+        Color.rgb(44, 16, 34),   // magenta-ish
+        Color.rgb(30, 26, 22),   // warm neutral
+        Color.rgb(12, 32, 34),   // teal
+        Color.rgb(10, 34, 24)    // green
+    )
+
+    /** Accent hues matching [stageRamp], for tinting the shapes and the horizon. */
+    private val stageAccents = intArrayOf(
+        Color.rgb(96, 132, 255),
+        Color.rgb(150, 110, 255),
+        Color.rgb(206, 104, 226),
+        Color.rgb(238, 104, 168),
+        Color.rgb(226, 176, 96),
+        Color.rgb(88, 216, 208),
+        Color.rgb(104, 224, 148)
+    )
+
+    /**
+     * Walks the ramp one entry per level, then turns around and walks back, so a
+     * long run keeps drifting through hues instead of parking on the last one.
+     * The gradual part is handled by the caller easing toward this target.
+     */
+    private fun sampleRamp(ramp: IntArray, stage: Int): Int {
+        if (stage <= 0) return ramp[0]
+        val period = (ramp.size - 1) * 2
+        val position = stage % period
+        val index = if (position < ramp.size) position else period - position
+        return ramp[index.coerceIn(0, ramp.size - 1)]
+    }
+
+    fun stageBackground(stage: Int): Int = sampleRamp(stageRamp, stage)
+
+    fun stageAccent(stage: Int): Int = sampleRamp(stageAccents, stage)
+
     fun withAlpha(color: Int, alpha: Float): Int =
         Color.argb(
             (alpha.coerceIn(0f, 1f) * 255).toInt(),

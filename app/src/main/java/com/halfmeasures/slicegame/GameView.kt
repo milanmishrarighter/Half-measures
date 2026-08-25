@@ -1,8 +1,6 @@
 package com.halfmeasures.slicegame
 
 import android.content.Context
-import android.graphics.Bitmap
-import android.graphics.BitmapShader
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
@@ -159,15 +157,14 @@ class GameView @JvmOverloads constructor(
         strokeCap = Paint.Cap.ROUND
     }
     private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
-    private val bgPaint = Paint()
     /**
-     * A tiled speck of noise laid over the backdrop. A smooth dark gradient across
-     * a tall screen crosses very few distinct 8-bit values, so it renders as
-     * visible steps; a pixel of dither breaks the boundaries up and the eye reads
-     * the whole thing as continuous.
+     * The backdrop is a single flat colour rather than a gradient. A dark gradient
+     * down a tall screen only crosses a handful of distinct 8-bit values, which is
+     * what produced the stepped banding; one solid value cannot band at any size.
+     * It eases toward the current level's hue so the change reads as a slow drift.
      */
-    private val ditherPaint = Paint()
-    private var ditherShader: BitmapShader? = null
+    private var backgroundColor = Theme.stageBackground(0)
+    private var accentColor = Theme.stageAccent(0)
     private val scrimPaint = Paint()
     private val panelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val panelStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -249,7 +246,7 @@ class GameView @JvmOverloads constructor(
         if (dangerRecovery > 0f) {
             dangerRecovery = (dangerRecovery - realDt).coerceAtLeast(0f)
             // Linear climb back to normal speed.
-            val progress = 1f - dangerRecovery / settings.slowMoDuration.coerceAtLeast(0.05f)
+            val progress = 1f - dangerRecovery / lowHealthSlowMoSeconds()
             timeScale = settings.slowMoIntensity + (1f - settings.slowMoIntensity) * progress
             return
         }
@@ -268,7 +265,7 @@ class GameView @JvmOverloads constructor(
     }
 
     private fun triggerDangerSequence() {
-        dangerRecovery = settings.slowMoDuration
+        dangerRecovery = lowHealthSlowMoSeconds()
         perfectSlowMo = 0f
         effects.addFlash(Theme.danger, 0.5f * settings.screenFlashStrength)
         pixels.flash(1.4f)
@@ -279,14 +276,6 @@ class GameView @JvmOverloads constructor(
         super.onSizeChanged(w, h, oldw, oldh)
         if (w <= 0 || h <= 0) return
 
-        if (ditherShader == null) ditherShader = buildDitherShader()
-
-        bgPaint.shader = LinearGradient(
-            0f, 0f, 0f, h.toFloat(),
-            intArrayOf(Theme.bgTop, Theme.bgBottom, Color.rgb(4, 5, 12)),
-            floatArrayOf(0f, 0.62f, 1f),
-            Shader.TileMode.CLAMP
-        )
         pixels.resize(w, h)
 
         layoutButtons(w, h)
@@ -425,6 +414,12 @@ class GameView @JvmOverloads constructor(
 
         effects.update(dt, gravity)
 
+        // Creep toward the level's colours so a level change is a slow shift in
+        // the light rather than a hard cut.
+        val colourEase = min(1f, dt * 0.9f)
+        backgroundColor = Theme.lerpColor(backgroundColor, Theme.stageBackground(stage), colourEase)
+        accentColor = Theme.lerpColor(accentColor, Theme.stageAccent(stage), colourEase)
+
         displayedHealth += (health - displayedHealth) * min(1f, dt * 9f)
         displayedScore += (score - displayedScore) * min(1f, dt * 12f)
     }
@@ -433,33 +428,24 @@ class GameView @JvmOverloads constructor(
      * Advances the difficulty stage. Every stage the player earns brings more
      * shapes on screen at once, faster tumbling, and fresh, harder shape kinds.
      */
+    /**
+     * Advances the level silently. There is no banner: the level shows itself
+     * through the scene's colour drifting to a new hue, which stays out of the
+     * way of the cut feedback instead of colliding with it.
+     */
     private fun updateStage() {
         val interval = max(1, settings.stageScoreInterval)
         val newStage = score / interval
         if (newStage == stage) return
 
         stage = newStage
-        val unlocked = ShapeKind.unlockedCount(
+        unlockedKinds = ShapeKind.unlockedCount(
             stage, settings.startingShapeCount, settings.shapesPerStage
         )
-        val gained = unlocked - unlockedKinds
-        unlockedKinds = unlocked
-
-        val headline = "STAGE ${stage + 1}"
-        val subline = if (gained > 0) {
-            val names = ShapeKind.values()
-                .copyOfRange(unlocked - gained, unlocked)
-                .joinToString(" · ") { it.displayName.uppercase() }
-            "NEW: $names"
-        } else {
-            "FASTER · BUSIER"
-        }
-        effects.popup(headline, subline, width / 2f, height * 0.32f, Theme.gold, 0.85f)
-        effects.addFlash(Theme.gold, 0.3f * settings.screenFlashStrength)
-        pixels.flash(1.6f)
-        pixels.burst(width / 2f, height * 0.5f, 1.0f)
-        effects.addEnergy(1.2f)
-        if (settings.vibrationEnabled) haptics.great(settings.vibrationStrength)
+        // The shape gradients are cached per palette entry and tinted by level,
+        // so they have to be rebuilt when the level changes.
+        bodyShaders.clear()
+        if (settings.vibrationEnabled) haptics.tick(settings.vibrationStrength)
     }
 
     /**
@@ -529,7 +515,7 @@ class GameView @JvmOverloads constructor(
             dirX = 0f,
             dirY = 1f,
             spread = s.radius * 0.5f,
-            color = s.lightColor,
+            color = tintedLight(s.paletteIndex),
             count = count,
             speed = 170f,
             sizeScale = 0.8f
@@ -553,6 +539,10 @@ class GameView @JvmOverloads constructor(
         effects.addShake(0.7f * settings.cameraShakeStrength)
         if (settings.vibrationEnabled) haptics.gameOver(settings.vibrationStrength)
     }
+
+    /** Half the perfect-cut slow motion: long enough to register, short enough not to drag. */
+    private fun lowHealthSlowMoSeconds(): Float =
+        (settings.slowMoDuration * 0.5f).coerceAtLeast(0.05f)
 
     /**
      * Lets the remaining shapes fall away, then reveals the card. Capped so a shape
@@ -600,6 +590,9 @@ class GameView @JvmOverloads constructor(
         dangerRecovery = 0f
         dangerArmed = true
         pixels.reset()
+        bodyShaders.clear()
+        backgroundColor = Theme.stageBackground(0)
+        accentColor = Theme.stageAccent(0)
         state = State.PLAYING
         spawnCountdown = 0.32f
         cutBuckets.fill(0)
@@ -707,7 +700,9 @@ class GameView @JvmOverloads constructor(
     private fun gradeFor(deviation: Float): Grade = when {
         deviation <= settings.perfectThreshold -> Grade.PERFECT
         deviation <= settings.greatThreshold -> Grade.GREAT
-        deviation <= 10f -> Grade.GOOD
+        // Held clear of the great window, so a wide great setting can never
+        // squeeze the 60/40 band down to nothing.
+        deviation <= max(10f, settings.greatThreshold + 2f) -> Grade.GOOD
         deviation <= 20f -> Grade.FAIR
         deviation <= 30f -> Grade.POOR
         else -> Grade.MISS
@@ -740,7 +735,7 @@ class GameView @JvmOverloads constructor(
         recordCutBucket(grade)
 
         // Over the shape, keep it to the bare verdict so the action stays readable.
-        val popupY = (shape.y - shape.radius - 70f * density).coerceAtLeast(height * 0.14f)
+        val popupY = (shape.y - shape.radius - 22f * density).coerceAtLeast(height * 0.12f)
         effects.popup(
             headline = if (grade == Grade.PERFECT) "PERFECT" else split,
             subline = "",
@@ -922,7 +917,7 @@ class GameView @JvmOverloads constructor(
                 x = shape.x, y = shape.y,
                 dirX = dirX, dirY = dirY,
                 spread = r * 0.9f,
-                color = shape.lightColor,
+                color = tintedLight(shape.paletteIndex),
                 count = (bladeCount * amount).roundToInt().coerceIn(3, 160),
                 speed = bladeSpeed,
                 sizeScale = if (grade == Grade.PERFECT) 1.5f else 1.15f
@@ -941,7 +936,7 @@ class GameView @JvmOverloads constructor(
                 // A second, slower shower of the shape's own colour, so the gold
                 // burst reads on top of confetti rather than alone.
                 effects.radialBurst(
-                    shape.x, shape.y, Theme.lighten(shape.lightColor, 0.25f),
+                    shape.x, shape.y, Theme.lighten(tintedLight(shape.paletteIndex), 0.25f),
                     (30 * amount).roundToInt().coerceIn(3, 120), 330f, 1.35f
                 )
             }
@@ -1036,34 +1031,17 @@ class GameView @JvmOverloads constructor(
     }
 
     private fun drawBackground(canvas: Canvas) {
-        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), bgPaint)
-
-        ditherShader?.let {
-            ditherPaint.shader = it
-            canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), ditherPaint)
-        }
+        // One flat value: nothing to quantise, so nothing to band, at any size.
+        canvas.drawColor(backgroundColor)
         pixels.draw(canvas, pixelPaint, effects.energy)
 
         // A quiet seam along the floor, tinted by how the run is going.
         rimPaint.strokeWidth = 2f
         rimPaint.color = Theme.withAlpha(
-            pixels.horizonColor(),
+            Theme.lerpColor(pixels.horizonColor(), accentColor, 0.55f),
             0.22f + 0.30f * effects.energy.coerceAtMost(1f)
         )
         canvas.drawLine(0f, height * 0.995f, width.toFloat(), height * 0.995f, rimPaint)
-    }
-
-    /** A small tile of faint monochrome noise, repeated across the screen. */
-    private fun buildDitherShader(): BitmapShader {
-        val size = 64
-        val pixels = IntArray(size * size)
-        for (i in pixels.indices) {
-            // A couple of levels of jitter is all it takes to dissolve a band edge.
-            val level = random.nextInt(3)
-            pixels[i] = Color.argb(9 + level * 5, 255, 255, 255)
-        }
-        val bitmap = Bitmap.createBitmap(pixels, size, size, Bitmap.Config.ARGB_8888)
-        return BitmapShader(bitmap, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT)
     }
 
     private fun buildPath(vertices: List<PointF2>) {
@@ -1074,12 +1052,18 @@ class GameView @JvmOverloads constructor(
         path.close()
     }
 
+    /** A shape's own colour, pulled a little toward the current level's hue. */
+    private fun tintedLight(paletteIndex: Int): Int =
+        Theme.lerpColor(Theme.shapePalette[paletteIndex][0], Theme.stageAccent(stage), STAGE_TINT)
+
     private fun bodyShader(paletteIndex: Int): RadialGradient =
         bodyShaders.getOrPut(paletteIndex) {
             val pair = Theme.shapePalette[paletteIndex]
+            val light = tintedLight(paletteIndex)
+            val deep = Theme.lerpColor(pair[1], Theme.stageAccent(stage), STAGE_TINT * 0.7f)
             RadialGradient(
                 0f, 0f, 1f,
-                intArrayOf(Theme.lighten(pair[0], 0.22f), pair[0], pair[1]),
+                intArrayOf(Theme.lighten(light, 0.22f), light, deep),
                 floatArrayOf(0f, 0.45f, 1f),
                 Shader.TileMode.CLAMP
             )
@@ -1096,7 +1080,7 @@ class GameView @JvmOverloads constructor(
         canvas.scale(1.14f, 1.14f)
         canvas.translate(-shape.x, -shape.y)
         buildPath(verts)
-        glowPaint.color = Theme.withAlpha(shape.lightColor, 0.10f)
+        glowPaint.color = Theme.withAlpha(tintedLight(shape.paletteIndex), 0.10f)
         canvas.drawPath(path, glowPaint)
         canvas.restore()
 
@@ -1105,7 +1089,7 @@ class GameView @JvmOverloads constructor(
         canvas.scale(1.06f, 1.06f)
         canvas.translate(-shape.x, -shape.y)
         buildPath(verts)
-        glowPaint.color = Theme.withAlpha(shape.lightColor, 0.16f)
+        glowPaint.color = Theme.withAlpha(tintedLight(shape.paletteIndex), 0.16f)
         canvas.drawPath(path, glowPaint)
         canvas.restore()
 
@@ -1122,7 +1106,7 @@ class GameView @JvmOverloads constructor(
 
         // Bright rim, then a soft inner contour for a bevelled look.
         rimPaint.strokeWidth = max(2f, r * 0.045f)
-        rimPaint.color = Theme.withAlpha(Theme.lighten(shape.lightColor, 0.55f), 0.75f)
+        rimPaint.color = Theme.withAlpha(Theme.lighten(tintedLight(shape.paletteIndex), 0.55f), 0.75f)
         canvas.drawPath(path, rimPaint)
 
         if (settings.guideLineEnabled) drawGuideLine(canvas, shape, verts, r)
@@ -1176,7 +1160,7 @@ class GameView @JvmOverloads constructor(
         }
         path.close()
 
-        fillPaint.color = Theme.withAlpha(Theme.shapePalette[piece.paletteIndex][0], alpha * 0.95f)
+        fillPaint.color = Theme.withAlpha(tintedLight(piece.paletteIndex), alpha * 0.95f)
         canvas.drawPath(path, fillPaint)
         rimPaint.strokeWidth = 3f
         rimPaint.color = Theme.withAlpha(Color.WHITE, alpha * 0.35f)
@@ -1790,6 +1774,9 @@ class GameView @JvmOverloads constructor(
         val EMERGENCY_RED = Color.rgb(255, 62, 74)
 
         /** Seconds the last-cut readout stays under the score. */
+        /** How far a shape's colour is pulled toward the level's hue. */
+        const val STAGE_TINT = 0.32f
+
         const val LAST_CUT_HOLD = 1.1f
         /** Longest the ending waits for airborne shapes to clear. */
         const val SETTLE_MAX_SECONDS = 2.6f
