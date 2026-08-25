@@ -202,7 +202,14 @@ class GameView @JvmOverloads constructor(
     private val overQuaternary = RectF()
     /** The ad-backed continue, drawn above RETRY only when one is available. */
     private val overContinue = RectF()
+    /**
+     * The card is drawn at full size into a canvas scaled down by [CARD_SCALE], so
+     * every dimension inside it shrinks together and none of the drawing code has
+     * to know. This is that design-space rect; [gameOverCardVisual] is where it
+     * actually lands on screen, for anything drawn outside the scaled block.
+     */
     private val gameOverCard = RectF()
+    private val gameOverCardVisual = RectF()
     /** The pause target in the top-right corner, live only during play. */
     private val pauseButton = RectF()
     private val pauseCard = RectF()
@@ -502,44 +509,50 @@ class GameView @JvmOverloads constructor(
         if (w <= 0 || h <= 0) return
 
         val cx = w / 2f
-        // Three rows instead of a column of five. Two-up rows halve the height the
-        // stack needs, which is what was pushing the bottom buttons off screen.
-        val blockWidth = min(w * 0.86f, 380f * density)
+        val blockWidth = min(w * 0.78f, 320f * density)
         val gap = 10f * density
-        val halfWidth = (blockWidth - gap) / 2f
         val rowHeight = GAME_OVER_BUTTON_HEIGHT * density
-        val captionHeight = if (continueOffered) 20f * density else 0f
 
-        val cardHeight = measureGameOverCard()
-        val cardGap = 18f * density
-        val blockHeight = cardHeight + cardGap + captionHeight + rowHeight * 3 + gap * 2
+        // The card is measured at full size and then shown scaled down, so the
+        // stack below it has to be placed against the scaled height.
+        val designWidth = w * 0.82f / CARD_SCALE
+        val designHeight = measureGameOverCard()
+        val visualWidth = designWidth * CARD_SCALE
+        val visualHeight = designHeight * CARD_SCALE
+
+        val rows = if (continueOffered) 3 else 2
+        val cardGap = 20f * density
+        val blockHeight = visualHeight + cardGap + rowHeight * rows + gap * (rows - 1)
         val blockTop = ((h - blockHeight) / 2f).coerceAtLeast(12f * density)
 
-        gameOverCard.set(w * 0.09f, blockTop, w * 0.91f, blockTop + cardHeight)
+        gameOverCardVisual.set(cx - visualWidth / 2f, blockTop, cx + visualWidth / 2f, blockTop + visualHeight)
+        // Centred on the same point, so scaling about that centre lands it exactly
+        // on the visual rect.
+        val centreY = gameOverCardVisual.centerY()
+        gameOverCard.set(
+            cx - designWidth / 2f, centreY - designHeight / 2f,
+            cx + designWidth / 2f, centreY + designHeight / 2f
+        )
 
         val left = cx - blockWidth / 2f
         val right = cx + blockWidth / 2f
-        var top = gameOverCard.bottom + cardGap + captionHeight
+        var top = gameOverCardVisual.bottom + cardGap
 
-        // Row one: retry on the left, the ad-backed continue on the right. With no
-        // continue to offer, retry takes the whole row rather than leaving a hole.
+        // One button per row, centred: continue, retry, main menu. How to play and
+        // settings are on the title screen and were only repeated here.
         if (continueOffered) {
-            overPrimary.set(left, top, left + halfWidth, top + rowHeight)
-            overContinue.set(right - halfWidth, top, right, top + rowHeight)
+            overContinue.set(left, top, right, top + rowHeight)
+            top += rowHeight + gap
         } else {
-            overPrimary.set(left, top, right, top + rowHeight)
             // An empty rect can never be hit-tested, which is the point.
             overContinue.setEmpty()
         }
+        overPrimary.set(left, top, right, top + rowHeight)
         top += rowHeight + gap
-
-        // Row two: the two side trips.
-        overSecondary.set(left, top, left + halfWidth, top + rowHeight)
-        overTertiary.set(right - halfWidth, top, right, top + rowHeight)
-        top += rowHeight + gap
-
-        // Row three: the way out, on its own.
         overQuaternary.set(left, top, right, top + rowHeight)
+
+        overSecondary.setEmpty()
+        overTertiary.setEmpty()
     }
 
     /**
@@ -724,9 +737,9 @@ class GameView @JvmOverloads constructor(
         fireworkTimer = 0.18f + random.nextFloat() * 0.22f
 
         // Centred on the score itself, so the celebration reads as being about it.
-        val scoreX = gameOverCard.centerX()
-        val scoreY = gameOverCard.top + 100f * density
-        val x = scoreX + (random.nextFloat() - 0.5f) * gameOverCard.width() * 0.85f
+        val scoreX = gameOverCardVisual.centerX()
+        val scoreY = gameOverCardVisual.top + 100f * density * CARD_SCALE
+        val x = scoreX + (random.nextFloat() - 0.5f) * gameOverCardVisual.width() * 0.85f
         val y = scoreY + (random.nextFloat() - 0.5f) * 130f * density
         val palette = Theme.shapePalette[random.nextInt(Theme.shapePalette.size)]
         val color = if (random.nextFloat() < 0.4f) Theme.gold else palette[0]
@@ -2324,10 +2337,11 @@ class GameView @JvmOverloads constructor(
     }
 
     /**
-     * The continue, sold rather than merely listed: taller than its neighbours,
-     * gold instead of teal, breathing behind a soft halo. The caption above it and
-     * the badge on it both say an ad is coming, because a glowing button that costs
-     * thirty seconds of the player's time must never be pressed by surprise.
+     * The continue, sold rather than merely listed: gold instead of teal, breathing
+     * behind three layered haloes so it reads as the offer and not another row in a
+     * list. The cost is carried by a superscript AD set against the label, the way
+     * a footnote marker rides a word - present, unmissable once seen, and taking up
+     * none of the room a second line of copy would.
      */
     private fun drawContinueButton(canvas: Canvas, alpha: Float) {
         if (!continueOffered || overContinue.isEmpty) return
@@ -2336,13 +2350,6 @@ class GameView @JvmOverloads constructor(
         val pressed = pressedButton == 5
         val pulse = 0.5f + 0.5f * sin(elapsed * 3.2f)
         val radius = rect.height() / 2f
-
-        uiBoldPaint.textAlign = Paint.Align.CENTER
-        uiBoldPaint.textSize = 11f * density
-        uiBoldPaint.letterSpacing = 0.18f
-        uiBoldPaint.color = Theme.withAlpha(Theme.gold, (0.55f + 0.35f * pulse) * alpha)
-        canvas.drawText("WATCH AN AD", rect.centerX(), rect.top - 7f * density, uiBoldPaint)
-        uiBoldPaint.letterSpacing = 0f
 
         // Three haloes rather than a blur mask filter: hardware accelerated, and
         // the layering is what makes it read as glow instead of a fat outline.
@@ -2376,29 +2383,34 @@ class GameView @JvmOverloads constructor(
         canvas.drawRoundRect(roundRect, radius, radius, panelStrokePaint)
         panelStrokePaint.color = Theme.hairline
 
-        uiBoldPaint.textAlign = Paint.Align.CENTER
-        uiBoldPaint.textSize = 15f * density
-        uiBoldPaint.color = Theme.withAlpha(INK_ON_GOLD, alpha)
-        // Nudged left of centre to leave the AD tag its corner.
+        // Label and superscript are measured together and centred as one unit, so
+        // the pair sits on the button's middle rather than the word alone.
+        val labelSize = 18f * density
+        val markSize = labelSize * 0.52f
+        uiBoldPaint.textAlign = Paint.Align.LEFT
+
+        uiBoldPaint.textSize = labelSize
+        val labelWidth = uiBoldPaint.measureText(CONTINUE_LABEL)
         val baseline = roundRect.centerY() - (uiBoldPaint.descent() + uiBoldPaint.ascent()) / 2f
-        canvas.drawText("CONTINUE", roundRect.centerX() - 11f * density, baseline, uiBoldPaint)
 
-        // A small stamped AD tag on the trailing end of the button.
-        val badgeHeight = 15f * density
-        val badgeWidth = 24f * density
-        val badgeRight = rect.right - 10f * density
-        roundRect.set(
-            badgeRight - badgeWidth, rect.centerY() - badgeHeight / 2f,
-            badgeRight, rect.centerY() + badgeHeight / 2f
-        )
-        panelPaint.color = Theme.withAlpha(INK_ON_GOLD, 0.5f * alpha)
-        canvas.drawRoundRect(roundRect, badgeHeight / 2f, badgeHeight / 2f, panelPaint)
-
-        uiBoldPaint.textSize = 10f * density
-        uiBoldPaint.letterSpacing = 0.16f
-        uiBoldPaint.color = Theme.withAlpha(Theme.gold, alpha)
-        canvas.drawText("AD", roundRect.centerX(), roundRect.centerY() + 3.5f * density, uiBoldPaint)
+        uiBoldPaint.textSize = markSize
+        uiBoldPaint.letterSpacing = 0.06f
+        val markWidth = uiBoldPaint.measureText(CONTINUE_MARK)
         uiBoldPaint.letterSpacing = 0f
+
+        val kern = 2.5f * density
+        val startX = roundRect.centerX() - (labelWidth + kern + markWidth) / 2f
+
+        uiBoldPaint.textSize = labelSize
+        uiBoldPaint.color = Theme.withAlpha(INK_ON_GOLD, alpha)
+        canvas.drawText(CONTINUE_LABEL, startX, baseline, uiBoldPaint)
+
+        uiBoldPaint.textSize = markSize
+        uiBoldPaint.letterSpacing = 0.06f
+        // Raised most of a cap height, which is where an exponent sits.
+        canvas.drawText(CONTINUE_MARK, startX + labelWidth + kern, baseline - labelSize * 0.46f, uiBoldPaint)
+        uiBoldPaint.letterSpacing = 0f
+        uiBoldPaint.textAlign = Paint.Align.CENTER
     }
 
     private fun drawAdGate(canvas: Canvas) {
@@ -2575,7 +2587,7 @@ class GameView @JvmOverloads constructor(
         canvas.save()
         val scale = 0.94f + 0.06f * boxAlpha
         canvas.translate(0f, (1f - boxAlpha) * 26f * density)
-        canvas.scale(scale, scale, cx, gameOverCard.centerY())
+        canvas.scale(scale * CARD_SCALE, scale * CARD_SCALE, cx, gameOverCard.centerY())
 
         val radius = 26f * density
         panelPaint.shader = null
@@ -2657,14 +2669,10 @@ class GameView @JvmOverloads constructor(
         // Buttons come in last, once the card has finished settling.
         val buttonAlpha = revealAlpha(CARD_ROWS_AT + CARD_ROW_STAGGER * 5 + CARD_BREAKDOWN_STAGGER * 5)
         if (buttonAlpha > 0.01f) {
+            val label = 18f * density
             drawContinueButton(canvas, buttonAlpha)
-            // Half-width buttons need smaller type than the full-width one below.
-            val half = 15f * density
-            val full = 17f * density
-            drawButton(canvas, primaryButton, "RETRY", primary = true, pressed = pressedButton == 1, alpha = buttonAlpha, textSize = if (continueOffered) half else full)
-            drawButton(canvas, secondaryButton, "HOW TO PLAY", primary = false, pressed = pressedButton == 2, alpha = buttonAlpha, textSize = half)
-            drawButton(canvas, tertiaryButton, "SETTINGS", primary = false, pressed = pressedButton == 3, alpha = buttonAlpha, textSize = half)
-            drawButton(canvas, overQuaternary, "MAIN MENU", primary = false, pressed = pressedButton == 4, alpha = buttonAlpha, textSize = full)
+            drawButton(canvas, primaryButton, "RETRY", primary = true, pressed = pressedButton == 1, alpha = buttonAlpha, textSize = label)
+            drawButton(canvas, overQuaternary, "MAIN MENU", primary = false, pressed = pressedButton == 4, alpha = buttonAlpha, textSize = label)
             drawAdNotice(canvas, overQuaternary.bottom + 20f * density)
         }
     }
@@ -2877,8 +2885,11 @@ class GameView @JvmOverloads constructor(
         /** Seconds the waiting screen gives an ad to appear before giving up. */
         const val AD_WAIT_TIMEOUT = 8f
 
-        /** Height of each button in the game-over card's three rows, in dp. */
+        /** Height of each button in the game-over card's stack, in dp. */
         const val GAME_OVER_BUTTON_HEIGHT = 50f
+
+        /** How much of its designed size the score card is actually drawn at. */
+        const val CARD_SCALE = 0.7f
 
         const val CARD_HEADER_HEIGHT = 156f
         const val CARD_STAT_ROW_HEIGHT = 26f
@@ -2889,6 +2900,10 @@ class GameView @JvmOverloads constructor(
 
         /** Text and stamps on top of a gold fill. */
         val INK_ON_GOLD = Color.rgb(42, 24, 0)
+
+        const val CONTINUE_LABEL = "CONTINUE"
+        /** The superscript that says the continue costs an ad. */
+        const val CONTINUE_MARK = "AD"
 
         /** Seconds the last-cut readout stays under the score. */
         /** How far a shape's colour is pulled toward the level's hue. */
