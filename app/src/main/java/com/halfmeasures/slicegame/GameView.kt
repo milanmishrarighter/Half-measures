@@ -105,6 +105,12 @@ class GameView @JvmOverloads constructor(
     private var perfectSlowMo = 0f
     /** Seconds left of the short speed dip when health first turns critical. */
     private var dangerRecovery = 0f
+    /**
+     * Seconds the LOW HEALTH alert stays on screen. It is a one-shot announcement
+     * like the perfect-cut celebration, not a state that hangs around for as long
+     * as health happens to be low.
+     */
+    private var dangerAlert = 0f
     private var dangerArmed = true
 
     /** Consecutive great-or-better cuts, and consecutive sloppy ones. */
@@ -224,7 +230,9 @@ class GameView @JvmOverloads constructor(
         lastFrameTimeNanos = frameTimeNanos
         realDt = min(realDt, 1f / 30f) // after a stall, step conservatively instead of teleporting
 
-        // The countdown runs on real time; everything else obeys the time scale.
+        // The alert and the speed ramp both run on real time, so slow motion
+        // cannot stretch the warning out.
+        dangerAlert = (dangerAlert - realDt).coerceAtLeast(0f)
         updateTimeControl(realDt)
         update(realDt * timeScale)
         invalidate()
@@ -266,6 +274,7 @@ class GameView @JvmOverloads constructor(
 
     private fun triggerDangerSequence() {
         dangerRecovery = lowHealthSlowMoSeconds()
+        dangerAlert = lowHealthSlowMoSeconds()
         perfectSlowMo = 0f
         effects.addFlash(Theme.danger, 0.5f * settings.screenFlashStrength)
         pixels.flash(1.4f)
@@ -588,6 +597,7 @@ class GameView @JvmOverloads constructor(
         timeScale = 1f
         perfectSlowMo = 0f
         dangerRecovery = 0f
+        dangerAlert = 0f
         dangerArmed = true
         pixels.reset()
         bodyShaders.clear()
@@ -1395,13 +1405,16 @@ class GameView @JvmOverloads constructor(
      * while the shapes stay visible through it.
      */
     private fun drawCriticalWarning(canvas: Canvas) {
-        if (state != State.PLAYING || health <= 0 || health > settings.lowHealthAt) return
+        if (state != State.PLAYING || dangerAlert <= 0f) return
 
-        // A single slow cycle, so it breathes like a warning lamp rather than strobing.
-        val breath = 0.5f + 0.5f * cos(elapsed * 3.1f)
+        val total = lowHealthSlowMoSeconds()
+        // Fades out over the last third rather than vanishing mid-pulse.
+        val presence = (dangerAlert / total).coerceIn(0f, 1f).let { min(1f, it * 3f) }
+        // Two quick pulses across the alert, so it reads as an alarm, not a mood.
+        val breath = (0.5f + 0.5f * cos((total - dangerAlert) * 9f)) * presence
 
         scrimPaint.shader = null
-        scrimPaint.color = Theme.withAlpha(EMERGENCY_RED, 0.09f + 0.20f * breath)
+        scrimPaint.color = Theme.withAlpha(EMERGENCY_RED, (0.07f + 0.20f * breath) * presence)
         canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), scrimPaint)
 
         // Heavier at the edges so the middle of the play area stays readable.
@@ -1426,16 +1439,16 @@ class GameView @JvmOverloads constructor(
 
         displayPaint.style = Paint.Style.STROKE
         displayPaint.strokeWidth = 12f * density
-        displayPaint.color = Theme.withAlpha(EMERGENCY_RED, 0.30f + 0.35f * breath)
+        displayPaint.color = Theme.withAlpha(EMERGENCY_RED, (0.30f + 0.35f * breath) * presence)
         canvas.drawText("LOW HEALTH", cx, cy, displayPaint)
         displayPaint.style = Paint.Style.FILL
 
-        displayPaint.color = Theme.withAlpha(Color.WHITE, 0.72f + 0.28f * breath)
+        displayPaint.color = Theme.withAlpha(Color.WHITE, (0.72f + 0.28f * breath) * presence)
         canvas.drawText("LOW HEALTH", cx, cy, displayPaint)
 
         uiBoldPaint.textAlign = Paint.Align.CENTER
         uiBoldPaint.textSize = 17f * density
-        uiBoldPaint.color = Theme.withAlpha(EMERGENCY_RED, 0.8f + 0.2f * breath)
+        uiBoldPaint.color = Theme.withAlpha(EMERGENCY_RED, (0.8f + 0.2f * breath) * presence)
         canvas.drawText("$health HP LEFT", cx, cy + 30f * density, uiBoldPaint)
     }
 
@@ -1603,12 +1616,13 @@ class GameView @JvmOverloads constructor(
 
         val padX = 28f * density
 
-        uiBoldPaint.textAlign = Paint.Align.LEFT
-        uiBoldPaint.textSize = 12f * density
-        uiBoldPaint.color = Theme.withAlpha(
-            Theme.textFaint, revealAlpha(CARD_ROWS_AT + CARD_ROW_STAGGER * 5)
+        displayPaint.textAlign = Paint.Align.LEFT
+        displayPaint.textSize = 12f * density
+        displayPaint.color = Theme.withAlpha(
+            Theme.textSecondary, revealAlpha(CARD_ROWS_AT + CARD_ROW_STAGGER * 5)
         )
-        canvas.drawText("HOW YOUR CUTS LANDED", cardLeft + padX, top, uiBoldPaint)
+        canvas.drawText("HOW YOUR CUTS LANDED", cardLeft + padX, top, displayPaint)
+        displayPaint.textAlign = Paint.Align.CENTER
 
         val labelWidth = 46f * density
         val countWidth = 34f * density
@@ -1628,9 +1642,9 @@ class GameView @JvmOverloads constructor(
             val centerY = y + rowHeight * 0.5f
 
             uiBoldPaint.textAlign = Paint.Align.LEFT
-            uiBoldPaint.textSize = 13f * density
+            uiBoldPaint.textSize = 14f * density
             uiBoldPaint.color = Theme.withAlpha(
-                if (count > 0) Theme.textSecondary else Theme.textFaint, rowAlpha
+                if (count > 0) Theme.textPrimary else Theme.textFaint, rowAlpha
             )
             canvas.drawText(
                 CUT_BUCKET_LABELS[index],
@@ -1739,8 +1753,13 @@ class GameView @JvmOverloads constructor(
                 Theme.withAlpha(Theme.accent, alpha), Theme.withAlpha(Theme.accentDeep, alpha),
                 Shader.TileMode.CLAMP
             )
+            // A shader is modulated by the paint's own alpha, and this Paint is
+            // shared with translucent panels, so it has to be reset to opaque or
+            // the button inherits whatever faded value was set last.
+            panelPaint.alpha = 255
             canvas.drawRoundRect(roundRect, radius, radius, panelPaint)
             panelPaint.shader = null
+            panelPaint.alpha = 255
         } else {
             panelPaint.color = Theme.withAlpha(Color.WHITE, (if (pressed) 0.14f else 0.08f) * alpha)
             canvas.drawRoundRect(roundRect, radius, radius, panelPaint)
