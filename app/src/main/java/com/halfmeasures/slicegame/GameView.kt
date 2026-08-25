@@ -582,14 +582,18 @@ class GameView @JvmOverloads constructor(
         )
     }
 
-    /** Total height the game-over card needs for everything it draws. */
-    private fun measureGameOverCard(): Float =
-        CARD_HEADER_HEIGHT * density +
-            24f * density +
-            CARD_STAT_ROW_HEIGHT * density * 5 +
-            30f * density +
-            26f * density + CARD_BREAKDOWN_ROW_HEIGHT * density * (cutBuckets.size - 1) +
-            CARD_BOTTOM_PADDING * density
+    /**
+     * Total height the card needs, walked in exactly the order the draw walks it so
+     * the two cannot drift apart: header, rule, five stat rows, rule, heading, the
+     * breakdown rows, and the same inset at the bottom as at the sides.
+     */
+    private fun measureGameOverCard(): Float {
+        val toLastStat = CARD_RULE_GAP + CARD_STAT_ROW_HEIGHT * 4
+        val toHeading = CARD_RULE_GAP * 2
+        val toFirstRow = CARD_RULE_GAP - CARD_BREAKDOWN_ROW_HEIGHT / 2f - CARD_ROW_TEXT_OFFSET
+        val rows = CARD_BREAKDOWN_ROW_HEIGHT * (cutBuckets.size - 1)
+        return (CARD_HEADER_HEIGHT + toLastStat + toHeading + toFirstRow + rows + CARD_PAD) * density
+    }
 
     // ---------------------------------------------------------------------
     // Simulation
@@ -2590,7 +2594,8 @@ class GameView @JvmOverloads constructor(
         val cardRight = gameOverCard.right
         val cardTop = gameOverCard.top
         val cx = gameOverCard.centerX()
-        val padX = 28f * density
+        val padX = CARD_PAD * density
+        val ruleGap = CARD_RULE_GAP * density
         val rowStep = CARD_STAT_ROW_HEIGHT * density
 
         // The whole card eases up into place from slightly small and low.
@@ -2658,7 +2663,7 @@ class GameView @JvmOverloads constructor(
 
         val left = cardLeft + padX
         val right = cardRight - padX
-        var rowY = dividerY + 30f * density
+        var rowY = dividerY + ruleGap
 
         // Stats arrive one at a time rather than all at once.
         drawStatRow(canvas, left, right, rowY, "BEST SCORE", bestScore.toString(), Theme.accent, 0)
@@ -2670,9 +2675,9 @@ class GameView @JvmOverloads constructor(
         drawStatRow(canvas, left, right, rowY, "BEST PERFECT STREAK", "${bestPerfectStreak}x", Theme.gold, 3)
         rowY += rowStep
         drawStatRow(canvas, left, right, rowY, "BEST GOOD STREAK", "${bestStreak}x", Theme.good, 4)
-        rowY += 30f * density
 
-        drawCutBreakdown(canvas, cardLeft, cardRight, rowY, CARD_BREAKDOWN_ROW_HEIGHT * density)
+        // The same baseline-rule-baseline gap as the header divider above.
+        drawCutBreakdown(canvas, cardLeft, cardRight, rowY + ruleGap * 2, CARD_BREAKDOWN_ROW_HEIGHT * density)
 
         canvas.restore()
 
@@ -2702,23 +2707,27 @@ class GameView @JvmOverloads constructor(
         var peak = 0
         for (count in cutBuckets) peak = max(peak, count)
 
-        val padX = 28f * density
+        val padX = CARD_PAD * density
+        val ruleGap = CARD_RULE_GAP * density
 
         val headingAlpha = revealAlpha(CARD_ROWS_AT + CARD_ROW_STAGGER * 5)
 
-        // A rule above the heading separates the distribution from the stats.
+        // The rule sits the same distance above this heading as the header divider
+        // sits above the stats, rather than nearly touching the type.
+        val ruleY = top - ruleGap
         rimPaint.strokeWidth = 1.5f
         rimPaint.color = Theme.withAlpha(Theme.hairline, headingAlpha)
-        canvas.drawLine(
-            cardLeft + padX, top - 16f * density,
-            cardRight - padX, top - 16f * density, rimPaint
-        )
+        canvas.drawLine(cardLeft + padX, ruleY, cardRight - padX, ruleY, rimPaint)
 
         uiBoldPaint.textAlign = Paint.Align.LEFT
-        uiBoldPaint.textSize = 13f * density
+        uiBoldPaint.textSize = 14f * density
         uiBoldPaint.letterSpacing = 0.14f
-        uiBoldPaint.color = Theme.withAlpha(Theme.textSecondary, headingAlpha)
+        // Same face as everywhere else, weighted up: this is a section heading and
+        // was reading lighter than the rows it introduces.
+        uiBoldPaint.isFakeBoldText = true
+        uiBoldPaint.color = Theme.withAlpha(Theme.textPrimary, headingAlpha)
         canvas.drawText("HOW YOUR CUTS LANDED", cardLeft + padX, top, uiBoldPaint)
+        uiBoldPaint.isFakeBoldText = false
         uiBoldPaint.letterSpacing = 0f
 
         val labelWidth = 46f * density
@@ -2727,7 +2736,9 @@ class GameView @JvmOverloads constructor(
         val barRight = cardRight - padX - countWidth
         val barSpan = (barRight - barLeft).coerceAtLeast(1f)
 
-        var y = top + 16f * density
+        // Placed so the first row's text sits one rule-gap below the heading, the
+        // same rhythm the stats have under their divider.
+        var y = top + ruleGap - rowHeight / 2f - CARD_ROW_TEXT_OFFSET * density
         // Band 0 is PERFECT, already reported as its own stat above - listing it
         // here again would just repeat the same number.
         var shown = 0
@@ -2746,7 +2757,7 @@ class GameView @JvmOverloads constructor(
             canvas.drawText(
                 CUT_BUCKET_LABELS[index],
                 cardLeft + padX,
-                centerY + 4.5f * density,
+                centerY + CARD_ROW_TEXT_OFFSET * density,
                 uiBoldPaint
             )
 
@@ -2773,7 +2784,7 @@ class GameView @JvmOverloads constructor(
             canvas.drawText(
                 count.toString(),
                 cardRight - padX,
-                centerY + 4.5f * density,
+                centerY + CARD_ROW_TEXT_OFFSET * density,
                 uiBoldPaint
             )
 
@@ -2901,10 +2912,21 @@ class GameView @JvmOverloads constructor(
         /** How much of its designed size the score card is actually drawn at. */
         const val CARD_SCALE = 0.85f
 
-        const val CARD_HEADER_HEIGHT = 156f
+        /**
+         * One spacing scale runs the whole card: the same inset on the sides and
+         * the bottom, and every horizontal rule sitting the same distance below the
+         * baseline above it as above the baseline below it. The two rules used to be
+         * spaced differently from each other, which is what made the lower half look
+         * cramped against its heading.
+         */
+        const val CARD_PAD = 28f
+        /** Baseline above a rule to the rule, and the rule to the baseline below. */
+        const val CARD_RULE_GAP = 30f
+        const val CARD_HEADER_HEIGHT = 162f
         const val CARD_STAT_ROW_HEIGHT = 26f
         const val CARD_BREAKDOWN_ROW_HEIGHT = 21f
-        const val CARD_BOTTOM_PADDING = 26f
+        /** Baseline offset that centres a breakdown row's text in its row. */
+        const val CARD_ROW_TEXT_OFFSET = 4.5f
 
         val EMERGENCY_RED = Color.rgb(255, 62, 74)
 

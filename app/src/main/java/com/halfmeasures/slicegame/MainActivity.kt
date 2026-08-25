@@ -25,6 +25,10 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
 
         ads = RewardedAds(this)
+        // A rewarded ad disables the back button while it runs, so a creative that
+        // fails to render leaves a black screen with no way off it. When the ad
+        // manager gives up on one, this is how the player gets out.
+        ads.onWedged = { bringSelfToFront() }
         ads.initialize()
 
         gameView = GameView(this).apply {
@@ -78,6 +82,19 @@ class MainActivity : AppCompatActivity() {
         // initialising after the first load attempt has already failed, which is
         // how a fresh install ends up with no ad until the app is opened again.
         ads.load()
+    }
+
+    /**
+     * Reorders this activity back above a wedged ad. The ad's activity belongs to
+     * this app and this task, so the app counts as foreground and the launch is
+     * allowed; nothing is recreated, the existing instance simply comes forward.
+     */
+    private fun bringSelfToFront() {
+        startActivity(
+            Intent(this, MainActivity::class.java).addFlags(
+                Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            )
+        )
     }
 
     @Suppress("DEPRECATION")
