@@ -39,7 +39,7 @@ class GameView @JvmOverloads constructor(
      * run is already over but the shapes still in the air are allowed to fall out
      * of frame before the card slides in over an empty stage.
      */
-    enum class State { READY, PLAYING, SETTLING, GAME_OVER }
+    enum class State { READY, PLAYING, PAUSED, SETTLING, GAME_OVER }
 
     /** Opens the settings screen; wired up by the hosting activity. */
     var onOpenSettings: (() -> Unit)? = null
@@ -57,7 +57,9 @@ class GameView @JvmOverloads constructor(
     fun refreshSettings() {
         settings = GameSettings.load(context)
         gravity = GameShape.BASE_GRAVITY * settings.gravityScale
-        if (state != State.PLAYING) {
+        // A paused run is still a run: leaving it alone means resuming with the
+        // health it was paused on rather than a free refill.
+        if (state != State.PLAYING && state != State.PAUSED) {
             health = settings.startHealth
             maxHealth = settings.startHealth
         }
@@ -144,11 +146,26 @@ class GameView @JvmOverloads constructor(
     private val overPrimary = RectF()
     private val overSecondary = RectF()
     private val overTertiary = RectF()
+    /** The game-over card carries a fourth button back to the title screen. */
+    private val overQuaternary = RectF()
     private val gameOverCard = RectF()
-    private val primaryButton: RectF get() = if (state == State.GAME_OVER) overPrimary else readyPrimary
-    private val secondaryButton: RectF get() = if (state == State.GAME_OVER) overSecondary else readySecondary
+    /** The pause target in the top-right corner, live only during play. */
+    private val pauseButton = RectF()
+    private val pauseCard = RectF()
+    private val pauseResume = RectF()
+    private val pauseMenu = RectF()
+    private val primaryButton: RectF get() = when (state) {
+        State.GAME_OVER -> overPrimary
+        State.PAUSED -> pauseResume
+        else -> readyPrimary
+    }
+    private val secondaryButton: RectF get() = when (state) {
+        State.GAME_OVER -> overSecondary
+        State.PAUSED -> pauseMenu
+        else -> readySecondary
+    }
     private val tertiaryButton: RectF get() = if (state == State.GAME_OVER) overTertiary else readyTertiary
-    private var pressedButton = 0 // 0 none, 1 primary, 2 secondary
+    private var pressedButton = 0 // 0 none, 1 primary, 2 secondary, 3 tertiary, 4 quaternary
 
     // ---- Paints, all reused ----
     private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
@@ -238,6 +255,14 @@ class GameView @JvmOverloads constructor(
         lastFrameTimeNanos = frameTimeNanos
         realDt = min(realDt, 1f / 30f) // after a stall, step conservatively instead of teleporting
 
+        if (state == State.PAUSED) {
+            // A pause stops the world outright: no simulation, no timers, no embers.
+            // Only the overlay is redrawn, so the run resumes exactly where it stood.
+            invalidate()
+            Choreographer.getInstance().postFrameCallback(this)
+            return
+        }
+
         // The alert and the speed ramp both run on real time, so slow motion
         // cannot stretch the warning out.
         dangerAlert = (dangerAlert - realDt).coerceAtLeast(0f)
@@ -309,7 +334,8 @@ class GameView @JvmOverloads constructor(
         val buttonGap = 14f * density
         val cx = w / 2f
 
-        val readyTop = h * 0.58f
+        // Sat a little higher than centre so the stack clears the bottom of the screen.
+        val readyTop = h * 0.53f
         readyPrimary.set(cx - buttonWidth / 2f, readyTop, cx + buttonWidth / 2f, readyTop + buttonHeight)
         readySecondary.set(
             cx - buttonWidth / 2f, readyTop + buttonHeight + buttonGap,
@@ -320,21 +346,46 @@ class GameView @JvmOverloads constructor(
             cx + buttonWidth / 2f, readyTop + buttonHeight * 3 + buttonGap * 2
         )
 
+        // Four buttons have to fit under the card now, so they are shorter and
+        // tighter than the title screen's three.
+        val overHeight = 46f * density
+        val overGap = 10f * density
         val cardHeight = measureGameOverCard()
-        val cardGap = 22f * density
-        val blockHeight = cardHeight + cardGap + buttonHeight * 3 + buttonGap * 2
+        val cardGap = 20f * density
+        val blockHeight = cardHeight + cardGap + overHeight * 4 + overGap * 3
         val blockTop = ((h - blockHeight) / 2f).coerceAtLeast(16f * density)
 
         gameOverCard.set(w * 0.09f, blockTop, w * 0.91f, blockTop + cardHeight)
-        val overTop = gameOverCard.bottom + cardGap
-        overPrimary.set(cx - buttonWidth / 2f, overTop, cx + buttonWidth / 2f, overTop + buttonHeight)
-        overSecondary.set(
-            cx - buttonWidth / 2f, overTop + buttonHeight + buttonGap,
-            cx + buttonWidth / 2f, overTop + buttonHeight * 2 + buttonGap
-        )
-        overTertiary.set(
-            cx - buttonWidth / 2f, overTop + (buttonHeight + buttonGap) * 2,
-            cx + buttonWidth / 2f, overTop + buttonHeight * 3 + buttonGap * 2
+        var overTop = gameOverCard.bottom + cardGap
+        for (rect in arrayOf(overPrimary, overSecondary, overTertiary, overQuaternary)) {
+            rect.set(cx - buttonWidth / 2f, overTop, cx + buttonWidth / 2f, overTop + overHeight)
+            overTop += overHeight + overGap
+        }
+
+        layoutPauseOverlay(w, h, buttonWidth, buttonHeight, buttonGap)
+    }
+
+    /**
+     * The pause target rides in the top-right corner, and the dialog it opens is a
+     * small centred card with the running score and a way out.
+     */
+    private fun layoutPauseOverlay(w: Int, h: Int, buttonWidth: Float, buttonHeight: Float, buttonGap: Float) {
+        val pad = 22f * density
+        val size = PAUSE_BUTTON_SIZE * density
+        pauseButton.set(w - pad - size, pad - 2f * density, w - pad, pad + size - 2f * density)
+
+        val cx = w / 2f
+        val cardWidth = min(w * 0.78f, 330f * density)
+        val cardHeight = 118f * density + buttonHeight * 2 + buttonGap + 20f * density
+        val cardTop = (h - cardHeight) / 2f
+        pauseCard.set(cx - cardWidth / 2f, cardTop, cx + cardWidth / 2f, cardTop + cardHeight)
+
+        val innerWidth = min(buttonWidth, cardWidth - 36f * density)
+        val firstTop = cardTop + 118f * density
+        pauseResume.set(cx - innerWidth / 2f, firstTop, cx + innerWidth / 2f, firstTop + buttonHeight)
+        pauseMenu.set(
+            cx - innerWidth / 2f, firstTop + buttonHeight + buttonGap,
+            cx + innerWidth / 2f, firstTop + buttonHeight * 2 + buttonGap
         )
     }
 
@@ -659,6 +710,62 @@ class GameView @JvmOverloads constructor(
         }
     }
 
+    /**
+     * Called when the activity loses focus. Leaving the app mid-run would otherwise
+     * hand the player a dead run on their return, so it pauses itself.
+     */
+    fun pauseIfPlaying() {
+        if (state == State.PLAYING) pauseGame()
+    }
+
+    /** Freezes the run where it stands and raises the pause card. */
+    private fun pauseGame() {
+        if (state != State.PLAYING) return
+        state = State.PAUSED
+        pressedButton = 0
+        hasLastTouch = false
+        trailPoints.clear()
+        if (settings.vibrationEnabled) haptics.tick(settings.vibrationStrength)
+    }
+
+    private fun resumeGame() {
+        if (state != State.PAUSED) return
+        state = State.PLAYING
+        // The clock has been standing still, so drop the stale timestamp rather
+        // than handing the next frame the whole paused duration as its delta.
+        lastFrameTimeNanos = 0L
+    }
+
+    /**
+     * Abandons whatever is on screen and goes back to the title. Called from the
+     * pause card and from the game-over card, so a run can always be walked away
+     * from without going through another one.
+     */
+    private fun returnToMenu() {
+        shapes.clear()
+        pieces.clear()
+        trailPoints.clear()
+        effects.clear()
+        pressedButton = 0
+        hasLastTouch = false
+        timeScale = 1f
+        perfectSlowMo = 0f
+        dangerRecovery = 0f
+        dangerAlert = 0f
+        menuSpawnTimer = 0f
+        menuCutTimer = 0.8f
+        health = settings.startHealth
+        maxHealth = settings.startHealth
+        displayedHealth = health.toFloat()
+        backgroundColor = Theme.stageBackground(0)
+        accentColor = Theme.stageAccent(0)
+        stage = 0
+        pixels.reset()
+        bodyShaders.clear()
+        state = State.READY
+        lastFrameTimeNanos = 0L
+    }
+
     private fun startNewGame() {
         shapes.clear()
         pieces.clear()
@@ -710,11 +817,24 @@ class GameView @JvmOverloads constructor(
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 if (state == State.SETTLING) return true
+                if (state == State.PAUSED) {
+                    pressedButton = when {
+                        pauseResume.contains(event.x, event.y) -> 1
+                        pauseMenu.contains(event.x, event.y) -> 2
+                        else -> 0
+                    }
+                    return true
+                }
+                if (state == State.PLAYING && pauseButton.contains(event.x, event.y)) {
+                    pauseGame()
+                    return true
+                }
                 if (state != State.PLAYING) {
                     pressedButton = when {
                         primaryButton.contains(event.x, event.y) -> 1
                         secondaryButton.contains(event.x, event.y) -> 2
                         tertiaryButton.contains(event.x, event.y) -> 3
+                        state == State.GAME_OVER && overQuaternary.contains(event.x, event.y) -> 4
                         else -> 0
                     }
                     // The title screen also lets the player swipe the start button
@@ -733,6 +853,7 @@ class GameView @JvmOverloads constructor(
             }
 
             MotionEvent.ACTION_MOVE -> {
+                if (state == State.PAUSED) return true
                 if (state == State.READY) {
                     // Draw a blade on the menu and let it cut the start button.
                     val menuNow = System.currentTimeMillis()
@@ -758,6 +879,16 @@ class GameView @JvmOverloads constructor(
 
             MotionEvent.ACTION_UP -> {
                 if (state == State.SETTLING) return true
+                if (state == State.PAUSED) {
+                    val released = pressedButton
+                    pressedButton = 0
+                    when {
+                        released == 1 && pauseResume.contains(event.x, event.y) -> resumeGame()
+                        released == 2 && pauseMenu.contains(event.x, event.y) -> returnToMenu()
+                    }
+                    if (released != 0 && settings.vibrationEnabled) haptics.tick(settings.vibrationStrength)
+                    return true
+                }
                 if (state != State.PLAYING) {
                     val released = pressedButton
                     pressedButton = 0
@@ -774,6 +905,10 @@ class GameView @JvmOverloads constructor(
                         released == 3 && tertiaryButton.contains(event.x, event.y) -> {
                             if (settings.vibrationEnabled) haptics.tick(settings.vibrationStrength)
                             onOpenSettings?.invoke()
+                        }
+                        released == 4 && overQuaternary.contains(event.x, event.y) -> {
+                            if (settings.vibrationEnabled) haptics.tick(settings.vibrationStrength)
+                            returnToMenu()
                         }
                     }
                     return true
@@ -1205,13 +1340,14 @@ class GameView @JvmOverloads constructor(
         drawPopups(canvas)
         // The HUD stays up through the settling beat so the final score is visible
         // right until the card takes over.
-        if (state == State.PLAYING || state == State.SETTLING) {
+        if (state == State.PLAYING || state == State.SETTLING || state == State.PAUSED) {
             drawHud(canvas)
         }
 
         when (state) {
             State.READY -> drawReadyScreen(canvas)
             State.GAME_OVER -> drawGameOverScreen(canvas)
+            State.PAUSED -> drawPauseScreen(canvas)
             State.PLAYING, State.SETTLING -> {}
         }
     }
@@ -1465,7 +1601,8 @@ class GameView @JvmOverloads constructor(
         val pad = 22f * density
         val barHeight = 13f * density
         val barTop = pad + 6f * density
-        val barWidth = width - pad * 2
+        // The bar stops short of the pause target rather than running under it.
+        val barWidth = width - pad * 2 - (PAUSE_BUTTON_SIZE + 12f) * density
 
         // Track
         roundRect.set(pad, barTop, pad + barWidth, barTop + barHeight)
@@ -1524,6 +1661,8 @@ class GameView @JvmOverloads constructor(
         uiBoldPaint.textSize = 14f * density
         uiBoldPaint.color = Theme.withAlpha(Theme.gold, 0.9f)
         canvas.drawText("STAGE ${stage + 1}", pad + barWidth, barTop + barHeight + 44f * density, uiBoldPaint)
+
+        drawPauseButton(canvas)
 
         // Score, centred and large.
         displayPaint.textAlign = Paint.Align.CENTER
@@ -1630,10 +1769,67 @@ class GameView @JvmOverloads constructor(
 
     // ---- Overlays ----
 
-    private fun drawReadyScreen(canvas: Canvas) {
-        // Lighter than the game-over scrim: the demo behind it should still read.
+    /** Two bars in a soft disc - small, dim, and out of the way until wanted. */
+    private fun drawPauseButton(canvas: Canvas) {
+        val cx = pauseButton.centerX()
+        val cy = pauseButton.centerY()
+        val r = pauseButton.width() / 2f
+
+        panelPaint.shader = null
+        panelPaint.alpha = 255
+        panelPaint.color = Theme.withAlpha(Color.WHITE, if (state == State.PAUSED) 0.18f else 0.10f)
+        canvas.drawCircle(cx, cy, r, panelPaint)
+
+        val barW = r * 0.24f
+        val barH = r * 0.86f
+        val gap = r * 0.22f
+        panelPaint.color = Theme.withAlpha(Color.WHITE, 0.78f)
+        roundRect.set(cx - gap - barW, cy - barH / 2f, cx - gap, cy + barH / 2f)
+        canvas.drawRoundRect(roundRect, barW / 2f, barW / 2f, panelPaint)
+        roundRect.set(cx + gap, cy - barH / 2f, cx + gap + barW, cy + barH / 2f)
+        canvas.drawRoundRect(roundRect, barW / 2f, barW / 2f, panelPaint)
+    }
+
+    private fun drawPauseScreen(canvas: Canvas) {
         scrimPaint.shader = null
-        scrimPaint.color = Color.argb(150, 4, 6, 14)
+        scrimPaint.color = Color.argb(200, 2, 3, 8)
+        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), scrimPaint)
+
+        val radius = 24f * density
+        panelPaint.shader = null
+        panelPaint.alpha = 255
+        panelPaint.color = Theme.card
+        canvas.drawRoundRect(pauseCard, radius, radius, panelPaint)
+        panelStrokePaint.color = Theme.hairline
+        canvas.drawRoundRect(pauseCard, radius, radius, panelStrokePaint)
+
+        val cx = pauseCard.centerX()
+
+        uiBoldPaint.textAlign = Paint.Align.CENTER
+        uiBoldPaint.textSize = 15f * density
+        uiBoldPaint.letterSpacing = 0.16f
+        uiBoldPaint.color = Theme.accent
+        canvas.drawText("PAUSED", cx, pauseCard.top + 34f * density, uiBoldPaint)
+        uiBoldPaint.letterSpacing = 0f
+
+        displayPaint.textAlign = Paint.Align.CENTER
+        displayPaint.textSize = 40f * density
+        displayPaint.color = Theme.textPrimary
+        canvas.drawText(score.toString(), cx, pauseCard.top + 82f * density, displayPaint)
+
+        uiPaint.textSize = 14f * density
+        uiPaint.color = Theme.textFaint
+        canvas.drawText("SCORE", cx, pauseCard.top + 100f * density, uiPaint)
+
+        drawButton(canvas, pauseResume, "RESUME", primary = true, pressed = pressedButton == 1)
+        drawButton(canvas, pauseMenu, "MAIN MENU", primary = false, pressed = pressedButton == 2)
+    }
+
+    private fun drawReadyScreen(canvas: Canvas) {
+        // The demo behind this is scenery, not the subject: held well back so the
+        // title and the buttons are what the eye lands on.
+        scrimPaint.shader = null
+        scrimPaint.color = Color.argb(216, 2, 3, 8)
         canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), scrimPaint)
 
         val cx = width / 2f
@@ -1657,7 +1853,7 @@ class GameView @JvmOverloads constructor(
         canvas.drawText("Tap PLAY - or slice straight through it.", cx, titleY + 100f * density, uiPaint)
 
         if (bestScore > 0) {
-            drawChip(canvas, cx, height * 0.45f, "BEST  $bestScore")
+            drawChip(canvas, cx, height * 0.43f, "BEST  $bestScore")
         }
 
         drawButton(canvas, primaryButton, "PLAY", primary = true, pressed = pressedButton == 1)
@@ -1778,9 +1974,11 @@ class GameView @JvmOverloads constructor(
         // Buttons come in last, once the card has finished settling.
         val buttonAlpha = revealAlpha(CARD_ROWS_AT + CARD_ROW_STAGGER * 5 + CARD_BREAKDOWN_STAGGER * 5)
         if (buttonAlpha > 0.01f) {
-            drawButton(canvas, primaryButton, "RETRY", primary = true, pressed = pressedButton == 1, alpha = buttonAlpha)
-            drawButton(canvas, secondaryButton, "HOW TO GET BETTER", primary = false, pressed = pressedButton == 2, alpha = buttonAlpha)
-            drawButton(canvas, tertiaryButton, "SETTINGS", primary = false, pressed = pressedButton == 3, alpha = buttonAlpha)
+            val small = 18f * density
+            drawButton(canvas, primaryButton, "RETRY", primary = true, pressed = pressedButton == 1, alpha = buttonAlpha, textSize = small)
+            drawButton(canvas, secondaryButton, "HOW TO PLAY", primary = false, pressed = pressedButton == 2, alpha = buttonAlpha, textSize = small)
+            drawButton(canvas, tertiaryButton, "SETTINGS", primary = false, pressed = pressedButton == 3, alpha = buttonAlpha, textSize = small)
+            drawButton(canvas, overQuaternary, "MAIN MENU", primary = false, pressed = pressedButton == 4, alpha = buttonAlpha, textSize = small)
         }
     }
 
@@ -1935,7 +2133,8 @@ class GameView @JvmOverloads constructor(
         label: String,
         primary: Boolean,
         pressed: Boolean,
-        alpha: Float = 1f
+        alpha: Float = 1f,
+        textSize: Float = 22f * density
     ) {
         val radius = rect.height() / 2f
         val inset = if (pressed) 2f * density else 0f
@@ -1963,7 +2162,7 @@ class GameView @JvmOverloads constructor(
         }
 
         uiBoldPaint.textAlign = Paint.Align.CENTER
-        uiBoldPaint.textSize = 22f * density
+        uiBoldPaint.textSize = textSize
         uiBoldPaint.color = Theme.withAlpha(
             if (primary) Color.rgb(6, 20, 26) else Theme.textPrimary, alpha
         )
@@ -1979,6 +2178,9 @@ class GameView @JvmOverloads constructor(
         /** Real seconds the critical-health countdown runs for. */
         /** Real seconds spent climbing linearly back to full speed afterwards. */
         /** Game-over card metrics, in dp - shared by the measure pass and the draw. */
+        /** Side of the square pause target, in dp. */
+        const val PAUSE_BUTTON_SIZE = 34f
+
         const val CARD_HEADER_HEIGHT = 156f
         const val CARD_STAT_ROW_HEIGHT = 26f
         const val CARD_BREAKDOWN_ROW_HEIGHT = 21f

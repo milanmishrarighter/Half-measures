@@ -233,6 +233,9 @@ class PixelBackground(private val random: Random) {
 
         /** Base palettes, one per difficulty stage, cycling once the list runs out. */
         private val STAGE_PALETTES = arrayOf(
+            // Stage one is near-black to match the backdrop: the embers are the only
+            // colour on screen until the score starts pulling the scene toward a hue.
+            intArrayOf(Color.rgb(0, 0, 0), Color.rgb(20, 30, 62), Color.rgb(74, 112, 178)),
             intArrayOf(Color.rgb(8, 12, 30), Color.rgb(34, 62, 130), Color.rgb(96, 150, 235)),
             intArrayOf(Color.rgb(10, 8, 32), Color.rgb(70, 40, 132), Color.rgb(160, 116, 240)),
             intArrayOf(Color.rgb(6, 20, 26), Color.rgb(24, 92, 96), Color.rgb(88, 210, 195)),

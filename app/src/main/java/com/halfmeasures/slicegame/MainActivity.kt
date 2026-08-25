@@ -26,6 +26,12 @@ class MainActivity : AppCompatActivity() {
         hideSystemBars()
     }
 
+    override fun onPause() {
+        super.onPause()
+        // Backgrounding mid-run should not cost the player the run.
+        gameView.pauseIfPlaying()
+    }
+
     override fun onResume() {
         super.onResume()
         gameView.refreshSettings()

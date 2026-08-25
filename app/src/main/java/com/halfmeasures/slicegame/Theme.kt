@@ -88,12 +88,14 @@ object Theme {
         }
 
     /**
-     * The colour the whole scene drifts through as the player levels up: deep
-     * indigo, through violet and magenta, out to teal and green. Used flat as the
-     * backdrop and blended into the shapes, so a level change reads as a shift in
-     * the light rather than as a banner.
+     * The colour the whole scene drifts through as the player levels up. It starts
+     * at true black - a fresh run is as dark as the screen goes - and only picks up
+     * a hue as the score climbs, so the colour itself is a read on how far you got.
+     * Used flat as the backdrop and blended into the shapes, so a level change reads
+     * as a shift in the light rather than as a banner.
      */
     private val stageRamp = intArrayOf(
+        Color.rgb(0, 0, 0),      // black - where every run starts
         Color.rgb(12, 16, 38),   // indigo
         Color.rgb(26, 16, 48),   // violet
         Color.rgb(40, 14, 46),   // plum
@@ -105,6 +107,7 @@ object Theme {
 
     /** Accent hues matching [stageRamp], for tinting the shapes and the horizon. */
     private val stageAccents = intArrayOf(
+        Color.rgb(72, 100, 210),
         Color.rgb(96, 132, 255),
         Color.rgb(150, 110, 255),
         Color.rgb(206, 104, 226),

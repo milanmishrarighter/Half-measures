@@ -4,7 +4,6 @@ import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.view.Gravity
-import android.view.View
 import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -13,9 +12,8 @@ import androidx.appcompat.app.AppCompatActivity
 import kotlin.math.roundToInt
 
 /**
- * The rules and the tactics, in short plain sentences. Reached from the title
- * screen and again from the game-over card, where the player has just been given
- * a reason to want it.
+ * Four questions, four answers. No cards, no rules, no separators - just a title
+ * and a paragraph, four times over, so it reads like a page instead of a form.
  */
 class InstructionsActivity : AppCompatActivity() {
 
@@ -28,162 +26,46 @@ class InstructionsActivity : AppCompatActivity() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Theme.bgBottom)
-            setPadding(dp(20f), dp(28f), dp(20f), dp(28f))
+            setPadding(dp(24f), dp(36f), dp(24f), dp(32f))
         }
 
-        root.addView(heading("HOW TO PLAY"))
-        root.addView(
-            subheading("Shapes fly up. Cut each one exactly in half.")
+        section(
+            root, "MAIN OBJECTIVE",
+            "All you have to do is cut all popping shapes into half, and make the " +
+                "highest score.\n\nThat's it. Simple."
         )
 
-        card(root, "THE BASICS", listOf(
-            "Swipe across a shape to slice it." to
-                "Your finger is the blade.",
-            "Aim for a dead 50/50 split." to
-                "The closer to half, the better everything goes.",
-            "Never let a shape get away." to
-                "One shape off the screen ends the run."
-        ))
+        section(
+            root, "HOW POINTS ARE CALCULATED",
+            "Every cut is judged on how close the two halves are.\n\n" +
+                "A dead 50/50 is PERFECT and pays the most. A 45/55 is close behind. " +
+                "A 60/40 still scores, but barely. Anything wider than that pays " +
+                "almost nothing.\n\n" +
+                "Streaks multiply whatever the cut was worth."
+        )
 
-        card(root, "HOW A CUT IS SCORED", listOf(
-            "PERFECT is a dead 50/50." to
-                "Worth the most points and heals you.",
-            "45/55 is a great cut." to
-                "Keeps your good streak alive.",
-            "60/40 is just okay." to
-                "It scores, but it breaks your streak.",
-            "70/30 and worse hurts." to
-                "The wider the miss, the more health it costs."
-        ))
+        section(
+            root, "HOW GAMES END",
+            "You start with 100 health.\n\n" +
+                "Bad cuts cost health, and the worse the cut the steeper the cost - " +
+                "a 60/40 stings, an 80/20 hurts badly. Letting a shape fall off the " +
+                "screen ends the run on the spot.\n\n" +
+                "Perfect cuts heal you back: 10 health for the first, 20 for two in a " +
+                "row, and ten in a row heals you completely."
+        )
 
-        card(root, "HEALTH", listOf(
-            "You start with 100 health." to
-                "Hit zero and the run is over.",
-            "Bad cuts cost health." to
-                "A 60/40 costs a little. A 80/20 costs a lot more.",
-            "Perfect cuts heal you." to
-                "First perfect heals 10. Two in a row heals 20. Ten in a row heals you fully.",
-            "Miss a perfect and the healing resets." to
-                "Your next perfect heals 10 again."
-        ))
+        section(
+            root, "HOW STREAKS WORK",
+            "There are two streaks and you can only have one at a time.\n\n" +
+                "PERFECT cuts in a row build a perfect streak - the biggest multiplier, " +
+                "and the thing that heals you. Cuts inside 45/55 build a good streak " +
+                "instead, worth less but easier to hold.\n\n" +
+                "They cancel each other out. A perfect ends a good streak, a good cut " +
+                "ends a perfect one, and anything wider ends both."
+        )
 
-        card(root, "STREAKS", listOf(
-            "Great cuts in a row build a good streak." to
-                "Each one adds to your score multiplier.",
-            "Perfect cuts build their own streak." to
-                "It pays more, and it is tracked separately.",
-            "The two streaks do not mix." to
-                "A perfect ends a good streak and starts a perfect one.",
-            "Sloppy cuts in a row cost you." to
-                "Keep missing and you start losing points."
-        ))
-
-        card(root, "AS YOU GET BETTER", listOf(
-            "The game levels up with your score." to
-                "The colours of everything shift each level.",
-            "More shapes share the screen." to
-                "And they spin faster.",
-            "Harder shapes arrive." to
-                "Stars and crosses are much harder to halve by eye."
-        ))
-
-        card(root, "HOW TO GET BETTER", listOf(
-            "Watch the shape, not your finger." to
-                "Pick your line before you swipe.",
-            "Cut at the top of the arc." to
-                "The shape is slowest there and easiest to read.",
-            "Cut through the middle, not the edge." to
-                "A cut near an edge is always a bad split.",
-            "For a spinning shape, wait." to
-                "Let it turn to a flat angle you can read.",
-            "Turn on the dotted guide while learning." to
-                "Settings shows a faint line through the perfect cut.",
-            "Slow the game down." to
-                "Settings can shrink the speed and spin until it clicks."
-        ))
-
-        root.addView(pillButton("GOT IT") { finish() })
-
-        setContentView(ScrollView(this).apply {
-            setBackgroundColor(Theme.bgBottom)
-            isFillViewport = true
-            addView(root)
-        })
-    }
-
-    private fun heading(text: String): View = TextView(this).apply {
-        this.text = text
-        typeface = Theme.display(this@InstructionsActivity)
-        setTextColor(Theme.textPrimary)
-        textSize = 24f
-    }
-
-    private fun subheading(text: String): View = TextView(this).apply {
-        this.text = text
-        typeface = Theme.ui(this@InstructionsActivity)
-        setTextColor(Theme.textFaint)
-        textSize = 15f
-        setPadding(0, dp(4f), 0, dp(20f))
-    }
-
-    /** A titled card of short rule/detail pairs. */
-    private fun card(parent: LinearLayout, title: String, rules: List<Pair<String, String>>) {
-        parent.addView(TextView(this).apply {
-            text = title
-            typeface = Theme.uiBold(this@InstructionsActivity)
-            setTextColor(Theme.accent)
-            textSize = 13f
-            letterSpacing = 0.16f
-            setPadding(dp(6f), 0, 0, dp(8f))
-        })
-
-        val body = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                cornerRadius = dp(18f).toFloat()
-                setColor(Theme.card)
-                setStroke(dp(1f), Theme.hairline)
-            }
-            setPadding(dp(18f), dp(14f), dp(18f), dp(16f))
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = dp(18f) }
-        }
-
-        rules.forEachIndexed { index, (rule, detail) ->
-            if (index > 0) {
-                // A hairline between rules so each one reads as its own point.
-                body.addView(View(this).apply {
-                    setBackgroundColor(Theme.hairline)
-                    layoutParams = LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT, dp(1f)
-                    ).apply {
-                        topMargin = dp(12f)
-                        bottomMargin = dp(12f)
-                    }
-                })
-            }
-            body.addView(TextView(this).apply {
-                text = rule
-                typeface = Theme.uiBold(this@InstructionsActivity)
-                setTextColor(Theme.textPrimary)
-                textSize = 17f
-            })
-            body.addView(TextView(this).apply {
-                text = detail
-                typeface = Theme.ui(this@InstructionsActivity)
-                setTextColor(Theme.textFaint)
-                textSize = 14f
-                setPadding(0, dp(2f), 0, 0)
-            })
-        }
-        parent.addView(body)
-    }
-
-    private fun pillButton(label: String, onClick: () -> Unit): TextView =
-        TextView(this).apply {
-            text = label
+        root.addView(TextView(this).apply {
+            text = "GOT IT"
             typeface = Theme.uiBold(this@InstructionsActivity)
             textSize = 17f
             gravity = Gravity.CENTER
@@ -198,7 +80,35 @@ class InstructionsActivity : AppCompatActivity() {
             isClickable = true
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = dp(4f) }
-            setOnClickListener { onClick() }
-        }
+            ).apply { topMargin = dp(20f) }
+            setOnClickListener { finish() }
+        })
+
+        setContentView(ScrollView(this).apply {
+            setBackgroundColor(Theme.bgBottom)
+            isFillViewport = true
+            addView(root)
+        })
+    }
+
+    /** A title and the paragraph under it. That is the whole layout. */
+    private fun section(parent: LinearLayout, title: String, body: String) {
+        parent.addView(TextView(this).apply {
+            text = title
+            typeface = Theme.display(this@InstructionsActivity)
+            setTextColor(Theme.textPrimary)
+            textSize = 19f
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = if (parent.childCount == 0) 0 else dp(34f) }
+        })
+        parent.addView(TextView(this).apply {
+            text = body
+            typeface = Theme.ui(this@InstructionsActivity)
+            setTextColor(Theme.textSecondary)
+            textSize = 16f
+            setLineSpacing(dp(3f).toFloat(), 1f)
+            setPadding(0, dp(10f), 0, 0)
+        })
+    }
 }

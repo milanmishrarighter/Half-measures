@@ -210,7 +210,7 @@ data class GameSettings(
         const val DEFAULT_POPUP_TEXT_SCALE = 1.5f
         const val DEFAULT_LAUNCH_CENTRE_CREEP = 0.05f
         const val DEFAULT_BACKGROUND_MOTION = 2.0f
-        const val DEFAULT_EMBER_DENSITY = 0.2f
+        const val DEFAULT_EMBER_DENSITY = 0.3f
         const val DEFAULT_EMBER_BRIGHTNESS = 0.4f
         const val DEFAULT_EMBER_SIZE = 0.4f
         const val DEFAULT_SCREEN_FLASH_STRENGTH = 0.6f
