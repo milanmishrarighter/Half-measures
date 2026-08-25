@@ -13,6 +13,14 @@ class MainActivity : AppCompatActivity() {
     private lateinit var gameView: GameView
     private lateinit var ads: RewardedAds
 
+    /**
+     * True from the moment an ad is asked for until it has answered. While it is
+     * set, this activity stops re-hiding the system bars: the game runs immersive,
+     * and leaving the bars hidden under someone else's full-screen activity is how
+     * an ad's close button ends up drawn where it cannot be tapped.
+     */
+    private var adShowing = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -27,7 +35,19 @@ class MainActivity : AppCompatActivity() {
                 startActivity(Intent(this@MainActivity, InstructionsActivity::class.java))
             }
             isRewardedAdReady = { ads.isReady() }
-            onWatchRewardedAd = { onEarned, onDeclined -> ads.show(onEarned, onDeclined) }
+            onWatchRewardedAd = { onEarned, onDeclined ->
+                beginAdPresentation()
+                ads.show(
+                    {
+                        endAdPresentation()
+                        onEarned()
+                    },
+                    { reason, backedOut ->
+                        endAdPresentation()
+                        onDeclined(reason, backedOut)
+                    }
+                )
+            }
         }
         setContentView(gameView)
         hideSystemBars()
@@ -35,15 +55,18 @@ class MainActivity : AppCompatActivity() {
 
     override fun onPause() {
         super.onPause()
-        // Backgrounding mid-run should not cost the player the run. An ad going
-        // full-screen also lands here, but by then the game is already parked in a
-        // waiting state, so there is nothing playing to pause.
+        // Backgrounding mid-run should not cost the player the run.
         gameView.pauseIfPlaying()
+        // And the game must stop rendering entirely. It used to keep its frame loop
+        // running behind whatever was in front, so a video ad was sharing the main
+        // thread with a full-speed game loop.
+        gameView.stopLoop()
     }
 
     override fun onResume() {
         super.onResume()
         gameView.refreshSettings()
+        gameView.startLoop()
         gameView.checkStrandedAd()
     }
 
@@ -54,7 +77,28 @@ class MainActivity : AppCompatActivity() {
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (hasFocus) hideSystemBars()
+        if (hasFocus && !adShowing) hideSystemBars()
+    }
+
+    private fun beginAdPresentation() {
+        adShowing = true
+        showSystemBars()
+    }
+
+    private fun endAdPresentation() {
+        adShowing = false
+        hideSystemBars()
+    }
+
+    private fun showSystemBars() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window.insetsController?.show(
+                WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars()
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+        }
     }
 
     private fun hideSystemBars() {

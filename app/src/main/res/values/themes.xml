@@ -1,5 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!--
+        Fullscreen lives on this theme only, and this theme is applied to our three
+        activities by name. It is deliberately NOT the application-wide theme: the
+        ads SDK adds its own activities, and handing them a fullscreen theme is a
+        good way to end up with an ad whose close button sits outside the window.
+    -->
     <style name="Theme.HalfMeasures" parent="Theme.AppCompat.NoActionBar">
         <item name="android:windowFullscreen">true</item>
         <item name="android:windowContentOverlay">@null</item>

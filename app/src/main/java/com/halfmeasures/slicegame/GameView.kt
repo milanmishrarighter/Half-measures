@@ -135,6 +135,8 @@ class GameView @JvmOverloads constructor(
     private var unlockedKinds = 0
 
     private var lastFrameTimeNanos = 0L
+    /** Whether the frame loop is running. Owned by the activity's lifecycle. */
+    private var loopRunning = false
     /**
      * Seconds until the next shape is thrown in. Counted down in *game* time, so
      * slow motion holds the queue back instead of letting a crowd pile up and
@@ -288,16 +290,35 @@ class GameView @JvmOverloads constructor(
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
-        lastFrameTimeNanos = 0L
-        Choreographer.getInstance().postFrameCallback(this)
+        startLoop()
     }
 
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
+        stopLoop()
+    }
+
+    /**
+     * The frame loop is now owned by the activity's lifecycle rather than running
+     * for the life of the process. It used to keep ticking and invalidating while
+     * another activity was in front - which, with a video ad on top, meant this
+     * view was competing with the ad's own UI for the one main thread they share.
+     */
+    fun startLoop() {
+        if (loopRunning) return
+        loopRunning = true
+        lastFrameTimeNanos = 0L
+        Choreographer.getInstance().postFrameCallback(this)
+    }
+
+    fun stopLoop() {
+        if (!loopRunning) return
+        loopRunning = false
         Choreographer.getInstance().removeFrameCallback(this)
     }
 
     override fun doFrame(frameTimeNanos: Long) {
+        if (!loopRunning) return
         if (lastFrameTimeNanos == 0L) lastFrameTimeNanos = frameTimeNanos
         var realDt = (frameTimeNanos - lastFrameTimeNanos) / 1_000_000_000f
         lastFrameTimeNanos = frameTimeNanos
@@ -796,8 +817,14 @@ class GameView @JvmOverloads constructor(
      * Dangling the option in front of a player who is offline, and then failing,
      * would be worse than never offering.
      */
-    private fun canOfferContinue(): Boolean =
-        continuesUsed < settings.continuesPerRun && isRewardedAdReady?.invoke() == true
+    private fun canOfferContinue(): Boolean {
+        if (!settings.continuesEnabled) return false
+        // A cap of zero means no cap: a good run can be bought back as many times
+        // as the player is willing to sit through an ad for.
+        val cap = settings.continuesPerRun
+        if (cap > 0 && continuesUsed >= cap) return false
+        return isRewardedAdReady?.invoke() == true
+    }
 
     private fun enterGameOver() {
         state = State.GAME_OVER

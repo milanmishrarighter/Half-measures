@@ -119,7 +119,9 @@ data class GameSettings(
     var lowHealthAt: Int = DEFAULT_LOW_HEALTH_AT,
 
     // ---- Ads ----
-    /** How many times one run may be revived by watching an ad. 0 turns it off. */
+    /** Whether dying offers a watch-an-ad-to-carry-on card at all. */
+    var continuesEnabled: Boolean = DEFAULT_CONTINUES_ENABLED,
+    /** Cap on continues in one run. 0 means no cap - every death offers one. */
     var continuesPerRun: Int = DEFAULT_CONTINUES_PER_RUN,
     /** Every Nth game of a session needs an ad before it will start. 0 turns it off. */
     var adGateEvery: Int = DEFAULT_AD_GATE_EVERY,
@@ -175,6 +177,7 @@ data class GameSettings(
             .putFloat("slow_mo_duration", slowMoDuration)
             .putBoolean("low_health_slow_mo", lowHealthSlowMo)
             .putInt("low_health_at", lowHealthAt)
+            .putBoolean("continues_enabled", continuesEnabled)
             .putInt("continues_per_run", continuesPerRun)
             .putInt("ad_gate_every", adGateEvery)
             .putFloat("continue_health_fraction", continueHealthFraction)
@@ -230,7 +233,10 @@ data class GameSettings(
         const val DEFAULT_SLOW_MO_DURATION = 2.6f
         const val DEFAULT_LOW_HEALTH_SLOW_MO = true
         const val DEFAULT_LOW_HEALTH_AT = 20
-        const val DEFAULT_CONTINUES_PER_RUN = 1
+        const val DEFAULT_CONTINUES_ENABLED = true
+
+        /** No cap: a run can be bought back on every death. */
+        const val DEFAULT_CONTINUES_PER_RUN = 0
         const val DEFAULT_AD_GATE_EVERY = 10
         const val DEFAULT_CONTINUE_HEALTH_FRACTION = 1.0f
 
@@ -372,6 +378,7 @@ data class GameSettings(
                 slowMoDuration = p.getFloat("slow_mo_duration", DEFAULT_SLOW_MO_DURATION),
                 lowHealthSlowMo = p.getBoolean("low_health_slow_mo", DEFAULT_LOW_HEALTH_SLOW_MO),
                 lowHealthAt = p.getInt("low_health_at", DEFAULT_LOW_HEALTH_AT),
+                continuesEnabled = p.getBoolean("continues_enabled", DEFAULT_CONTINUES_ENABLED),
                 continuesPerRun = p.getInt("continues_per_run", DEFAULT_CONTINUES_PER_RUN),
                 adGateEvery = p.getInt("ad_gate_every", DEFAULT_AD_GATE_EVERY),
                 continueHealthFraction =

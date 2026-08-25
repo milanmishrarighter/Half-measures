@@ -334,12 +334,17 @@ class SettingsActivity : AppCompatActivity() {
 
         card("ADS").let { c ->
             root.addView(c.wrapper)
+            toggle(
+                c.body, "Offer a continue when you die",
+                "Watch an ad and carry on with the same score instead of going to the scorecard.",
+                settings.continuesEnabled
+            ) { settings.continuesEnabled = it }
             slider(
                 c.body, "Continues per run",
-                "When you die you can watch an ad to carry on with the same score. This is how many times that is offered in one run.",
+                "How many times one run can be bought back. Leave it at no limit and a good run can go on as long as you keep watching.",
                 GameSettings.MIN_CONTINUES_PER_RUN.toFloat(), GameSettings.MAX_CONTINUES_PER_RUN.toFloat(),
                 settings.continuesPerRun.toFloat(),
-                { if (it.roundToInt() == 0) "Off" else "${it.roundToInt()}" },
+                { if (it.roundToInt() == 0) "No limit" else "${it.roundToInt()}" },
                 { settings.continuesPerRun = it.roundToInt() }
             )
             slider(
@@ -616,7 +621,8 @@ class SettingsActivity : AppCompatActivity() {
             appendLine("  How hard it buzzes: ${(settings.vibrationStrength * 100).roundToInt()}%")
             appendLine()
             appendLine("ADS")
-            appendLine("  Continues per run: ${settings.continuesPerRun}")
+            appendLine("  Offer a continue when you die: ${onOff(settings.continuesEnabled)}")
+            appendLine("  Continues per run: ${if (settings.continuesPerRun == 0) "No limit" else "${settings.continuesPerRun}"}")
             appendLine("  Health you come back with: ${(settings.continueHealthFraction * 100).roundToInt()}%")
             appendLine("  Ad before every Nth game: ${settings.adGateEvery}")
         }
