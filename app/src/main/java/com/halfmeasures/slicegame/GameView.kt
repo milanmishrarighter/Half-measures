@@ -42,8 +42,6 @@ class GameView @JvmOverloads constructor(
      */
     enum class State {
         READY, PLAYING, PAUSED, SETTLING,
-        /** Died, but an ad could buy the run back. Times out into GAME_OVER. */
-        CONTINUE_OFFER,
         /** Every Nth game of a session asks for an ad before it will start. */
         AD_GATE,
         /** An ad is on screen; the game is parked until it answers. */
@@ -110,8 +108,8 @@ class GameView @JvmOverloads constructor(
     // ---- Ads ----
     /** Continues already spent on this run. */
     private var continuesUsed = 0
-    /** Seconds left on the continue offer before it declines itself. */
-    private var offerTimer = 0f
+    /** Whether the score card is currently showing its continue button. */
+    private var continueOffered = false
     /** Seconds left of the 3-2-1 before a continued run resumes. */
     private var resumeCountdown = 0f
     /** Where to go back to if the player walks away from the ad gate. */
@@ -188,6 +186,8 @@ class GameView @JvmOverloads constructor(
     private val overTertiary = RectF()
     /** The game-over card carries a fourth button back to the title screen. */
     private val overQuaternary = RectF()
+    /** The ad-backed continue, drawn above RETRY only when one is available. */
+    private val overContinue = RectF()
     private val gameOverCard = RectF()
     /** The pause target in the top-right corner, live only during play. */
     private val pauseButton = RectF()
@@ -201,19 +201,19 @@ class GameView @JvmOverloads constructor(
     private val primaryButton: RectF get() = when (state) {
         State.GAME_OVER -> overPrimary
         State.PAUSED -> pauseResume
-        State.CONTINUE_OFFER, State.AD_GATE -> adPrimary
+        State.AD_GATE -> adPrimary
         else -> readyPrimary
     }
     private val secondaryButton: RectF get() = when (state) {
         State.GAME_OVER -> overSecondary
         State.PAUSED -> pauseMenu
-        State.CONTINUE_OFFER, State.AD_GATE -> adSecondary
+        State.AD_GATE -> adSecondary
         else -> readySecondary
     }
 
     /** The states that are a card with two buttons and nothing else running. */
     private fun isOverlayState(): Boolean =
-        state == State.PAUSED || state == State.CONTINUE_OFFER || state == State.AD_GATE
+        state == State.PAUSED || state == State.AD_GATE
     private val tertiaryButton: RectF get() = if (state == State.GAME_OVER) overTertiary else readyTertiary
     private var pressedButton = 0 // 0 none, 1 primary, 2 secondary, 3 tertiary, 4 quaternary
 
@@ -334,12 +334,9 @@ class GameView @JvmOverloads constructor(
         }
 
         adNoticeAge += realDt
-        // These two run on real time: they are announcements to the player, not
-        // part of the simulation, so slow motion must not stretch them.
-        if (state == State.CONTINUE_OFFER) {
-            offerTimer -= realDt
-            if (offerTimer <= 0f) enterGameOver()
-        } else if (state == State.RESUMING) {
+        // Real time: this is an announcement to the player, not part of the
+        // simulation, so slow motion must not stretch it.
+        if (state == State.RESUMING) {
             resumeCountdown -= realDt
             if (resumeCountdown <= 0f) {
                 state = State.PLAYING
@@ -430,21 +427,7 @@ class GameView @JvmOverloads constructor(
             cx + buttonWidth / 2f, readyTop + buttonHeight * 3 + buttonGap * 2
         )
 
-        // Four buttons have to fit under the card now, so they are shorter and
-        // tighter than the title screen's three.
-        val overHeight = 46f * density
-        val overGap = 10f * density
-        val cardHeight = measureGameOverCard()
-        val cardGap = 20f * density
-        val blockHeight = cardHeight + cardGap + overHeight * 4 + overGap * 3
-        val blockTop = ((h - blockHeight) / 2f).coerceAtLeast(16f * density)
-
-        gameOverCard.set(w * 0.09f, blockTop, w * 0.91f, blockTop + cardHeight)
-        var overTop = gameOverCard.bottom + cardGap
-        for (rect in arrayOf(overPrimary, overSecondary, overTertiary, overQuaternary)) {
-            rect.set(cx - buttonWidth / 2f, overTop, cx + buttonWidth / 2f, overTop + overHeight)
-            overTop += overHeight + overGap
-        }
+        layoutGameOverBlock()
 
         layoutPauseOverlay(w, h, buttonWidth, buttonHeight, buttonGap)
 
@@ -461,6 +444,51 @@ class GameView @JvmOverloads constructor(
             cx - adInner / 2f, adFirstTop + buttonHeight + buttonGap,
             cx + adInner / 2f, adFirstTop + buttonHeight * 2 + buttonGap
         )
+    }
+
+    /**
+     * The card and everything stacked under it, centred as one block. The stack is
+     * four short buttons, plus the ad-backed continue above them when there is one
+     * to offer - so this has to be redone whenever that availability changes, not
+     * only when the view is resized.
+     */
+    private fun layoutGameOverBlock() {
+        val w = width
+        val h = height
+        if (w <= 0 || h <= 0) return
+
+        val cx = w / 2f
+        val buttonWidth = min(w * 0.72f, 300f * density)
+        // Four buttons have to fit under the card, so they are shorter and tighter
+        // than the title screen's three. The continue is taller: it is the offer.
+        val overHeight = 46f * density
+        val overGap = 10f * density
+        val continueHeight = 56f * density
+        val captionHeight = 22f * density
+        val continueBlock =
+            if (continueOffered) captionHeight + continueHeight + overGap + 8f * density else 0f
+
+        val cardHeight = measureGameOverCard()
+        val cardGap = 20f * density
+        val blockHeight = cardHeight + cardGap + continueBlock + overHeight * 4 + overGap * 3
+        val blockTop = ((h - blockHeight) / 2f).coerceAtLeast(12f * density)
+
+        gameOverCard.set(w * 0.09f, blockTop, w * 0.91f, blockTop + cardHeight)
+        var top = gameOverCard.bottom + cardGap
+
+        if (continueOffered) {
+            top += captionHeight
+            overContinue.set(cx - buttonWidth / 2f, top, cx + buttonWidth / 2f, top + continueHeight)
+            top += continueHeight + overGap + 8f * density
+        } else {
+            // An empty rect can never be hit-tested, which is the point.
+            overContinue.setEmpty()
+        }
+
+        for (rect in arrayOf(overPrimary, overSecondary, overTertiary, overQuaternary)) {
+            rect.set(cx - buttonWidth / 2f, top, cx + buttonWidth / 2f, top + overHeight)
+            top += overHeight + overGap
+        }
     }
 
     /**
@@ -802,13 +830,7 @@ class GameView @JvmOverloads constructor(
         settleTimer += dt
         if (shapes.isEmpty() || settleTimer > SETTLE_MAX_SECONDS) {
             shapes.clear()
-            if (canOfferContinue()) {
-                state = State.CONTINUE_OFFER
-                offerTimer = AdConfig.CONTINUE_OFFER_SECONDS
-                pressedButton = 0
-            } else {
-                enterGameOver()
-            }
+            enterGameOver()
         }
     }
 
@@ -831,6 +853,24 @@ class GameView @JvmOverloads constructor(
         cardReveal = 0f
         fireworkTimer = 0f
         pressedButton = 0
+        refreshContinueOffer()
+    }
+
+    /**
+     * Whether the card shows its continue button, and where everything under the
+     * card then sits. Recomputed on arriving at the card and again after an ad,
+     * since spending one may leave nothing loaded to offer next time.
+     */
+    private fun refreshContinueOffer() {
+        continueOffered = canOfferContinue()
+        layoutGameOverBlock()
+    }
+
+    /** Back to the card after a declined ad, without replaying its reveal. */
+    private fun returnToCard() {
+        state = State.GAME_OVER
+        pressedButton = 0
+        refreshContinueOffer()
     }
 
     /**
@@ -906,7 +946,7 @@ class GameView @JvmOverloads constructor(
             adNoticeAge = 0f
         }
         when (purpose) {
-            AdPurpose.CONTINUE -> if (earned) grantContinue() else enterGameOver()
+            AdPurpose.CONTINUE -> if (earned) grantContinue() else returnToCard()
             AdPurpose.GATE -> {
                 // Backing out of an ad that was there to watch puts the gate back
                 // up. An ad that would not play is not the player's fault, so the
@@ -1067,6 +1107,8 @@ class GameView @JvmOverloads constructor(
                         secondaryButton.contains(event.x, event.y) -> 2
                         tertiaryButton.contains(event.x, event.y) -> 3
                         state == State.GAME_OVER && overQuaternary.contains(event.x, event.y) -> 4
+                        state == State.GAME_OVER && continueOffered &&
+                            overContinue.contains(event.x, event.y) -> 5
                         else -> 0
                     }
                     // The title screen also lets the player swipe the start button
@@ -1126,10 +1168,6 @@ class GameView @JvmOverloads constructor(
                             if (onPrimary) resumeGame()
                             if (onSecondary) returnToMenu()
                         }
-                        State.CONTINUE_OFFER -> {
-                            if (onPrimary) requestAd(AdPurpose.CONTINUE)
-                            if (onSecondary) enterGameOver()
-                        }
                         State.AD_GATE -> {
                             if (onPrimary) requestAd(AdPurpose.GATE)
                             // Walking away from the gate goes back where they came
@@ -1160,6 +1198,10 @@ class GameView @JvmOverloads constructor(
                         released == 4 && overQuaternary.contains(event.x, event.y) -> {
                             if (settings.vibrationEnabled) haptics.tick(settings.vibrationStrength)
                             returnToMenu()
+                        }
+                        released == 5 && overContinue.contains(event.x, event.y) -> {
+                            if (settings.vibrationEnabled) haptics.great(settings.vibrationStrength)
+                            requestAd(AdPurpose.CONTINUE)
                         }
                     }
                     return true
@@ -1601,7 +1643,6 @@ class GameView @JvmOverloads constructor(
             State.READY -> drawReadyScreen(canvas)
             State.GAME_OVER -> drawGameOverScreen(canvas)
             State.PAUSED -> drawPauseScreen(canvas)
-            State.CONTINUE_OFFER -> drawContinueOffer(canvas)
             State.AD_GATE -> drawAdGate(canvas)
             State.AD_PENDING -> drawAdPending(canvas)
             State.RESUMING -> drawResumeCountdown(canvas)
@@ -2140,44 +2181,81 @@ class GameView @JvmOverloads constructor(
         if (line.isNotEmpty()) canvas.drawText(line.toString(), cx, y, paint)
     }
 
-    private fun drawContinueOffer(canvas: Canvas) {
-        drawAdCard(
-            canvas,
-            "SECOND CHANCE", Theme.gold,
-            "KEEP GOING?",
-            "Watch a short ad and carry on from $score with a fresh health bar."
-        )
+    /**
+     * The continue, sold rather than merely listed: taller than its neighbours,
+     * gold instead of teal, breathing behind a soft halo. The caption above it and
+     * the badge on it both say an ad is coming, because a glowing button that costs
+     * thirty seconds of the player's time must never be pressed by surprise.
+     */
+    private fun drawContinueButton(canvas: Canvas, alpha: Float) {
+        if (!continueOffered || overContinue.isEmpty) return
 
-        val cx = adCard.centerX()
-
-        // A draining bar, because the offer expires. The number under it says how
-        // long is left in plain seconds so the pressure is legible, not just felt.
-        val fraction = (offerTimer / AdConfig.CONTINUE_OFFER_SECONDS).coerceIn(0f, 1f)
-        val barWidth = adCard.width() - 56f * density
-        val barLeft = cx - barWidth / 2f
-        val barTop = adCard.top + 152f * density
-        val barHeight = 7f * density
-
-        panelPaint.shader = null
-        panelPaint.alpha = 255
-        roundRect.set(barLeft, barTop, barLeft + barWidth, barTop + barHeight)
-        panelPaint.color = Theme.withAlpha(Color.WHITE, 0.10f)
-        canvas.drawRoundRect(roundRect, barHeight / 2f, barHeight / 2f, panelPaint)
-
-        roundRect.set(barLeft, barTop, barLeft + barWidth * fraction, barTop + barHeight)
-        panelPaint.color = if (fraction < 0.3f) Theme.danger else Theme.gold
-        canvas.drawRoundRect(roundRect, barHeight / 2f, barHeight / 2f, panelPaint)
+        val rect = overContinue
+        val pressed = pressedButton == 5
+        val pulse = 0.5f + 0.5f * sin(elapsed * 3.2f)
+        val radius = rect.height() / 2f
 
         uiBoldPaint.textAlign = Paint.Align.CENTER
-        uiBoldPaint.textSize = 14f * density
-        uiBoldPaint.color = Theme.textFaint
-        canvas.drawText(
-            "${ceil(offerTimer.toDouble()).toInt().coerceAtLeast(0)}s",
-            cx, barTop + 26f * density, uiBoldPaint
-        )
+        uiBoldPaint.textSize = 12f * density
+        uiBoldPaint.letterSpacing = 0.22f
+        uiBoldPaint.color = Theme.withAlpha(Theme.gold, (0.55f + 0.35f * pulse) * alpha)
+        canvas.drawText("WATCH A SHORT AD", rect.centerX(), rect.top - 10f * density, uiBoldPaint)
+        uiBoldPaint.letterSpacing = 0f
 
-        drawButton(canvas, adPrimary, "WATCH AD", primary = true, pressed = pressedButton == 1)
-        drawButton(canvas, adSecondary, "NO THANKS", primary = false, pressed = pressedButton == 2)
+        // Three haloes rather than a blur mask filter: hardware accelerated, and
+        // the layering is what makes it read as glow instead of a fat outline.
+        panelPaint.shader = null
+        for (i in 3 downTo 1) {
+            val spread = i * 5f * density * (0.7f + 0.3f * pulse)
+            roundRect.set(
+                rect.left - spread, rect.top - spread,
+                rect.right + spread, rect.bottom + spread
+            )
+            panelPaint.color = Theme.withAlpha(Theme.gold, (0.11f / i) * (0.55f + 0.45f * pulse) * alpha)
+            canvas.drawRoundRect(roundRect, radius + spread, radius + spread, panelPaint)
+        }
+
+        val inset = if (pressed) 2f * density else 0f
+        roundRect.set(rect.left + inset, rect.top + inset, rect.right - inset, rect.bottom - inset)
+        panelPaint.shader = LinearGradient(
+            roundRect.left, roundRect.top, roundRect.right, roundRect.bottom,
+            Theme.withAlpha(Theme.gold, alpha), Theme.withAlpha(Theme.goldDeep, alpha),
+            Shader.TileMode.CLAMP
+        )
+        // The shader is modulated by the paint's own alpha, and the haloes above
+        // just left it low.
+        panelPaint.alpha = 255
+        canvas.drawRoundRect(roundRect, radius, radius, panelPaint)
+        panelPaint.shader = null
+        panelPaint.alpha = 255
+
+        panelStrokePaint.color =
+            Theme.withAlpha(Theme.lighten(Theme.gold, 0.65f), (0.4f + 0.45f * pulse) * alpha)
+        canvas.drawRoundRect(roundRect, radius, radius, panelStrokePaint)
+        panelStrokePaint.color = Theme.hairline
+
+        uiBoldPaint.textAlign = Paint.Align.CENTER
+        uiBoldPaint.textSize = 21f * density
+        uiBoldPaint.color = Theme.withAlpha(INK_ON_GOLD, alpha)
+        val baseline = roundRect.centerY() - (uiBoldPaint.descent() + uiBoldPaint.ascent()) / 2f
+        canvas.drawText("CONTINUE", roundRect.centerX(), baseline, uiBoldPaint)
+
+        // A small stamped AD tag on the trailing end of the button.
+        val badgeHeight = 18f * density
+        val badgeWidth = 32f * density
+        val badgeRight = rect.right - 14f * density
+        roundRect.set(
+            badgeRight - badgeWidth, rect.centerY() - badgeHeight / 2f,
+            badgeRight, rect.centerY() + badgeHeight / 2f
+        )
+        panelPaint.color = Theme.withAlpha(INK_ON_GOLD, 0.5f * alpha)
+        canvas.drawRoundRect(roundRect, badgeHeight / 2f, badgeHeight / 2f, panelPaint)
+
+        uiBoldPaint.textSize = 11f * density
+        uiBoldPaint.letterSpacing = 0.16f
+        uiBoldPaint.color = Theme.withAlpha(Theme.gold, alpha)
+        canvas.drawText("AD", roundRect.centerX(), roundRect.centerY() + 4f * density, uiBoldPaint)
+        uiBoldPaint.letterSpacing = 0f
     }
 
     private fun drawAdGate(canvas: Canvas) {
@@ -2397,6 +2475,7 @@ class GameView @JvmOverloads constructor(
         // Buttons come in last, once the card has finished settling.
         val buttonAlpha = revealAlpha(CARD_ROWS_AT + CARD_ROW_STAGGER * 5 + CARD_BREAKDOWN_STAGGER * 5)
         if (buttonAlpha > 0.01f) {
+            drawContinueButton(canvas, buttonAlpha)
             val small = 18f * density
             drawButton(canvas, primaryButton, "RETRY", primary = true, pressed = pressedButton == 1, alpha = buttonAlpha, textSize = small)
             drawButton(canvas, secondaryButton, "HOW TO PLAY", primary = false, pressed = pressedButton == 2, alpha = buttonAlpha, textSize = small)
@@ -2617,6 +2696,9 @@ class GameView @JvmOverloads constructor(
         const val CARD_BOTTOM_PADDING = 26f
 
         val EMERGENCY_RED = Color.rgb(255, 62, 74)
+
+        /** Text and stamps on top of a gold fill. */
+        val INK_ON_GOLD = Color.rgb(42, 24, 0)
 
         /** Seconds the last-cut readout stays under the score. */
         /** How far a shape's colour is pulled toward the level's hue. */

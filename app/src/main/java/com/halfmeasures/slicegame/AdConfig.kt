@@ -35,9 +35,6 @@ object AdConfig {
             LIVE_REWARDED_UNIT_ID
         }
 
-    /** Seconds the "continue your run?" offer stays up before it declines itself. */
-    const val CONTINUE_OFFER_SECONDS = 10f
-
     /** Seconds counted down on screen before a continued run picks back up. */
     const val RESUME_COUNTDOWN_SECONDS = 3f
 }
