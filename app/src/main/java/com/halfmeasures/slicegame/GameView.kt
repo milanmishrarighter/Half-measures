@@ -63,7 +63,9 @@ class GameView @JvmOverloads constructor(
      * genuinely earned; the second fires on every other outcome, with a reason and
      * whether the user backed out themselves (as opposed to the ad failing).
      */
-    var onWatchRewardedAd: ((() -> Unit, (String, Boolean) -> Unit) -> Unit)? = null
+    var onWatchRewardedAd: ((() -> Unit, (String, Boolean) -> Unit, () -> Unit) -> Unit)? = null
+    /** Abandons an ad that was asked for but never appeared. */
+    var onCancelPendingAd: (() -> Unit)? = null
     /** Whether an ad is loaded right now. Nothing is offered when it is not. */
     var isRewardedAdReady: (() -> Boolean)? = null
 
@@ -118,6 +120,18 @@ class GameView @JvmOverloads constructor(
     /** A short line explaining why an ad did not pay out, if one did not. */
     private var adNotice = ""
     private var adNoticeAge = 99f
+    /** Seconds spent on the waiting screen without an ad appearing. */
+    private var adPendingAge = 0f
+    /** True once the ad's own screen is up, so there is a reward to lose. */
+    private var adPresented = false
+    /** True while the "skip the reward?" confirmation is up. */
+    private var confirmingAdExit = false
+    /**
+     * Bumped for every ad asked for. A cancelled request's callbacks can still
+     * arrive afterwards - the SDK does not know we walked away - and without this
+     * a late reward would restart a run the player had already left.
+     */
+    private var adRequestId = 0
 
     // ---- Last-cut readout, shown under the score rather than over the action ----
     private var lastCutLabel = ""
@@ -198,6 +212,10 @@ class GameView @JvmOverloads constructor(
     private val adCard = RectF()
     private val adPrimary = RectF()
     private val adSecondary = RectF()
+    /** The way out of the waiting screen, and the two confirmation answers. */
+    private val adCancel = RectF()
+    private val adConfirmLeave = RectF()
+    private val adConfirmStay = RectF()
     private val primaryButton: RectF get() = when (state) {
         State.GAME_OVER -> overPrimary
         State.PAUSED -> pauseResume
@@ -328,6 +346,13 @@ class GameView @JvmOverloads constructor(
             // A pause stops the world outright: no simulation, no timers, no embers.
             // Only the overlay is redrawn, so the run resumes exactly where it stood.
             // An ad is the same thing with someone else's screen on top.
+            if (state == State.AD_PENDING && !adPresented) {
+                // This only counts while the waiting screen is actually in front:
+                // once the ad appears, the activity pauses and the loop stops. So a
+                // long ad can never time out - only an ad that never arrives.
+                adPendingAge += realDt
+                if (adPendingAge > AD_WAIT_TIMEOUT) cancelPendingAd("Ad did not load")
+            }
             invalidate()
             Choreographer.getInstance().postFrameCallback(this)
             return
@@ -437,6 +462,25 @@ class GameView @JvmOverloads constructor(
         val adHeight = 208f * density + buttonHeight * 2 + buttonGap
         val adTop = (h - adHeight) / 2f
         adCard.set(cx - adWidth / 2f, adTop, cx + adWidth / 2f, adTop + adHeight)
+        // The waiting screen: one cancel button low on the screen, and a pair of
+        // answers in the middle for the confirmation that can replace it.
+        val cancelWidth = min(w * 0.5f, 200f * density)
+        val cancelHeight = 46f * density
+        adCancel.set(
+            cx - cancelWidth / 2f, h * 0.68f,
+            cx + cancelWidth / 2f, h * 0.68f + cancelHeight
+        )
+        val confirmWidth = min(w * 0.62f, 260f * density)
+        val confirmTop = h * 0.52f
+        adConfirmLeave.set(
+            cx - confirmWidth / 2f, confirmTop,
+            cx + confirmWidth / 2f, confirmTop + cancelHeight
+        )
+        adConfirmStay.set(
+            cx - confirmWidth / 2f, confirmTop + cancelHeight + 10f * density,
+            cx + confirmWidth / 2f, confirmTop + cancelHeight * 2 + 10f * density
+        )
+
         val adInner = min(buttonWidth, adWidth - 40f * density)
         val adFirstTop = adTop + 188f * density
         adPrimary.set(cx - adInner / 2f, adFirstTop, cx + adInner / 2f, adFirstTop + buttonHeight)
@@ -458,37 +502,44 @@ class GameView @JvmOverloads constructor(
         if (w <= 0 || h <= 0) return
 
         val cx = w / 2f
-        val buttonWidth = min(w * 0.72f, 300f * density)
-        // Four buttons have to fit under the card, so they are shorter and tighter
-        // than the title screen's three. The continue is taller: it is the offer.
-        val overHeight = 46f * density
-        val overGap = 10f * density
-        val continueHeight = 56f * density
-        val captionHeight = 22f * density
-        val continueBlock =
-            if (continueOffered) captionHeight + continueHeight + overGap + 8f * density else 0f
+        // Three rows instead of a column of five. Two-up rows halve the height the
+        // stack needs, which is what was pushing the bottom buttons off screen.
+        val blockWidth = min(w * 0.86f, 380f * density)
+        val gap = 10f * density
+        val halfWidth = (blockWidth - gap) / 2f
+        val rowHeight = GAME_OVER_BUTTON_HEIGHT * density
+        val captionHeight = if (continueOffered) 20f * density else 0f
 
         val cardHeight = measureGameOverCard()
-        val cardGap = 20f * density
-        val blockHeight = cardHeight + cardGap + continueBlock + overHeight * 4 + overGap * 3
+        val cardGap = 18f * density
+        val blockHeight = cardHeight + cardGap + captionHeight + rowHeight * 3 + gap * 2
         val blockTop = ((h - blockHeight) / 2f).coerceAtLeast(12f * density)
 
         gameOverCard.set(w * 0.09f, blockTop, w * 0.91f, blockTop + cardHeight)
-        var top = gameOverCard.bottom + cardGap
 
+        val left = cx - blockWidth / 2f
+        val right = cx + blockWidth / 2f
+        var top = gameOverCard.bottom + cardGap + captionHeight
+
+        // Row one: retry on the left, the ad-backed continue on the right. With no
+        // continue to offer, retry takes the whole row rather than leaving a hole.
         if (continueOffered) {
-            top += captionHeight
-            overContinue.set(cx - buttonWidth / 2f, top, cx + buttonWidth / 2f, top + continueHeight)
-            top += continueHeight + overGap + 8f * density
+            overPrimary.set(left, top, left + halfWidth, top + rowHeight)
+            overContinue.set(right - halfWidth, top, right, top + rowHeight)
         } else {
+            overPrimary.set(left, top, right, top + rowHeight)
             // An empty rect can never be hit-tested, which is the point.
             overContinue.setEmpty()
         }
+        top += rowHeight + gap
 
-        for (rect in arrayOf(overPrimary, overSecondary, overTertiary, overQuaternary)) {
-            rect.set(cx - buttonWidth / 2f, top, cx + buttonWidth / 2f, top + overHeight)
-            top += overHeight + overGap
-        }
+        // Row two: the two side trips.
+        overSecondary.set(left, top, left + halfWidth, top + rowHeight)
+        overTertiary.set(right - halfWidth, top, right, top + rowHeight)
+        top += rowHeight + gap
+
+        // Row three: the way out, on its own.
+        overQuaternary.set(left, top, right, top + rowHeight)
     }
 
     /**
@@ -920,27 +971,99 @@ class GameView @JvmOverloads constructor(
 
     private fun requestAd(purpose: AdPurpose) {
         val show = onWatchRewardedAd
-        if (show == null) {
-            settleAd(purpose, earned = false, reason = "Ads unavailable", userBackedOut = false)
+        // Checked before committing to the waiting screen rather than after. An ad
+        // that is not loaded should read as "not right now" on the card the player
+        // is already looking at, never as a screen they then have to escape.
+        if (show == null || isRewardedAdReady?.invoke() != true) {
+            settleAd(purpose, earned = false, reason = "No ad ready - try again in a moment", userBackedOut = false)
             return
         }
         pendingAdPurpose = purpose
         pressedButton = 0
+        adPendingAge = 0f
+        adPresented = false
+        confirmingAdExit = false
+        val id = ++adRequestId
         state = State.AD_PENDING
         // Posted rather than called straight through: the SDK can answer
         // synchronously on a failure, and re-entering a state change from inside
         // the call that caused it is how you get a screen stuck half-way.
         show(
-            { post { settleAd(purpose, earned = true, reason = "", userBackedOut = false) } },
+            { post { onAdResult(id, purpose, earned = true, reason = "", userBackedOut = false) } },
             { reason, backedOut ->
-                post { settleAd(purpose, earned = false, reason = reason, userBackedOut = backedOut) }
-            }
+                post { onAdResult(id, purpose, earned = false, reason = reason, userBackedOut = backedOut) }
+            },
+            { post { if (id == adRequestId) adPresented = true } }
         )
+    }
+
+    /** The guarded entry point for the SDK's answers. Stale ones are dropped. */
+    private fun onAdResult(
+        id: Int,
+        purpose: AdPurpose,
+        earned: Boolean,
+        reason: String,
+        userBackedOut: Boolean
+    ) {
+        if (id != adRequestId) return
+        settleAd(purpose, earned, reason, userBackedOut)
+    }
+
+    /**
+     * Leaves the waiting screen without a reward. Reachable from the CANCEL button,
+     * from the back gesture, and from the timeout, so an ad that never arrives can
+     * never hold the game hostage.
+     */
+    private fun cancelPendingAd(reason: String) {
+        if (state != State.AD_PENDING) return
+        // Retires this request before leaving, so anything the SDK says afterwards
+        // lands on a stale id and is ignored.
+        adRequestId++
+        onCancelPendingAd?.invoke()
+        confirmingAdExit = false
+        settleAd(pendingAdPurpose, earned = false, reason = reason, userBackedOut = true)
+    }
+
+    /**
+     * The back gesture, routed in from the activity. Returns true when the game
+     * consumed it. Every modal the game puts up has to answer back, or the only way
+     * out of one is to kill the app.
+     */
+    fun handleBackPressed(): Boolean = when {
+        state == State.AD_PENDING && confirmingAdExit -> {
+            confirmingAdExit = false
+            true
+        }
+        state == State.AD_PENDING -> {
+            // Once the ad is up there is a reward on the table, so leaving is a
+            // decision to confirm rather than a reflex to obey.
+            if (adPresented) confirmingAdExit = true else cancelPendingAd("Cancelled")
+            true
+        }
+        state == State.AD_GATE -> {
+            state = adGateReturn
+            true
+        }
+        state == State.PAUSED -> {
+            resumeGame()
+            true
+        }
+        state == State.PLAYING -> {
+            pauseGame()
+            true
+        }
+        state == State.GAME_OVER -> {
+            returnToMenu()
+            true
+        }
+        else -> false
     }
 
     /** The single place every ad outcome lands, so no path can strand the game. */
     private fun settleAd(purpose: AdPurpose, earned: Boolean, reason: String, userBackedOut: Boolean) {
         pendingAdPurpose = AdPurpose.NONE
+        adPresented = false
+        confirmingAdExit = false
         if (!earned) {
             adNotice = reason
             adNoticeAge = 0f
@@ -976,10 +1099,10 @@ class GameView @JvmOverloads constructor(
      * settles it as a decline. The delay lets a real callback win the race.
      */
     fun checkStrandedAd() {
-        if (state != State.AD_PENDING) return
+        if (state != State.AD_PENDING || confirmingAdExit) return
         val purpose = pendingAdPurpose
         postDelayed({
-            if (state == State.AD_PENDING && pendingAdPurpose == purpose) {
+            if (state == State.AD_PENDING && !confirmingAdExit && pendingAdPurpose == purpose) {
                 settleAd(purpose, earned = false, reason = "Ad did not finish", userBackedOut = true)
             }
         }, STRANDED_AD_GRACE_MS)
@@ -1086,7 +1209,14 @@ class GameView @JvmOverloads constructor(
     override fun onTouchEvent(event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                if (state == State.SETTLING || state == State.AD_PENDING || state == State.RESUMING) {
+                if (state == State.SETTLING || state == State.RESUMING) return true
+                if (state == State.AD_PENDING) {
+                    pressedButton = when {
+                        confirmingAdExit && adConfirmLeave.contains(event.x, event.y) -> 1
+                        confirmingAdExit && adConfirmStay.contains(event.x, event.y) -> 2
+                        !confirmingAdExit && adCancel.contains(event.x, event.y) -> 1
+                        else -> 0
+                    }
                     return true
                 }
                 if (isOverlayState()) {
@@ -1152,7 +1282,19 @@ class GameView @JvmOverloads constructor(
             }
 
             MotionEvent.ACTION_UP -> {
-                if (state == State.SETTLING || state == State.AD_PENDING || state == State.RESUMING) {
+                if (state == State.SETTLING || state == State.RESUMING) return true
+                if (state == State.AD_PENDING) {
+                    val released = pressedButton
+                    pressedButton = 0
+                    if (confirmingAdExit) {
+                        if (released == 1 && adConfirmLeave.contains(event.x, event.y)) {
+                            cancelPendingAd("Reward skipped")
+                        } else if (released == 2 && adConfirmStay.contains(event.x, event.y)) {
+                            confirmingAdExit = false
+                        }
+                    } else if (released == 1 && adCancel.contains(event.x, event.y)) {
+                        if (adPresented) confirmingAdExit = true else cancelPendingAd("Cancelled")
+                    }
                     return true
                 }
                 if (isOverlayState()) {
@@ -2196,10 +2338,10 @@ class GameView @JvmOverloads constructor(
         val radius = rect.height() / 2f
 
         uiBoldPaint.textAlign = Paint.Align.CENTER
-        uiBoldPaint.textSize = 12f * density
-        uiBoldPaint.letterSpacing = 0.22f
+        uiBoldPaint.textSize = 11f * density
+        uiBoldPaint.letterSpacing = 0.18f
         uiBoldPaint.color = Theme.withAlpha(Theme.gold, (0.55f + 0.35f * pulse) * alpha)
-        canvas.drawText("WATCH A SHORT AD", rect.centerX(), rect.top - 10f * density, uiBoldPaint)
+        canvas.drawText("WATCH AN AD", rect.centerX(), rect.top - 7f * density, uiBoldPaint)
         uiBoldPaint.letterSpacing = 0f
 
         // Three haloes rather than a blur mask filter: hardware accelerated, and
@@ -2235,15 +2377,16 @@ class GameView @JvmOverloads constructor(
         panelStrokePaint.color = Theme.hairline
 
         uiBoldPaint.textAlign = Paint.Align.CENTER
-        uiBoldPaint.textSize = 21f * density
+        uiBoldPaint.textSize = 15f * density
         uiBoldPaint.color = Theme.withAlpha(INK_ON_GOLD, alpha)
+        // Nudged left of centre to leave the AD tag its corner.
         val baseline = roundRect.centerY() - (uiBoldPaint.descent() + uiBoldPaint.ascent()) / 2f
-        canvas.drawText("CONTINUE", roundRect.centerX(), baseline, uiBoldPaint)
+        canvas.drawText("CONTINUE", roundRect.centerX() - 11f * density, baseline, uiBoldPaint)
 
         // A small stamped AD tag on the trailing end of the button.
-        val badgeHeight = 18f * density
-        val badgeWidth = 32f * density
-        val badgeRight = rect.right - 14f * density
+        val badgeHeight = 15f * density
+        val badgeWidth = 24f * density
+        val badgeRight = rect.right - 10f * density
         roundRect.set(
             badgeRight - badgeWidth, rect.centerY() - badgeHeight / 2f,
             badgeRight, rect.centerY() + badgeHeight / 2f
@@ -2251,10 +2394,10 @@ class GameView @JvmOverloads constructor(
         panelPaint.color = Theme.withAlpha(INK_ON_GOLD, 0.5f * alpha)
         canvas.drawRoundRect(roundRect, badgeHeight / 2f, badgeHeight / 2f, panelPaint)
 
-        uiBoldPaint.textSize = 11f * density
+        uiBoldPaint.textSize = 10f * density
         uiBoldPaint.letterSpacing = 0.16f
         uiBoldPaint.color = Theme.withAlpha(Theme.gold, alpha)
-        canvas.drawText("AD", roundRect.centerX(), roundRect.centerY() + 4f * density, uiBoldPaint)
+        canvas.drawText("AD", roundRect.centerX(), roundRect.centerY() + 3.5f * density, uiBoldPaint)
         uiBoldPaint.letterSpacing = 0f
     }
 
@@ -2270,18 +2413,57 @@ class GameView @JvmOverloads constructor(
         drawButton(canvas, adSecondary, "NOT NOW", primary = false, pressed = pressedButton == 2)
     }
 
-    /** Held while someone else's screen is up, so nothing flickers underneath. */
+    /**
+     * The waiting screen. It used to be a dead-end label; it is now a screen with a
+     * way off it, because an ad that never arrives must not be able to end the
+     * session. The dots say something is still happening, and CANCEL is there from
+     * the first frame rather than appearing once things have already gone wrong.
+     */
     private fun drawAdPending(canvas: Canvas) {
         scrimPaint.shader = null
         scrimPaint.color = Color.argb(240, 2, 3, 8)
         canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), scrimPaint)
 
+        val cx = width / 2f
+
+        if (confirmingAdExit) {
+            displayPaint.textAlign = Paint.Align.CENTER
+            displayPaint.textSize = 22f * density
+            displayPaint.color = Theme.textPrimary
+            canvas.drawText("SKIP THE REWARD?", cx, adConfirmLeave.top - 62f * density, displayPaint)
+
+            uiPaint.textAlign = Paint.Align.CENTER
+            uiPaint.textSize = 15f * density
+            uiPaint.color = Theme.textFaint
+            drawWrapped(
+                canvas, "Leaving now means no continue.",
+                cx, adConfirmLeave.top - 32f * density, width * 0.7f, uiPaint
+            )
+
+            drawButton(canvas, adConfirmLeave, "SKIP IT", primary = false, pressed = pressedButton == 1, textSize = 16f * density)
+            drawButton(canvas, adConfirmStay, "KEEP WATCHING", primary = true, pressed = pressedButton == 2, textSize = 16f * density)
+            return
+        }
+
         uiBoldPaint.textAlign = Paint.Align.CENTER
         uiBoldPaint.textSize = 16f * density
         uiBoldPaint.letterSpacing = 0.18f
-        uiBoldPaint.color = Theme.textFaint
-        canvas.drawText("LOADING AD", width / 2f, height / 2f, uiBoldPaint)
+        uiBoldPaint.color = Theme.textSecondary
+        canvas.drawText("LOADING AD", cx, height * 0.46f, uiBoldPaint)
         uiBoldPaint.letterSpacing = 0f
+
+        // Three dots taking it in turns, so a slow load still looks alive.
+        val dotY = height * 0.46f + 22f * density
+        val dotRadius = 3f * density
+        panelPaint.shader = null
+        for (i in 0..2) {
+            val phase = (elapsed * 2.6f - i * 0.35f) % 1f
+            val lift = if (phase < 0.5f) phase * 2f else (1f - phase) * 2f
+            panelPaint.color = Theme.withAlpha(Theme.accent, 0.25f + 0.6f * lift)
+            canvas.drawCircle(cx + (i - 1) * 14f * density, dotY, dotRadius, panelPaint)
+        }
+
+        drawButton(canvas, adCancel, "CANCEL", primary = false, pressed = pressedButton == 1, textSize = 16f * density)
     }
 
     /** 3, 2, 1 over the cleared board before a bought-back run picks up. */
@@ -2476,11 +2658,13 @@ class GameView @JvmOverloads constructor(
         val buttonAlpha = revealAlpha(CARD_ROWS_AT + CARD_ROW_STAGGER * 5 + CARD_BREAKDOWN_STAGGER * 5)
         if (buttonAlpha > 0.01f) {
             drawContinueButton(canvas, buttonAlpha)
-            val small = 18f * density
-            drawButton(canvas, primaryButton, "RETRY", primary = true, pressed = pressedButton == 1, alpha = buttonAlpha, textSize = small)
-            drawButton(canvas, secondaryButton, "HOW TO PLAY", primary = false, pressed = pressedButton == 2, alpha = buttonAlpha, textSize = small)
-            drawButton(canvas, tertiaryButton, "SETTINGS", primary = false, pressed = pressedButton == 3, alpha = buttonAlpha, textSize = small)
-            drawButton(canvas, overQuaternary, "MAIN MENU", primary = false, pressed = pressedButton == 4, alpha = buttonAlpha, textSize = small)
+            // Half-width buttons need smaller type than the full-width one below.
+            val half = 15f * density
+            val full = 17f * density
+            drawButton(canvas, primaryButton, "RETRY", primary = true, pressed = pressedButton == 1, alpha = buttonAlpha, textSize = if (continueOffered) half else full)
+            drawButton(canvas, secondaryButton, "HOW TO PLAY", primary = false, pressed = pressedButton == 2, alpha = buttonAlpha, textSize = half)
+            drawButton(canvas, tertiaryButton, "SETTINGS", primary = false, pressed = pressedButton == 3, alpha = buttonAlpha, textSize = half)
+            drawButton(canvas, overQuaternary, "MAIN MENU", primary = false, pressed = pressedButton == 4, alpha = buttonAlpha, textSize = full)
             drawAdNotice(canvas, overQuaternary.bottom + 20f * density)
         }
     }
@@ -2689,6 +2873,12 @@ class GameView @JvmOverloads constructor(
 
         /** How long a real ad callback is given to win the stranded-ad race. */
         const val STRANDED_AD_GRACE_MS = 1500L
+
+        /** Seconds the waiting screen gives an ad to appear before giving up. */
+        const val AD_WAIT_TIMEOUT = 8f
+
+        /** Height of each button in the game-over card's three rows, in dp. */
+        const val GAME_OVER_BUTTON_HEIGHT = 50f
 
         const val CARD_HEADER_HEIGHT = 156f
         const val CARD_STAT_ROW_HEIGHT = 26f

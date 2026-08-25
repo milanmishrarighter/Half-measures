@@ -25,6 +25,8 @@ class RewardedAds(private val activity: Activity) {
     private var ad: RewardedAd? = null
     private var loading = false
     private var showing = false
+    /** True once the ad's own activity is actually up in front of us. */
+    private var presented = false
     private var failedLoads = 0
     private val handler = Handler(Looper.getMainLooper())
 
@@ -33,6 +35,20 @@ class RewardedAds(private val activity: Activity) {
     }
 
     fun isReady(): Boolean = ad != null && !showing
+
+    /** Whether an ad is currently on screen, as opposed to merely being asked for. */
+    fun isPresenting(): Boolean = presented
+
+    /**
+     * Gives up on an ad that was asked for but never appeared. The SDK may still
+     * call back later; [showing] going false means that callback finds nothing to
+     * report and is ignored, so a cancelled ad cannot pay out after the fact.
+     */
+    fun abandonPending() {
+        if (presented) return
+        showing = false
+        load()
+    }
 
     fun load() {
         if (loading || ad != null || showing) return
@@ -64,7 +80,7 @@ class RewardedAds(private val activity: Activity) {
      * present, or the user backing out early - goes to [onDeclined] with a reason
      * and whether the user themselves walked away.
      */
-    fun show(onEarned: () -> Unit, onDeclined: (String, Boolean) -> Unit) {
+    fun show(onEarned: () -> Unit, onDeclined: (String, Boolean) -> Unit, onPresented: () -> Unit) {
         val current = ad
         if (current == null || showing) {
             load()
@@ -74,11 +90,18 @@ class RewardedAds(private val activity: Activity) {
 
         var earned = false
         showing = true
+        presented = false
         ad = null
 
         current.fullScreenContentCallback = object : FullScreenContentCallback() {
+            override fun onAdShowedFullScreenContent() {
+                presented = true
+                onPresented()
+            }
+
             override fun onAdDismissedFullScreenContent() {
                 showing = false
+                presented = false
                 load()
                 // Backing out early is a choice, not a failure, and the caller
                 // treats the two differently.
@@ -87,6 +110,7 @@ class RewardedAds(private val activity: Activity) {
 
             override fun onAdFailedToShowFullScreenContent(error: AdError) {
                 showing = false
+                presented = false
                 load()
                 onDeclined(error.message, false)
             }

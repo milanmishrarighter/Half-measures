@@ -35,7 +35,7 @@ class MainActivity : AppCompatActivity() {
                 startActivity(Intent(this@MainActivity, InstructionsActivity::class.java))
             }
             isRewardedAdReady = { ads.isReady() }
-            onWatchRewardedAd = { onEarned, onDeclined ->
+            onWatchRewardedAd = { onEarned, onDeclined, onPresented ->
                 beginAdPresentation()
                 ads.show(
                     {
@@ -45,8 +45,13 @@ class MainActivity : AppCompatActivity() {
                     { reason, backedOut ->
                         endAdPresentation()
                         onDeclined(reason, backedOut)
-                    }
+                    },
+                    onPresented
                 )
+            }
+            onCancelPendingAd = {
+                endAdPresentation()
+                ads.abandonPending()
             }
         }
         setContentView(gameView)
@@ -68,6 +73,18 @@ class MainActivity : AppCompatActivity() {
         gameView.refreshSettings()
         gameView.startLoop()
         gameView.checkStrandedAd()
+        // Retried on every return to the foreground. A first launch can finish
+        // initialising after the first load attempt has already failed, which is
+        // how a fresh install ends up with no ad until the app is opened again.
+        ads.load()
+    }
+
+    @Suppress("DEPRECATION")
+    override fun onBackPressed() {
+        // The game draws its own modals on a Canvas, so nothing else in the system
+        // knows they are there. Back has to be handed to it first or a waiting
+        // screen has no way out but killing the app.
+        if (!gameView.handleBackPressed()) super.onBackPressed()
     }
 
     override fun onDestroy() {
