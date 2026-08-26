@@ -87,6 +87,7 @@ class GameView @JvmOverloads constructor(
         gravity = GameShape.BASE_GRAVITY * settings.gravityScale
         sounds.enabled = settings.soundEnabled
         sounds.volume = settings.soundVolume
+        sounds.voiceEnabled = settings.voiceEnabled
         sounds.musicEnabled = settings.musicEnabled
         sounds.musicVolume = settings.musicVolume
         // Only the title screen picks up a new starting-health setting. Every
@@ -197,6 +198,11 @@ class GameView @JvmOverloads constructor(
     private var lastTouchX = 0f
     private var lastTouchY = 0f
     private var hasLastTouch = false
+    /** Where the blade last spoke, and when, so the swipe noise stays occasional. */
+    private var swipeSoundX = 0f
+    private var swipeSoundY = 0f
+    private var lastSwipeSoundMs = 0L
+    private val swipeSoundDistance: Float get() = 90f * density
     private val trailMaxAgeMs = 165L
 
     // ---- Buttons (laid out in onSizeChanged, hit-tested in onTouchEvent) ----
@@ -437,6 +443,7 @@ class GameView @JvmOverloads constructor(
     }
 
     private fun triggerDangerSequence() {
+        sounds.play(SfxBank.DANGER, gain = 0.9f, spread = 3)
         dangerRecovery = lowHealthSlowMoSeconds()
         dangerAlert = lowHealthSlowMoSeconds()
         perfectSlowMo = 0f
@@ -481,10 +488,16 @@ class GameView @JvmOverloads constructor(
 
         layoutPauseOverlay(w, h, buttonWidth, buttonHeight, buttonGap)
 
-        // The ad cards are taller than the pause card: they carry a headline and
-        // an explanation as well as the two buttons.
-        val adWidth = min(w * 0.84f, 360f * density)
-        val adHeight = 248f * density + buttonHeight * 2 + buttonGap
+        // Measured from its own copy rather than guessed at, so the space under
+        // the paragraph matches the space above it however many lines it runs to.
+        val adWidth = min(w * 0.86f, 380f * density)
+        val adInner = adWidth - AD_CARD_PAD * 2f * density
+        uiPaint.textSize = AD_BODY_SIZE * density
+        val bodyBlock = wrapLines(adGateBody(), adInner, uiPaint).size * AD_BODY_SIZE * 1.3f * density
+
+        val adHeadBlock = (AD_CARD_PAD + AD_TITLE_DROP) * density
+        val adHeight = adHeadBlock + bodyBlock + AD_CARD_PAD * density +
+            buttonHeight * 2 + buttonGap + AD_CARD_PAD * density
         val adTop = (h - adHeight) / 2f
         adCard.set(cx - adWidth / 2f, adTop, cx + adWidth / 2f, adTop + adHeight)
         // The waiting screen: one cancel button low on the screen, and a pair of
@@ -506,8 +519,7 @@ class GameView @JvmOverloads constructor(
             cx + confirmWidth / 2f, confirmTop + cancelHeight * 2 + 10f * density
         )
 
-        val adInner = min(buttonWidth, adWidth - 40f * density)
-        val adFirstTop = adTop + 228f * density
+        val adFirstTop = adTop + adHeadBlock + bodyBlock + AD_CARD_PAD * density
         adPrimary.set(cx - adInner / 2f, adFirstTop, cx + adInner / 2f, adFirstTop + buttonHeight)
         adSecondary.set(
             cx - adInner / 2f, adFirstTop + buttonHeight + buttonGap,
@@ -711,6 +723,9 @@ class GameView @JvmOverloads constructor(
         val colourEase = min(1f, dt * 0.9f)
         backgroundColor = Theme.lerpColor(backgroundColor, Theme.stageBackground(stage), colourEase)
         accentColor = Theme.lerpColor(accentColor, Theme.stageAccent(stage), colourEase)
+
+        // Ten BPM per thousand points, so a good run audibly tightens up.
+        sounds.setMusicSpeed(1f + (score / 1000) * 10f / MUSIC_BASE_BPM)
 
         displayedHealth += (health - displayedHealth) * min(1f, dt * 9f)
         displayedScore += (score - displayedScore) * min(1f, dt * 12f)
@@ -1091,6 +1106,7 @@ class GameView @JvmOverloads constructor(
         state == State.AD_GATE -> {
             // Back out of the gate is the same as EXIT APP: there is no third
             // option here, or the gate would not be a gate.
+            PlaySession.reset()
             onExitApp?.invoke()
             true
         }
@@ -1312,6 +1328,8 @@ class GameView @JvmOverloads constructor(
                 lastTouchX = event.x
                 lastTouchY = event.y
                 hasLastTouch = true
+                swipeSoundX = event.x
+                swipeSoundY = event.y
                 trailPoints.add(TrailPoint(event.x, event.y, System.currentTimeMillis()))
                 pixels.burst(event.x, event.y, 1.0f)
             }
@@ -1374,9 +1392,13 @@ class GameView @JvmOverloads constructor(
                         }
                         State.AD_GATE -> {
                             if (onPrimary) requestAd(AdPurpose.GATE)
-                            // The alternative to watching is leaving. Closing the
-                            // app outright, so the next launch opens at the title.
-                            if (onSecondary) onExitApp?.invoke()
+                            // The alternative to watching is leaving. The count is
+                            // cleared on the way out, so a relaunch opens on a clean
+                            // session rather than straight back into this card.
+                            if (onSecondary) {
+                                PlaySession.reset()
+                                onExitApp?.invoke()
+                            }
                         }
                         else -> {}
                     }
@@ -1484,7 +1506,25 @@ class GameView @JvmOverloads constructor(
         requestNewGame()
     }
 
+    /**
+     * Air, not impact: the blade moving before it has hit anything. Fired once per
+     * gesture past a distance threshold, and rate-limited, so dragging a finger
+     * around does not turn into a drone.
+     */
+    private fun maybePlaySwipe(x: Float, y: Float) {
+        val dx = x - swipeSoundX
+        val dy = y - swipeSoundY
+        if (dx * dx + dy * dy < swipeSoundDistance * swipeSoundDistance) return
+        swipeSoundX = x
+        swipeSoundY = y
+        val now = System.currentTimeMillis()
+        if (now - lastSwipeSoundMs < SWIPE_SOUND_GAP_MS) return
+        lastSwipeSoundMs = now
+        sounds.play(SfxBank.SWIPE, gain = 0.5f)
+    }
+
     private fun handleSwipeSegment(x: Float, y: Float) {
+        maybePlaySwipe(x, y)
         if (!hasLastTouch) {
             lastTouchX = x
             lastTouchY = y
@@ -1598,6 +1638,9 @@ class GameView @JvmOverloads constructor(
                 // Perfects hold the middle of the pitch range: these are the
                 // flourishes, and a wildly detuned one would sound like a mistake.
                 sounds.play(SfxBank.PERFECT, spread = 3)
+                // The announcer lands just behind the flourish rather than on top
+                // of it, so the two are heard as a call and a response.
+                postDelayed({ sounds.play(SfxBank.VOICE, gain = 0.85f, spread = 3) }, 110L)
                 // Each perfect in a row answers a step higher on top of that, so a
                 // streak audibly climbs.
                 if (perfectStreak > 1) {
@@ -2404,8 +2447,12 @@ class GameView @JvmOverloads constructor(
         drawButton(canvas, pauseMenu, "MAIN MENU", primary = false, pressed = pressedButton == 2)
     }
 
-    /** The shared shell behind both ad cards: scrim, panel, headline, body line. */
-    private fun drawAdCard(canvas: Canvas, eyebrow: String, eyebrowColor: Int, headline: String, body: String) {
+    /**
+     * The gate card. One heading, one paragraph, two buttons, and the same inset on
+     * every side - the card is measured from the wrapped copy in layoutAdOverlay,
+     * so this only has to draw where that said things go.
+     */
+    private fun drawAdCard(canvas: Canvas, headline: String, body: String) {
         scrimPaint.shader = null
         scrimPaint.color = Color.argb(214, 2, 3, 8)
         canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), scrimPaint)
@@ -2420,38 +2467,29 @@ class GameView @JvmOverloads constructor(
 
         val cx = adCard.centerX()
 
-        uiBoldPaint.textAlign = Paint.Align.CENTER
-        uiBoldPaint.textSize = 14f * density
-        uiBoldPaint.letterSpacing = 0.18f
-        uiBoldPaint.color = eyebrowColor
-        canvas.drawText(eyebrow, cx, adCard.top + 34f * density, uiBoldPaint)
-        uiBoldPaint.letterSpacing = 0f
-
         displayPaint.textAlign = Paint.Align.CENTER
         displayPaint.textSize = 26f * density
-        displayPaint.color = Theme.textPrimary
-        canvas.drawText(headline, cx, adCard.top + 76f * density, displayPaint)
+        displayPaint.color = Theme.accent
+        canvas.drawText(headline, cx, adCard.top + (AD_CARD_PAD + 26f) * density, displayPaint)
 
         uiPaint.textAlign = Paint.Align.CENTER
-        uiPaint.textSize = 16f * density
+        uiPaint.textSize = AD_BODY_SIZE * density
         uiPaint.color = Theme.textSecondary
-        drawWrapped(canvas, body, cx, adCard.top + 108f * density, adCard.width() - 44f * density, uiPaint)
+        drawWrapped(
+            canvas, body, cx,
+            adCard.top + (AD_CARD_PAD + AD_TITLE_DROP) * density + AD_BODY_SIZE * density,
+            adCard.width() - AD_CARD_PAD * 2f * density, uiPaint
+        )
     }
 
-    /**
-     * Centred word wrap. The ad copy is a sentence rather than a label, and a
-     * single drawText would run straight off the side of the card.
-     */
-    private fun drawWrapped(canvas: Canvas, text: String, cx: Float, top: Float, maxWidth: Float, paint: Paint) {
-        val words = text.split(' ')
+    /** Greedy word wrap, shared by the measure pass and the draw. */
+    private fun wrapLines(text: String, maxWidth: Float, paint: Paint): List<String> {
+        val lines = ArrayList<String>()
         val line = StringBuilder()
-        var y = top
-        val step = paint.textSize * 1.28f
-        for (word in words) {
+        for (word in text.split(' ')) {
             val candidate = if (line.isEmpty()) word else "$line $word"
             if (paint.measureText(candidate) > maxWidth && line.isNotEmpty()) {
-                canvas.drawText(line.toString(), cx, y, paint)
-                y += step
+                lines.add(line.toString())
                 line.setLength(0)
                 line.append(word)
             } else {
@@ -2459,8 +2497,24 @@ class GameView @JvmOverloads constructor(
                 line.append(candidate)
             }
         }
-        if (line.isNotEmpty()) canvas.drawText(line.toString(), cx, y, paint)
+        if (line.isNotEmpty()) lines.add(line.toString())
+        return lines
     }
+
+    private fun drawWrapped(canvas: Canvas, text: String, cx: Float, top: Float, maxWidth: Float, paint: Paint) {
+        var y = top
+        val step = paint.textSize * 1.3f
+        for (line in wrapLines(text, maxWidth, paint)) {
+            canvas.drawText(line, cx, y, paint)
+            y += step
+        }
+    }
+
+    /** The gate's copy, needed by the measure pass as well as the draw. */
+    private fun adGateBody(): String =
+        "Every ${settings.adGateEvery}th retry requires you to watch an ad. This is to support " +
+            "the development of the app and continue making it better and more interesting. " +
+            "Please consider supporting the devs. This will only take a few seconds."
 
     /**
      * The continue, sold rather than merely listed: gold instead of teal, breathing
@@ -2509,15 +2563,22 @@ class GameView @JvmOverloads constructor(
         canvas.drawRoundRect(roundRect, radius, radius, panelStrokePaint)
         panelStrokePaint.color = Theme.hairline
 
-        // Label and superscript are measured together and centred as one unit, so
-        // the pair sits on the button's middle rather than the word alone.
+        drawMarkedLabel(canvas, roundRect, CONTINUE_LABEL, INK_ON_GOLD, alpha)
+    }
+
+    /**
+     * A label with a small raised AD after it, the way a footnote marker rides a
+     * word. Measured as one unit and centred as one unit, so the button reads as
+     * balanced rather than as a word with something stuck after it.
+     */
+    private fun drawMarkedLabel(canvas: Canvas, rect: RectF, label: String, ink: Int, alpha: Float) {
         val labelSize = 18f * density
         val markSize = labelSize * 0.52f
         uiBoldPaint.textAlign = Paint.Align.LEFT
 
         uiBoldPaint.textSize = labelSize
-        val labelWidth = uiBoldPaint.measureText(CONTINUE_LABEL)
-        val baseline = roundRect.centerY() - (uiBoldPaint.descent() + uiBoldPaint.ascent()) / 2f
+        val labelWidth = uiBoldPaint.measureText(label)
+        val baseline = rect.centerY() - (uiBoldPaint.descent() + uiBoldPaint.ascent()) / 2f
 
         uiBoldPaint.textSize = markSize
         uiBoldPaint.letterSpacing = 0.06f
@@ -2525,11 +2586,11 @@ class GameView @JvmOverloads constructor(
         uiBoldPaint.letterSpacing = 0f
 
         val kern = 2.5f * density
-        val startX = roundRect.centerX() - (labelWidth + kern + markWidth) / 2f
+        val startX = rect.centerX() - (labelWidth + kern + markWidth) / 2f
 
         uiBoldPaint.textSize = labelSize
-        uiBoldPaint.color = Theme.withAlpha(INK_ON_GOLD, alpha)
-        canvas.drawText(CONTINUE_LABEL, startX, baseline, uiBoldPaint)
+        uiBoldPaint.color = Theme.withAlpha(ink, alpha)
+        canvas.drawText(label, startX, baseline, uiBoldPaint)
 
         uiBoldPaint.textSize = markSize
         uiBoldPaint.letterSpacing = 0.06f
@@ -2539,17 +2600,19 @@ class GameView @JvmOverloads constructor(
         uiBoldPaint.textAlign = Paint.Align.CENTER
     }
 
+    /** A plain primary button carrying the same superscript AD. */
+    private fun drawMarkedButton(canvas: Canvas, rect: RectF, label: String, pressed: Boolean) {
+        drawButton(canvas, rect, "", primary = true, pressed = pressed)
+        val inset = if (pressed) 2f * density else 0f
+        roundRect.set(rect.left + inset, rect.top + inset, rect.right - inset, rect.bottom - inset)
+        drawMarkedLabel(canvas, roundRect, label, Color.rgb(6, 20, 26), 1f)
+    }
+
     private fun drawAdGate(canvas: Canvas) {
-        val every = settings.adGateEvery
-        drawAdCard(
-            canvas,
-            "AD BREAK", Theme.accent,
-            "SUPPORT THE DEVS",
-            "Every ${every}th retry requires you to watch an ad. This is to support the " +
-                "development of the app and continue making it better and more interesting. " +
-                "Please consider supporting the devs."
-        )
-        drawButton(canvas, adPrimary, "RETRY", primary = true, pressed = pressedButton == 1)
+        drawAdCard(canvas, "AD BREAK", adGateBody())
+        // Marked the same way the continue is, so the two ad-backed buttons in the
+        // game read as the same kind of thing.
+        drawMarkedButton(canvas, adPrimary, "RETRY", pressed = pressedButton == 1)
         drawButton(canvas, adSecondary, "EXIT APP", primary = false, pressed = pressedButton == 2)
     }
 
@@ -3014,6 +3077,18 @@ class GameView @JvmOverloads constructor(
         /** Game-over card metrics, in dp - shared by the measure pass and the draw. */
         /** Side of the square pause target, in dp. */
         const val PAUSE_BUTTON_SIZE = 34f
+
+        /** Shortest gap between two swipe noises, in real milliseconds. */
+        const val SWIPE_SOUND_GAP_MS = 190L
+
+        /** The tempo the music is written at, which the score speeds up from. */
+        const val MUSIC_BASE_BPM = 108f
+
+        /** The gate card's inset, used on all four sides. */
+        const val AD_CARD_PAD = 26f
+        /** Card top inset to the first baseline of the body copy. */
+        const val AD_TITLE_DROP = 60f
+        const val AD_BODY_SIZE = 16f
 
         /** Seconds a failed-ad explanation stays on screen. */
         const val AD_NOTICE_HOLD = 5f

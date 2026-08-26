@@ -67,6 +67,11 @@ class SettingsActivity : AppCompatActivity() {
         ) { settings.musicEnabled = it }
 
         toggle(
+            root, "Announcer", "A shout when you land a perfect cut.",
+            settings.voiceEnabled
+        ) { settings.voiceEnabled = it }
+
+        toggle(
             root, "Vibration", "A buzz on every cut, stronger the better it lands.",
             settings.vibrationEnabled
         ) { settings.vibrationEnabled = it }

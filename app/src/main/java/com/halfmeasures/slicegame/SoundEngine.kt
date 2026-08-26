@@ -2,12 +2,16 @@ package com.halfmeasures.slicegame
 
 import android.content.Context
 import android.media.AudioAttributes
-import android.media.MediaPlayer
+import android.media.AudioFormat
+import android.media.AudioTrack
+import android.media.PlaybackParams
 import android.media.SoundPool
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.PI
+import kotlin.math.exp
+import kotlin.math.max
 import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.sin
@@ -17,25 +21,26 @@ import kotlin.random.Random
 enum class Sfx { BUTTON, MISS, HEAL, LEVEL_UP, COUNTDOWN, GAME_OVER, BEST }
 
 /**
- * The four things that happen constantly. Each is a bank of ten distinct
- * recipes rather than one sound, and each shot is pitched, so the ear never
- * settles on a pattern.
+ * The events that happen constantly. Each is a bank of ten separately written
+ * recipes, and each shot is pitched, so the ear never settles on a pattern.
+ *
+ * Tonality is deliberate and consistent: [SWIPE] and [SLICE] are noise, so they
+ * have no key; [GOOD] and [PERFECT] are major triads, major pentatonic and plucked
+ * major chords; [BAD] and [DANGER] are minor, diminished and chromatic. A player
+ * should be able to tell how a cut landed with their eyes shut.
  */
-enum class SfxBank { SLICE, GOOD, PERFECT, BAD }
+enum class SfxBank { SWIPE, SLICE, GOOD, PERFECT, BAD, DANGER, VOICE }
 
 /**
- * Chiptune audio, synthesised on the device rather than shipped as files.
+ * All of the game's audio, synthesised on the device rather than shipped as files.
  *
- * Nothing here is a recording: every sound is a handful of square, triangle, saw,
- * sine and LFSR-noise voices with exponential pitch sweeps and hard envelopes,
- * sample-and-hold crushed so it sounds like a sound chip rather than a synth. The
- * download carries no audio at all, and retuning anything is changing a number.
- *
- * Repetition is handled twice over: ten separately written variants per bank, and
- * a musical pitch shift on every shot. Ten recipes and seven ratios is seventy
- * distinct results for a cut, and consecutive repeats of a variant are refused
- * outright - the ear catches an immediate repeat far more easily than it catches
- * a sound it heard six cuts ago.
+ * Nothing here is a recording. Effects are square, triangle, saw, sine and
+ * LFSR-noise voices with exponential pitch sweeps and hard envelopes, sample-and-
+ * hold crushed so they sound like a sound chip. The announcer is a small formant
+ * synthesiser - a glottal pulse train exciting three damped resonators - which is
+ * why it sounds like an arcade cabinet rather than a person. Music is ten
+ * generated tracks, streamed through an AudioTrack the engine feeds itself so the
+ * loop is sample-exact.
  */
 class SoundEngine(context: Context) {
 
@@ -43,7 +48,7 @@ class SoundEngine(context: Context) {
     private val random = Random(System.nanoTime())
 
     private val pool = SoundPool.Builder()
-        .setMaxStreams(12)
+        .setMaxStreams(14)
         .setAudioAttributes(
             AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_GAME)
@@ -56,15 +61,19 @@ class SoundEngine(context: Context) {
     private val banks = HashMap<SfxBank, IntArray>()
     private val lastPlayed = HashMap<SfxBank, Int>()
 
-    private var music: MediaPlayer? = null
-    private var musicFile: File? = null
+    private var cacheDir: File? = null
+    private val tracks = arrayOfNulls<ShortArray>(TRACK_COUNT)
+    private var music: MusicStream? = null
     private var musicWanted = false
+    private var currentTrack = -1
+    private var musicSpeed = 1f
 
     @Volatile private var loaded = false
     private var preparing = false
 
     var enabled = true
     var volume = 1f
+    var voiceEnabled = true
     var musicEnabled = true
         set(value) {
             field = value
@@ -73,22 +82,18 @@ class SoundEngine(context: Context) {
     var musicVolume = 0.45f
         set(value) {
             field = value
-            music?.setVolume(value, value)
+            music?.setVolume(value)
         }
 
-    /**
-     * Renders and loads everything off the main thread: fifty-odd short waves and
-     * one long loop. Cheap enough - a few hundred thousand samples - but not so
-     * cheap it belongs in a frame.
-     */
     fun prepare() {
         if (loaded || preparing) return
         preparing = true
         Thread {
             try {
-                // Versioned, so a build that retunes the set does not keep playing
+                // Versioned, so a build that retunes the set cannot keep playing
                 // whatever the last one left in the cache.
                 val dir = File(appContext.cacheDir, "sfx_v$RENDER_VERSION").apply { mkdirs() }
+                cacheDir = dir
 
                 for (sfx in Sfx.values()) {
                     val file = File(dir, "one_${sfx.name.lowercase()}.wav")
@@ -97,18 +102,15 @@ class SoundEngine(context: Context) {
                 }
 
                 for (bank in SfxBank.values()) {
-                    val ids = IntArray(BANK_SIZE)
-                    for (i in 0 until BANK_SIZE) {
+                    val size = if (bank == SfxBank.VOICE) VOICE_LINES.size else BANK_SIZE
+                    val ids = IntArray(size)
+                    for (i in 0 until size) {
                         val file = File(dir, "${bank.name.lowercase()}_$i.wav")
                         if (!file.exists()) writeWav(file, renderVariant(bank, i))
                         ids[i] = pool.load(file.absolutePath, 1)
                     }
                     banks[bank] = ids
                 }
-
-                val loop = File(dir, "music.wav")
-                if (!loop.exists()) writeWav(loop, renderMusic())
-                musicFile = loop
 
                 loaded = true
                 if (musicWanted) startMusic()
@@ -128,16 +130,20 @@ class SoundEngine(context: Context) {
     }
 
     /**
-     * Picks a variant the bank did not just play and pitches it. [gain] and [spread]
-     * let a caller lean on the same bank differently - a cut that barely counted
-     * gets the same recipes quieter and lower.
+     * Picks a variant the bank did not just play and pitches it. [spread] narrows
+     * the pitch range for the sounds that are melodies rather than noises - a
+     * wildly detuned flourish sounds like a mistake, a detuned swish does not.
      */
     fun play(bank: SfxBank, gain: Float = 1f, spread: Int = PITCH_STEPS.size) {
         if (!enabled || !loaded) return
+        if (bank == SfxBank.VOICE && !voiceEnabled) return
         val ids = banks[bank] ?: return
+        if (ids.isEmpty()) return
 
         var index = random.nextInt(ids.size)
-        if (ids.size > 1 && index == lastPlayed[bank]) index = (index + 1 + random.nextInt(ids.size - 1)) % ids.size
+        if (ids.size > 1 && index == lastPlayed[bank]) {
+            index = (index + 1 + random.nextInt(ids.size - 1)) % ids.size
+        }
         lastPlayed[bank] = index
 
         val range = spread.coerceIn(1, PITCH_STEPS.size)
@@ -155,54 +161,66 @@ class SoundEngine(context: Context) {
     // Music
     // -----------------------------------------------------------------
 
+    /** Starts a random track. Rendered on demand, so a launch waits for one. */
     fun startMusic() {
         musicWanted = true
-        if (!musicEnabled) return
-        val file = musicFile ?: return
+        if (!musicEnabled || !loaded) return
         if (music != null) {
             resumeMusic()
             return
         }
-        music = try {
-            MediaPlayer().apply {
-                setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_GAME)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                        .build()
-                )
-                setDataSource(file.absolutePath)
-                isLooping = true
-                setVolume(musicVolume, musicVolume)
-                prepare()
-                start()
+        val pick = if (TRACK_COUNT > 1) {
+            var p = random.nextInt(TRACK_COUNT)
+            if (p == currentTrack) p = (p + 1) % TRACK_COUNT
+            p
+        } else 0
+        currentTrack = pick
+
+        Thread {
+            try {
+                val data = tracks[pick] ?: renderTrack(pick).also { tracks[pick] = it }
+                if (!musicWanted || !musicEnabled) return@Thread
+                synchronized(this) {
+                    if (music != null) return@Thread
+                    music = MusicStream(data).apply {
+                        setVolume(musicVolume)
+                        setSpeed(musicSpeed)
+                        start()
+                    }
+                }
+            } catch (e: Exception) {
+                // No music is survivable.
             }
-        } catch (e: Exception) {
-            null
-        }
+        }.start()
     }
 
     fun stopMusic() {
         musicWanted = false
-        music?.let {
-            try {
-                it.stop()
-            } catch (e: IllegalStateException) {
-                // Already stopped; releasing is all that is left to do.
-            }
-            it.release()
+        synchronized(this) {
+            music?.stop()
+            music = null
         }
-        music = null
     }
 
-    /** Holds the track where it is - for a pause, or the app going to the back. */
     fun pauseMusic() {
-        music?.let { if (it.isPlaying) it.pause() }
+        music?.pause()
     }
 
     fun resumeMusic() {
         if (!musicEnabled || !musicWanted) return
-        music?.let { if (!it.isPlaying) it.start() }
+        music?.resume()
+    }
+
+    /**
+     * Speeds the track up without pitching it - AudioTrack's playback params
+     * time-stretch rather than resample, so a faster run does not turn the bass
+     * into a chipmunk.
+     */
+    fun setMusicSpeed(speed: Float) {
+        val clamped = speed.coerceIn(1f, MAX_MUSIC_SPEED)
+        if (kotlin.math.abs(clamped - musicSpeed) < 0.005f) return
+        musicSpeed = clamped
+        music?.setSpeed(clamped)
     }
 
     fun release() {
@@ -213,8 +231,113 @@ class SoundEngine(context: Context) {
         loaded = false
     }
 
+    /**
+     * A looping stream the engine feeds itself, one chunk at a time, wrapping at
+     * the end of the buffer. MediaPlayer's own looping leaves an audible gap on
+     * many devices - it tears the file down and sets it up again - whereas this
+     * simply keeps writing, so the loop point is sample-exact and inaudible.
+     */
+    private inner class MusicStream(private val data: ShortArray) {
+
+        private var track: AudioTrack? = null
+        private var thread: Thread? = null
+        @Volatile private var running = false
+        @Volatile private var paused = false
+
+        fun start() {
+            val minBuffer = AudioTrack.getMinBufferSize(
+                RATE, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT
+            ).coerceAtLeast(4096)
+            val t = AudioTrack.Builder()
+                .setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_GAME)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                        .build()
+                )
+                .setAudioFormat(
+                    AudioFormat.Builder()
+                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                        .setSampleRate(RATE)
+                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                        .build()
+                )
+                .setBufferSizeInBytes(max(minBuffer * 2, RATE))
+                .setTransferMode(AudioTrack.MODE_STREAM)
+                .build()
+            track = t
+            t.play()
+
+            running = true
+            thread = Thread {
+                var pos = 0
+                while (running) {
+                    if (paused) {
+                        Thread.sleep(20)
+                        continue
+                    }
+                    val take = minOf(CHUNK, data.size - pos)
+                    // Non-blocking, so stopping never has to wait on a full buffer.
+                    val written = t.write(data, pos, take, AudioTrack.WRITE_NON_BLOCKING)
+                    if (written > 0) {
+                        pos = (pos + written) % data.size
+                    } else {
+                        Thread.sleep(8)
+                    }
+                }
+            }.apply { isDaemon = true; start() }
+        }
+
+        fun stop() {
+            running = false
+            thread?.join(300)
+            thread = null
+            try {
+                track?.pause()
+                track?.flush()
+                track?.stop()
+            } catch (e: IllegalStateException) {
+                // Already down; releasing is all that is left.
+            }
+            track?.release()
+            track = null
+        }
+
+        fun pause() {
+            paused = true
+            try {
+                track?.pause()
+            } catch (e: IllegalStateException) {
+                // Nothing to hold.
+            }
+        }
+
+        fun resume() {
+            if (!paused) return
+            paused = false
+            try {
+                track?.play()
+            } catch (e: IllegalStateException) {
+                // Nothing to resume.
+            }
+        }
+
+        fun setVolume(v: Float) {
+            track?.setVolume(v.coerceIn(0f, 1f))
+        }
+
+        fun setSpeed(speed: Float) {
+            val t = track ?: return
+            try {
+                t.playbackParams = PlaybackParams().setSpeed(speed).setPitch(1f)
+            } catch (e: Exception) {
+                // A device that will not time-stretch just plays at tempo.
+            }
+        }
+    }
+
     // -----------------------------------------------------------------
-    // The single-shot set
+    // Single shots
     // -----------------------------------------------------------------
 
     private fun renderSingle(sfx: Sfx): ShortArray = when (sfx) {
@@ -227,23 +350,21 @@ class SoundEngine(context: Context) {
             tone(b, 0, 120, 0f, 0f, NOISE, 0.14f, attackMs = 2, crush = 3)
         }
 
+        // Major, because healing is good news.
         Sfx.HEAL -> buffer(240) { b ->
-            tone(b, 0, 110, 880f, 1320f, TRIANGLE, 0.34f, attackMs = 4)
-            tone(b, 80, 140, 1320f, 2093f, TRIANGLE, 0.30f, attackMs = 4)
+            tone(b, 0, 110, 880f, 1109f, TRIANGLE, 0.34f, attackMs = 4)
+            tone(b, 80, 140, 1319f, 1760f, TRIANGLE, 0.30f, attackMs = 4)
         }
 
         Sfx.LEVEL_UP -> buffer(340) { b ->
-            floatArrayOf(523f, 659f, 784f, 1046f).forEachIndexed { i, hz ->
-                tone(b, i * 65, 90, hz, hz, SQUARE, 0.40f, crush = 3)
-            }
+            arp(b, majorRun(523f), 65, 90, 0.40f)
         }
 
         Sfx.COUNTDOWN -> buffer(120) { b ->
             tone(b, 0, 95, 784f, 784f, SQUARE, 0.44f, crush = 3)
         }
 
-        // Four notes walking down a minor chord. The run is over and it should
-        // sound like it.
+        // Minor, walking down. The run is over and it should sound like it.
         Sfx.GAME_OVER -> buffer(740) { b ->
             val notes = floatArrayOf(523f, 440f, 349f, 262f)
             notes.forEachIndexed { i, hz ->
@@ -267,18 +388,55 @@ class SoundEngine(context: Context) {
         }
     }
 
-    // -----------------------------------------------------------------
-    // The banks - ten separately written recipes each
-    // -----------------------------------------------------------------
-
     private fun renderVariant(bank: SfxBank, index: Int): ShortArray = when (bank) {
+        SfxBank.SWIPE -> renderSwipe(index)
         SfxBank.SLICE -> renderSlice(index)
         SfxBank.GOOD -> renderGood(index)
         SfxBank.PERFECT -> renderPerfect(index)
         SfxBank.BAD -> renderBad(index)
+        SfxBank.DANGER -> renderDanger(index)
+        SfxBank.VOICE -> renderVoice(index)
     }
 
-    /** Ten blades: swishes, ticks, zaps and one that just crunches. */
+    // -----------------------------------------------------------------
+    // Banks - noise
+    // -----------------------------------------------------------------
+
+    /**
+     * The blade moving, before it has hit anything. Air rather than impact: quiet,
+     * mostly noise, no pitch to speak of, so it can fire on every swipe without
+     * becoming the loudest thing in the game.
+     */
+    private fun renderSwipe(i: Int): ShortArray = when (i) {
+        0 -> buffer(150) { b -> tone(b, 0, 130, 0f, 0f, NOISE, 0.20f, attackMs = 30, crush = 5) }
+        1 -> buffer(120) { b ->
+            tone(b, 0, 100, 0f, 0f, NOISE, 0.18f, attackMs = 18, crush = 3)
+            tone(b, 0, 80, 1100f, 500f, TRIANGLE, 0.09f, attackMs = 12)
+        }
+        2 -> buffer(180) { b -> tone(b, 0, 160, 0f, 0f, NOISE, 0.17f, attackMs = 50, crush = 7) }
+        3 -> buffer(110) { b ->
+            tone(b, 0, 95, 0f, 0f, NOISE, 0.22f, attackMs = 14, crush = 2)
+        }
+        4 -> buffer(160) { b ->
+            tone(b, 0, 140, 0f, 0f, NOISE, 0.16f, attackMs = 40, crush = 9)
+            tone(b, 20, 90, 320f, 180f, SINE, 0.12f, attackMs = 20)
+        }
+        5 -> buffer(130) { b -> tone(b, 0, 115, 0f, 0f, NOISE, 0.19f, attackMs = 25, crush = 4) }
+        6 -> buffer(200) { b ->
+            tone(b, 0, 180, 0f, 0f, NOISE, 0.15f, attackMs = 70, crush = 6)
+        }
+        7 -> buffer(100) { b ->
+            tone(b, 0, 85, 0f, 0f, NOISE, 0.21f, attackMs = 10, crush = 3)
+            tone(b, 0, 40, 1800f, 900f, TRIANGLE, 0.07f, attackMs = 8)
+        }
+        8 -> buffer(170) { b -> tone(b, 0, 150, 0f, 0f, NOISE, 0.18f, attackMs = 45, crush = 11) }
+        else -> buffer(140) { b ->
+            tone(b, 0, 120, 0f, 0f, NOISE, 0.17f, attackMs = 22, crush = 5)
+            tone(b, 0, 60, 600f, 260f, TRIANGLE, 0.08f, attackMs = 14)
+        }
+    }
+
+    /** Ten blades landing: swishes, ticks, zaps and one that just crunches. */
     private fun renderSlice(i: Int): ShortArray = when (i) {
         0 -> buffer(110) { b ->
             tone(b, 0, 85, 0f, 0f, NOISE, 0.34f, attackMs = 1, crush = 2)
@@ -289,7 +447,6 @@ class SoundEngine(context: Context) {
             tone(b, 10, 70, 0f, 0f, NOISE, 0.26f, attackMs = 1, crush = 2)
         }
         2 -> buffer(180) { b ->
-            // A long airy sweep: the sound of a slow, deliberate cut.
             tone(b, 0, 165, 0f, 0f, NOISE, 0.24f, attackMs = 30, crush = 4)
             tone(b, 20, 120, 900f, 240f, TRIANGLE, 0.20f, attackMs = 8)
         }
@@ -306,8 +463,8 @@ class SoundEngine(context: Context) {
             tone(b, 0, 80, 2600f, 300f, SQUARE, 0.34f, attackMs = 1, duty = 0.125f, crush = 2)
         }
         6 -> buffer(95) { b ->
-            tone(b, 0, 70, 0f, 0f, NOISE, 0.38f, attackMs = 1, crush = 1)
-            tone(b, 0, 14, 3000f, 2200f, SQUARE, 0.22f, attackMs = 1, duty = 0.5f)
+            tone(b, 0, 70, 0f, 0f, NOISE, 0.38f, attackMs = 1)
+            tone(b, 0, 14, 3000f, 2200f, SQUARE, 0.22f, attackMs = 1)
         }
         7 -> buffer(130) { b ->
             tone(b, 0, 110, 3200f, 420f, SAW, 0.30f, attackMs = 1, crush = 3)
@@ -322,102 +479,123 @@ class SoundEngine(context: Context) {
         }
     }
 
-    /** Ten small approvals. Short, mid-register, never triumphant. */
+    // -----------------------------------------------------------------
+    // Banks - major. Everything here resolves upward and consonant.
+    // -----------------------------------------------------------------
+
+    /** Ten small approvals. Major thirds, fifths and octaves only. */
     private fun renderGood(i: Int): ShortArray = when (i) {
         0 -> buffer(110) { b -> tone(b, 0, 90, 587f, 587f, SQUARE, 0.42f, crush = 3) }
+        // Root then major third.
         1 -> buffer(160) { b ->
             tone(b, 0, 60, 523f, 523f, SQUARE, 0.40f, crush = 3)
             tone(b, 55, 90, 659f, 659f, SQUARE, 0.42f, crush = 3)
         }
+        // Root then fifth.
         2 -> buffer(150) { b ->
             tone(b, 0, 55, 587f, 587f, SQUARE, 0.40f, duty = 0.25f, crush = 3)
-            tone(b, 50, 85, 698f, 698f, SQUARE, 0.42f, duty = 0.25f, crush = 3)
+            tone(b, 50, 85, 880f, 880f, SQUARE, 0.42f, duty = 0.25f, crush = 3)
         }
         3 -> buffer(140) { b -> tone(b, 0, 120, 659f, 659f, TRIANGLE, 0.44f, attackMs = 4) }
+        // A whole-tone trill - no semitones, so nothing sours.
         4 -> buffer(130) { b ->
-            // A short trill: the same note wobbled rather than a second note.
-            tone(b, 0, 40, 622f, 660f, SQUARE, 0.40f, crush = 3)
-            tone(b, 38, 40, 660f, 622f, SQUARE, 0.38f, crush = 3)
-            tone(b, 76, 45, 622f, 622f, SQUARE, 0.36f, crush = 3)
+            tone(b, 0, 40, 587f, 587f, SQUARE, 0.40f, crush = 3)
+            tone(b, 38, 40, 659f, 659f, SQUARE, 0.38f, crush = 3)
+            tone(b, 76, 45, 587f, 587f, SQUARE, 0.36f, crush = 3)
         }
-        5 -> buffer(170) { b ->
-            tone(b, 0, 55, 494f, 494f, SQUARE, 0.38f, crush = 4)
-            tone(b, 50, 100, 587f, 587f, SQUARE, 0.42f, crush = 4)
+        // A plucked major chord: all three notes at once, triangle, soft attack.
+        5 -> buffer(230) { b ->
+            tone(b, 0, 200, 523f, 523f, TRIANGLE, 0.26f, attackMs = 3)
+            tone(b, 0, 200, 659f, 659f, TRIANGLE, 0.22f, attackMs = 5)
+            tone(b, 0, 200, 784f, 784f, TRIANGLE, 0.20f, attackMs = 7)
         }
-        6 -> buffer(120) { b -> tone(b, 0, 100, 440f, 466f, SQUARE, 0.42f, duty = 0.125f, crush = 4) }
+        6 -> buffer(120) { b -> tone(b, 0, 100, 440f, 440f, SQUARE, 0.42f, duty = 0.125f, crush = 4) }
         7 -> buffer(100) { b -> tone(b, 0, 80, 784f, 784f, SQUARE, 0.40f, duty = 0.25f, crush = 2) }
+        // Rising a major third across one note.
         8 -> buffer(150) { b ->
-            tone(b, 0, 130, 622f, 740f, TRIANGLE, 0.40f, attackMs = 3)
-            tone(b, 0, 40, 1244f, 1244f, SQUARE, 0.12f, duty = 0.125f)
+            tone(b, 0, 130, 622f, 784f, TRIANGLE, 0.40f, attackMs = 3)
+            tone(b, 0, 40, 1568f, 1568f, SQUARE, 0.10f, duty = 0.125f)
         }
+        // Up, down, up: the major third answered and restated.
         else -> buffer(180) { b ->
             tone(b, 0, 50, 659f, 659f, SQUARE, 0.38f, crush = 3)
             tone(b, 45, 45, 523f, 523f, SQUARE, 0.34f, crush = 3)
-            tone(b, 88, 80, 659f, 659f, SQUARE, 0.42f, crush = 3)
+            tone(b, 88, 80, 784f, 784f, SQUARE, 0.42f, crush = 3)
         }
     }
 
     /**
-     * Ten arcade flourishes. Every one is a run of notes going up - that shape is
-     * what a machine sounds like when it is pleased with you - varied by interval,
-     * length and timbre rather than by being different ideas.
+     * Ten arcade flourishes, every one built from a major triad, a major pentatonic
+     * or a plucked major chord. They all rise, because that shape is what a machine
+     * sounds like when it is pleased with you.
      */
     private fun renderPerfect(i: Int): ShortArray = when (i) {
-        // Major triad, the plain one.
+        // C major triad and up an octave.
         0 -> buffer(330) { b ->
-            arp(b, floatArrayOf(784f, 1046f, 1568f), 65, 90, 0.44f, duty = 0.25f)
-            tone(b, 140, 170, 2093f, 3136f, TRIANGLE, 0.18f, attackMs = 6)
+            arp(b, floatArrayOf(523f, 659f, 784f, 1046f), 65, 90, 0.42f, duty = 0.25f)
+            tone(b, 200, 170, 2093f, 2637f, TRIANGLE, 0.18f, attackMs = 6)
         }
-        // Octave run.
+        // G major, wide octave leap at the end.
         1 -> buffer(360) { b ->
-            arp(b, floatArrayOf(523f, 784f, 1046f, 1568f), 60, 90, 0.42f)
+            arp(b, floatArrayOf(392f, 587f, 784f, 1568f), 60, 95, 0.42f)
         }
-        // Pentatonic, five quick notes.
+        // Major pentatonic, five quick notes.
         2 -> buffer(360) { b ->
-            arp(b, floatArrayOf(587f, 698f, 880f, 1046f, 1319f), 52, 80, 0.40f, duty = 0.25f)
+            arp(b, floatArrayOf(523f, 587f, 659f, 784f, 880f), 52, 85, 0.40f, duty = 0.25f)
         }
-        // Stacked fifths, wide and bright.
+        // Stacked fifths: no third at all, so it cannot be anything but open.
         3 -> buffer(340) { b ->
-            arp(b, floatArrayOf(659f, 988f, 1319f, 1976f), 58, 95, 0.42f, duty = 0.125f)
+            arp(b, floatArrayOf(587f, 880f, 1319f, 1976f), 58, 95, 0.42f, duty = 0.125f)
         }
-        // A fast chromatic scramble upward.
-        4 -> buffer(320) { b ->
-            arp(b, floatArrayOf(880f, 932f, 988f, 1046f, 1109f, 1568f), 38, 70, 0.38f)
+        // A major arpeggio taken twice, second time an octave up.
+        4 -> buffer(380) { b ->
+            arp(b, floatArrayOf(440f, 554f, 659f, 880f, 1109f, 1319f), 52, 80, 0.38f)
         }
-        // Two up, one further up, held.
+        // Two up, then the octave held.
         5 -> buffer(400) { b ->
             arp(b, floatArrayOf(698f, 880f), 60, 80, 0.40f)
             tone(b, 130, 240, 1397f, 1397f, SQUARE, 0.44f, duty = 0.25f, crush = 3)
             tone(b, 140, 220, 2794f, 2794f, TRIANGLE, 0.14f, attackMs = 8)
         }
-        // Bell-like: triangle only, no square at all.
+        // Bell-like: triangle only, F major.
         6 -> buffer(420) { b ->
-            arp(b, floatArrayOf(1046f, 1319f, 1568f, 2093f), 70, 160, 0.34f, wave = TRIANGLE, attackMs = 4)
+            arp(b, floatArrayOf(698f, 880f, 1046f, 1397f), 70, 160, 0.34f, wave = TRIANGLE, attackMs = 4)
         }
-        // Rising with a trill on top.
+        // Rising, with a major-second trill on top.
         7 -> buffer(400) { b ->
             arp(b, floatArrayOf(784f, 1046f), 70, 90, 0.40f)
             tone(b, 150, 45, 1568f, 1568f, SQUARE, 0.42f, crush = 3)
             tone(b, 192, 45, 1760f, 1760f, SQUARE, 0.40f, crush = 3)
             tone(b, 234, 120, 1568f, 1568f, SQUARE, 0.44f, crush = 3)
         }
-        // Sweep instead of steps.
-        8 -> buffer(330) { b ->
-            tone(b, 0, 220, 523f, 2093f, SQUARE, 0.38f, duty = 0.25f, crush = 3, attackMs = 6)
-            tone(b, 190, 130, 2093f, 2093f, SQUARE, 0.42f, duty = 0.125f, crush = 3)
+        // A plucked major chord, struck and left to ring, then the octave over it.
+        8 -> buffer(430) { b ->
+            tone(b, 0, 400, 523f, 523f, TRIANGLE, 0.26f, attackMs = 3)
+            tone(b, 12, 388, 659f, 659f, TRIANGLE, 0.22f, attackMs = 4)
+            tone(b, 24, 376, 784f, 784f, TRIANGLE, 0.20f, attackMs = 5)
+            tone(b, 36, 364, 1046f, 1046f, TRIANGLE, 0.16f, attackMs = 6)
+            tone(b, 210, 200, 1568f, 1568f, SQUARE, 0.22f, duty = 0.125f, crush = 3)
         }
-        // The big one: six notes and a bass thump under them.
-        else -> buffer(460) { b ->
-            arp(b, floatArrayOf(523f, 659f, 784f, 1046f, 1319f, 1568f), 55, 85, 0.40f)
+        // The big one: a full major scale run with a bass thump under it.
+        else -> buffer(470) { b ->
+            arp(b, floatArrayOf(523f, 587f, 659f, 698f, 784f, 880f, 988f, 1046f), 48, 75, 0.38f)
             tone(b, 0, 180, 131f, 131f, SINE, 0.34f)
-            tone(b, 280, 160, 2093f, 2637f, TRIANGLE, 0.16f, attackMs = 8)
+            tone(b, 300, 170, 1568f, 2093f, TRIANGLE, 0.16f, attackMs = 8)
         }
     }
 
-    /** Ten refusals: buzzes, thuds, glitches. Deliberately unpleasant. */
+    /** A major triad plus the octave, from any root. */
+    private fun majorRun(root: Float): FloatArray =
+        floatArrayOf(root, root * MAJOR_THIRD, root * FIFTH, root * 2f)
+
+    // -----------------------------------------------------------------
+    // Banks - minor. Everything here sags.
+    // -----------------------------------------------------------------
+
+    /** Ten refusals: minor, diminished and chromatic. Deliberately unpleasant. */
     private fun renderBad(i: Int): ShortArray = when (i) {
         0 -> buffer(230) { b -> tone(b, 0, 190, 233f, 117f, SQUARE, 0.40f, duty = 0.125f, crush = 5) }
-        // The classic wrong-answer double buzz.
+        // The classic wrong-answer double buzz, a semitone apart.
         1 -> buffer(300) { b ->
             tone(b, 0, 110, 196f, 196f, SQUARE, 0.42f, duty = 0.125f, crush = 6)
             tone(b, 140, 130, 185f, 185f, SQUARE, 0.42f, duty = 0.125f, crush = 6)
@@ -440,19 +618,96 @@ class SoundEngine(context: Context) {
             tone(b, 0, 210, 0f, 0f, NOISE, 0.30f, attackMs = 4, crush = 12)
             tone(b, 0, 170, 175f, 131f, SQUARE, 0.32f, duty = 0.125f, crush = 5)
         }
-        // A warble on the way down.
+        // A minor triad falling, warbling as it goes.
         7 -> buffer(300) { b ->
-            tone(b, 0, 70, 262f, 220f, SQUARE, 0.36f, duty = 0.25f, crush = 5)
-            tone(b, 65, 70, 233f, 196f, SQUARE, 0.36f, duty = 0.25f, crush = 5)
-            tone(b, 130, 140, 196f, 147f, SQUARE, 0.38f, duty = 0.25f, crush = 5)
+            tone(b, 0, 70, 349f, 330f, SQUARE, 0.36f, duty = 0.25f, crush = 5)
+            tone(b, 65, 70, 294f, 277f, SQUARE, 0.36f, duty = 0.25f, crush = 5)
+            tone(b, 130, 140, 220f, 175f, SQUARE, 0.38f, duty = 0.25f, crush = 5)
         }
         // A dead thunk with almost no pitch to it.
         8 -> buffer(180) { b ->
             tone(b, 0, 150, 110f, 70f, SINE, 0.52f, attackMs = 1)
             tone(b, 0, 60, 0f, 0f, NOISE, 0.18f, attackMs = 1, crush = 6)
         }
+        // A diminished chord, all minor thirds, which is the sourest chord there is.
         else -> buffer(320) { b ->
-            arp(b, floatArrayOf(294f, 277f, 262f, 247f), 70, 90, 0.34f, duty = 0.125f, crush = 5)
+            tone(b, 0, 280, 262f, 262f, SQUARE, 0.24f, duty = 0.125f, crush = 5)
+            tone(b, 0, 280, 311f, 311f, SQUARE, 0.24f, duty = 0.125f, crush = 5)
+            tone(b, 0, 280, 370f, 370f, SQUARE, 0.24f, duty = 0.125f, crush = 5)
+        }
+    }
+
+    /**
+     * Ten ways of saying you are about to die: falling minor figures with the
+     * shape of the tune that plays when a plumber runs out of time. Longer and
+     * more melodic than a bad cut, because this is an announcement, not a verdict.
+     */
+    private fun renderDanger(i: Int): ShortArray = when (i) {
+        // A minor triad falling, then a semitone lower than it should land.
+        0 -> buffer(620) { b ->
+            arp(b, floatArrayOf(523f, 415f, 349f, 262f), 130, 170, 0.36f, duty = 0.25f)
+            tone(b, 400, 220, 123f, 116f, SINE, 0.40f, attackMs = 8)
+        }
+        // Chromatic slide down, the whole thing sliding under itself.
+        1 -> buffer(560) { b ->
+            tone(b, 0, 520, 440f, 220f, SQUARE, 0.32f, duty = 0.125f, crush = 6, attackMs = 10)
+            tone(b, 0, 520, 220f, 110f, SINE, 0.34f, attackMs = 20)
+        }
+        // Two minor thirds falling in pairs.
+        2 -> buffer(600) { b ->
+            arp(b, floatArrayOf(466f, 392f), 120, 150, 0.34f)
+            arp2(b, 260, floatArrayOf(392f, 330f), 120, 150, 0.34f)
+            tone(b, 380, 200, 110f, 98f, SINE, 0.38f, attackMs = 10)
+        }
+        // A held minor second, the most anxious interval available.
+        3 -> buffer(560) { b ->
+            tone(b, 0, 520, 330f, 330f, SQUARE, 0.24f, duty = 0.25f, crush = 5, attackMs = 20)
+            tone(b, 0, 520, 311f, 311f, SQUARE, 0.24f, duty = 0.25f, crush = 5, attackMs = 20)
+            tone(b, 300, 240, 98f, 82f, SINE, 0.36f, attackMs = 12)
+        }
+        // Descending minor scale, quick and panicked.
+        4 -> buffer(560) { b ->
+            arp(b, floatArrayOf(523f, 466f, 415f, 392f, 349f, 311f), 80, 110, 0.32f, duty = 0.125f)
+        }
+        // Alarm: the same two notes alternating, a tritone apart.
+        5 -> buffer(640) { b ->
+            for (n in 0 until 4) {
+                val hz = if (n % 2 == 0) 466f else 330f
+                tone(b, n * 150, 130, hz, hz, SQUARE, 0.32f, duty = 0.25f, crush = 5)
+            }
+            tone(b, 0, 600, 82f, 78f, SINE, 0.30f, attackMs = 40)
+        }
+        // A minor arpeggio down with a wobble on the last note.
+        6 -> buffer(620) { b ->
+            arp(b, floatArrayOf(440f, 349f, 294f), 140, 170, 0.34f)
+            tone(b, 420, 190, 220f, 196f, SQUARE, 0.34f, duty = 0.125f, crush = 6)
+        }
+        // Everything sagging together: a whole diminished chord sliding down.
+        7 -> buffer(600) { b ->
+            tone(b, 0, 560, 349f, 262f, SQUARE, 0.22f, duty = 0.25f, crush = 6, attackMs = 20)
+            tone(b, 0, 560, 415f, 311f, SQUARE, 0.22f, duty = 0.25f, crush = 6, attackMs = 20)
+            tone(b, 0, 560, 494f, 370f, SQUARE, 0.22f, duty = 0.25f, crush = 6, attackMs = 20)
+        }
+        // Slow, heavy, funereal.
+        8 -> buffer(700) { b ->
+            tone(b, 0, 300, 262f, 262f, TRIANGLE, 0.34f, attackMs = 20)
+            tone(b, 320, 360, 220f, 208f, TRIANGLE, 0.34f, attackMs = 20)
+            tone(b, 0, 660, 65f, 62f, SINE, 0.40f, attackMs = 30)
+        }
+        // A siren that never resolves.
+        else -> buffer(660) { b ->
+            tone(b, 0, 320, 392f, 294f, TRIANGLE, 0.30f, attackMs = 30)
+            tone(b, 300, 340, 370f, 277f, TRIANGLE, 0.30f, attackMs = 30)
+            tone(b, 0, 620, 98f, 92f, SINE, 0.34f, attackMs = 40)
+        }
+    }
+
+    /** An arp that starts somewhere other than zero. */
+    private fun arp2(
+        buf: FloatArray, startMs: Int, notes: FloatArray, stepMs: Int, holdMs: Int, gain: Float
+    ) {
+        notes.forEachIndexed { i, hz ->
+            tone(buf, startMs + i * stepMs, holdMs, hz, hz, SQUARE, gain, 3, 0.5f, 3)
         }
     }
 
@@ -474,58 +729,180 @@ class SoundEngine(context: Context) {
     }
 
     // -----------------------------------------------------------------
-    // The loop
+    // The announcer
     // -----------------------------------------------------------------
 
     /**
-     * Eight bars of bass-led chip music at 108 BPM, in A minor.
+     * A shouted line, built rather than recorded.
      *
-     * The weight is deliberately all at the bottom: a sine sub doubling a square
-     * bass, a kick that drops a couple of octaves in ninety milliseconds, and only
-     * a thin arpeggio up top so the cut sounds always sit above the track rather
-     * than fighting it.
+     * Vowels are three damped sinusoids at the formant frequencies of the vowel,
+     * re-struck on every glottal pulse - a crude FOF synthesiser, which is enough
+     * for a vowel to be recognisable. Fricatives are noise ring-modulated toward
+     * their centre frequency, and plosives are a beat of silence followed by a
+     * burst. The pitch falls across the phrase, which is what makes it read as a
+     * shout rather than a word.
+     *
+     * It will sound like an arcade cabinet, not like a person. That is the point.
      */
-    private fun renderMusic(): ShortArray {
-        val stepMs = (60_000f / BPM / 2f).roundToInt()   // an eighth note
-        val bars = 8
-        val steps = bars * 8
-        val buf = FloatArray(samplesFor(steps * stepMs + 400))
+    private fun renderVoice(index: Int): ShortArray {
+        val line = VOICE_LINES[index.coerceIn(0, VOICE_LINES.size - 1)]
+        val total = line.sumOf { it.ms } + 120
+        val buf = FloatArray(samplesFor(total))
 
-        // A minor - A A F G A A F E, two bars a chord would be too slow at this
-        // tempo, so one bar each and round twice.
-        val roots = floatArrayOf(55f, 55f, 43.65f, 49f, 55f, 55f, 43.65f, 41.2f)
-        // Root, root, root, fifth, root, octave, fifth, root: enough movement to
-        // carry eight bars without becoming a melody you notice.
-        val pattern = floatArrayOf(1f, 1f, 1f, 1.5f, 1f, 2f, 1.5f, 1f)
+        var at = 0
+        val voiced = line.count { it.kind == VOWEL }
+        var vowelSeen = 0
+
+        for (phone in line) {
+            when (phone.kind) {
+                VOWEL -> {
+                    // Falling across the phrase, and a touch of sag inside each
+                    // vowel: both are what a raised voice does.
+                    val spot = if (voiced <= 1) 0f else vowelSeen.toFloat() / (voiced - 1)
+                    val f0 = VOICE_PITCH * (1f - 0.22f * spot)
+                    formant(buf, at, phone.ms, f0, f0 * 0.94f, phone.f1, phone.f2, phone.f3, phone.gain)
+                    vowelSeen++
+                }
+                FRIC -> tone(buf, at, phone.ms, phone.f1, phone.f1, NOISE, phone.gain * 0.5f, attackMs = 6, crush = 2)
+                else -> {
+                    // The silence before a plosive is what makes it a plosive.
+                    tone(buf, at + phone.ms / 2, phone.ms / 2, phone.f1, phone.f1 * 0.6f, NOISE, phone.gain * 0.7f, attackMs = 1)
+                }
+            }
+            at += phone.ms
+        }
+        return finish(buf, peak = 27000f)
+    }
+
+    private fun formant(
+        buf: FloatArray,
+        startMs: Int,
+        durationMs: Int,
+        fromF0: Float,
+        toF0: Float,
+        f1: Float,
+        f2: Float,
+        f3: Float,
+        gain: Float
+    ) {
+        val start = samplesFor(startMs)
+        val length = samplesFor(durationMs)
+        if (start >= buf.size || length <= 0) return
+
+        val attack = samplesFor(8).coerceAtLeast(1)
+        var sincePulse = 1e9f
+        var phase = 0f
+
+        for (i in 0 until length) {
+            val index = start + i
+            if (index >= buf.size) break
+
+            val progress = i.toFloat() / length
+            val f0 = fromF0 * (toF0 / fromF0).pow(progress)
+
+            // Advance the glottal cycle and re-strike the resonators on each pulse.
+            phase += f0 / RATE
+            if (phase >= 1f) {
+                phase -= 1f
+                sincePulse = 0f
+            }
+
+            val t = sincePulse / RATE
+            // Higher formants decay faster, which is what gives a vowel its colour
+            // rather than sounding like three flutes.
+            val v = (sin(2.0 * PI * f1 * t).toFloat() * exp(-t * 380f) * 1.0f +
+                sin(2.0 * PI * f2 * t).toFloat() * exp(-t * 620f) * 0.55f +
+                sin(2.0 * PI * f3 * t).toFloat() * exp(-t * 950f) * 0.28f)
+
+            val envelope = when {
+                i < attack -> i.toFloat() / attack
+                progress > 0.82f -> ((1f - progress) / 0.18f)
+                else -> 1f
+            }
+
+            // A little saturation: a shout is not a clean tone.
+            val driven = (v * 1.5f).coerceIn(-1f, 1f)
+            buf[index] += driven * envelope * gain
+            sincePulse += 1f
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // Music generation
+    // -----------------------------------------------------------------
+
+    /**
+     * Sixteen bars of bass-led chip music, generated from a per-track spec: a key,
+     * a chord progression, a bass figure, a drum pattern and whether a lead plays.
+     *
+     * The weight is deliberately all at the bottom - a sine sub doubling a square
+     * bass, and a kick that drops two octaves in ninety milliseconds - so the cut
+     * sounds sit above the track rather than fight it.
+     *
+     * Every voice is written with wrap-around, so a note struck in the last bar
+     * rings on across the loop point into the first. That is what makes the seam
+     * inaudible: the buffer is a circle, not a clip.
+     */
+    private fun renderTrack(index: Int): ShortArray {
+        val spec = TRACKS[index.coerceIn(0, TRACKS.size - 1)]
+        val stepMs = (60_000f / BASE_BPM / 2f).roundToInt()      // an eighth note
+        val bars = 16
+        val steps = bars * 8
+        val buf = FloatArray(samplesFor(steps * stepMs))
+
+        val bassFigure = BASS_FIGURES[spec.bass]
+        val kickFigure = KICK_FIGURES[spec.kick]
+        val third = if (spec.minor) MINOR_THIRD else MAJOR_THIRD
 
         for (bar in 0 until bars) {
-            val root = roots[bar]
+            // Two bars per chord, so sixteen bars is an eight-chord progression.
+            val root = spec.root * semitone(spec.progression[(bar / 2) % spec.progression.size])
+            // The second half of the loop lifts an octave in the lead and drops a
+            // note from the bass: enough that thirty-five seconds does not feel
+            // like the same four bars eight times.
+            val secondHalf = bar >= 8
+
             for (eighth in 0 until 8) {
                 val at = (bar * 8 + eighth) * stepMs
+                val hold = (stepMs * 0.92f).toInt()
 
-                val hz = root * pattern[eighth]
-                tone(buf, at, (stepMs * 0.92f).toInt(), hz, hz, SQUARE, 0.26f, attackMs = 4, duty = 0.25f, crush = 4)
-                // The sub is what makes it bassy rather than merely low.
-                tone(buf, at, (stepMs * 0.95f).toInt(), hz, hz, SINE, 0.34f, attackMs = 6)
-
-                // Kick on one and three.
-                if (eighth == 0 || eighth == 4) {
-                    tone(buf, at, 95, 150f, 45f, SINE, 0.55f, attackMs = 1)
-                    tone(buf, at, 22, 0f, 0f, NOISE, 0.10f, attackMs = 1, crush = 4)
+                val mult = bassFigure[eighth]
+                if (mult > 0f && !(secondHalf && eighth == 6)) {
+                    val hz = root * mult
+                    tone(buf, at, hold, hz, hz, SQUARE, 0.24f, attackMs = 4, duty = 0.25f, crush = 4, wrap = true)
+                    // The sub is what makes it bassy rather than merely low.
+                    tone(buf, at, (stepMs * 0.95f).toInt(), hz, hz, SINE, 0.34f, attackMs = 6, wrap = true)
                 }
-                // Hat on the offbeats, quiet enough to be felt more than heard.
+
+                if (kickFigure[eighth]) {
+                    tone(buf, at, 95, 150f, 45f, SINE, 0.55f, attackMs = 1, wrap = true)
+                    tone(buf, at, 22, 0f, 0f, NOISE, 0.10f, attackMs = 1, crush = 4, wrap = true)
+                }
+
+                // Hats on the offbeats, quiet enough to be felt more than heard.
                 if (eighth % 2 == 1) {
-                    tone(buf, at, 26, 0f, 0f, NOISE, 0.07f, attackMs = 1, crush = 2)
+                    tone(buf, at, 26, 0f, 0f, NOISE, 0.07f, attackMs = 1, crush = 2, wrap = true)
                 }
-                // A thin arpeggio, only on the second half of each bar.
-                if (eighth >= 4) {
-                    val lead = root * 8f * pattern[(eighth + 2) % 8]
-                    tone(buf, at, (stepMs * 0.6f).toInt(), lead, lead, TRIANGLE, 0.09f, attackMs = 8)
+                // A snare-ish crack on the backbeat.
+                if (eighth == 4) {
+                    tone(buf, at, 70, 0f, 0f, NOISE, 0.16f, attackMs = 2, crush = 3, wrap = true)
+                    tone(buf, at, 60, 220f, 170f, TRIANGLE, 0.10f, attackMs = 2, wrap = true)
+                }
+
+                if (spec.lead && eighth >= 4) {
+                    // Root, third, fifth, octave of the current chord, an octave
+                    // higher in the back half.
+                    val degrees = floatArrayOf(1f, third, FIFTH, 2f)
+                    val lead = root * 8f * degrees[eighth % 4] * (if (secondHalf) 2f else 1f)
+                    tone(buf, at, (stepMs * 0.6f).toInt(), lead, lead, TRIANGLE, 0.085f, attackMs = 8, wrap = true)
                 }
             }
         }
+        // No tail fade: a fade would be an audible dip once a bar.
         return finish(buf, peak = 21000f, fadeMs = 0)
     }
+
+    private fun semitone(steps: Int): Float = 2f.pow(steps / 12f)
 
     // -----------------------------------------------------------------
     // Synthesis primitives
@@ -542,6 +919,8 @@ class SoundEngine(context: Context) {
      * sweep sounds wrong because pitch is logarithmic - under a linear attack and a
      * curved decay to silence. [crush] holds each computed sample for that many
      * samples, the sample-and-hold that gives the whole set its eight-bit grain.
+     * [wrap] sends anything past the end of the buffer back to the beginning, which
+     * is what lets a loop's last note ring across its own seam.
      */
     private fun tone(
         buf: FloatArray,
@@ -553,11 +932,13 @@ class SoundEngine(context: Context) {
         gain: Float,
         attackMs: Int = 3,
         duty: Float = 0.5f,
-        crush: Int = 1
+        crush: Int = 1,
+        wrap: Boolean = false
     ) {
         val start = samplesFor(startMs)
         val length = samplesFor(durationMs)
-        if (start >= buf.size || length <= 0) return
+        if (buf.isEmpty() || length <= 0) return
+        if (!wrap && start >= buf.size) return
 
         val attack = samplesFor(attackMs).coerceAtLeast(1)
         var phase = 0f
@@ -565,8 +946,9 @@ class SoundEngine(context: Context) {
         var held = 0f
 
         for (i in 0 until length) {
-            val index = start + i
-            if (index >= buf.size) break
+            val raw = start + i
+            if (!wrap && raw >= buf.size) break
+            val index = if (wrap) raw % buf.size else raw
 
             val progress = i.toFloat() / length
             val envelope = if (i < attack) {
@@ -612,8 +994,8 @@ class SoundEngine(context: Context) {
             val limited = x - (x * x * x) / 6f
             out[i] = (limited * peak).roundToInt().coerceIn(-32768, 32767).toShort()
         }
-        // A short fade at the tail: cutting a wave mid-cycle is an audible click.
-        // The loop skips it, or every bar would come with a dip.
+        // Cutting a wave mid-cycle is an audible click, so one-shots fade out. A
+        // loop must not: the fade would become a dip once every pass.
         val fade = samplesFor(fadeMs).coerceAtMost(out.size)
         for (i in 0 until fade) {
             val k = 1f - i.toFloat() / fade
@@ -631,26 +1013,44 @@ class SoundEngine(context: Context) {
         out.putInt(36 + dataSize)
         out.put("WAVE".toByteArray())
         out.put("fmt ".toByteArray())
-        out.putInt(16)          // subchunk size
+        out.putInt(16)
         out.putShort(1)         // PCM
         out.putShort(1)         // mono
         out.putInt(RATE)
-        out.putInt(RATE * 2)    // byte rate
-        out.putShort(2)         // block align
-        out.putShort(16)        // bits per sample
+        out.putInt(RATE * 2)
+        out.putShort(2)
+        out.putShort(16)
         out.put("data".toByteArray())
         out.putInt(dataSize)
         for (s in samples) out.putShort(s)
         file.writeBytes(out.array())
     }
 
+    /** One sound of a spoken line. */
+    private class Phone(val kind: Int, val ms: Int, val f1: Float, val f2: Float = 0f, val f3: Float = 0f, val gain: Float = 0.5f)
+
+    private class TrackSpec(
+        val root: Float,
+        val minor: Boolean,
+        /** Semitone offsets from the root, one per two bars. */
+        val progression: IntArray,
+        val bass: Int,
+        val kick: Int,
+        val lead: Boolean
+    )
+
     private companion object {
         /** Bumped whenever the set is retuned, so the cache cannot serve stale waves. */
-        const val RENDER_VERSION = 2
+        const val RENDER_VERSION = 3
 
         const val BANK_SIZE = 10
         const val RATE = 22050
-        const val BPM = 108f
+        const val BASE_BPM = 108f
+        const val CHUNK = 4096
+        const val TRACK_COUNT = 10
+
+        /** Roughly +10 BPM per thousand points, capped before it becomes silly. */
+        const val MAX_MUSIC_SPEED = 1.75f
 
         const val SQUARE = 0
         const val TRIANGLE = 1
@@ -658,10 +1058,88 @@ class SoundEngine(context: Context) {
         const val NOISE = 3
         const val SINE = 4
 
-        /**
-         * Semitone-ish ratios either side of unity. Musical rather than random, so
-         * a shifted sound still sounds like it belongs to the same instrument.
-         */
+        const val MINOR_THIRD = 1.1892f
+        const val MAJOR_THIRD = 1.2599f
+        const val FIFTH = 1.4983f
+
+        const val VOWEL = 0
+        const val FRIC = 1
+        const val PLOSIVE = 2
+
+        /** A shout sits low and falls. */
+        const val VOICE_PITCH = 138f
+
         val PITCH_STEPS = floatArrayOf(0.84f, 0.89f, 0.94f, 1.0f, 1.06f, 1.12f, 1.19f)
+
+        // Formant frequencies for the vowels the announcer needs.
+        val ER = floatArrayOf(490f, 1350f, 1690f)
+        val EH = floatArrayOf(550f, 1770f, 2490f)
+        val AH = floatArrayOf(730f, 1090f, 2440f)
+        val IH = floatArrayOf(400f, 1900f, 2570f)
+        val EE = floatArrayOf(280f, 2250f, 2990f)
+        val UH = floatArrayOf(640f, 1190f, 2390f)
+
+        private fun vowel(f: FloatArray, ms: Int, gain: Float = 0.5f) =
+            Phone(VOWEL, ms, f[0], f[1], f[2], gain)
+
+        private fun plosive(ms: Int, hz: Float, gain: Float = 0.5f) = Phone(PLOSIVE, ms, hz, gain = gain)
+        private fun fric(ms: Int, hz: Float, gain: Float = 0.4f) = Phone(FRIC, ms, hz, gain = gain)
+
+        /** PER-FECT, PER-FECT CUT, EX-CELL-ENT, NICE CUT. */
+        val VOICE_LINES: Array<Array<Phone>> = arrayOf(
+            arrayOf(
+                plosive(45, 1400f), vowel(ER, 150), fric(60, 2600f),
+                vowel(EH, 120), plosive(45, 2200f), plosive(55, 3000f)
+            ),
+            arrayOf(
+                plosive(45, 1400f), vowel(ER, 140), fric(55, 2600f),
+                vowel(EH, 110), plosive(40, 2200f), plosive(40, 3000f),
+                Phone(PLOSIVE, 90, 0f, gain = 0f),
+                plosive(45, 2400f), vowel(AH, 150), plosive(55, 3000f)
+            ),
+            arrayOf(
+                vowel(EH, 120), plosive(40, 2400f), fric(70, 3200f),
+                vowel(EH, 130), vowel(UH, 90, 0.4f), vowel(EH, 110),
+                plosive(50, 3000f)
+            ),
+            arrayOf(
+                vowel(IH, 60, 0.35f), vowel(AH, 130), vowel(EE, 110),
+                fric(80, 3400f), plosive(45, 2400f), vowel(AH, 140), plosive(55, 3000f)
+            )
+        )
+
+        /** Eighth-note bass figures. Zero is a rest. */
+        val BASS_FIGURES = arrayOf(
+            floatArrayOf(1f, 1f, 1f, FIFTH, 1f, 1f, 2f, FIFTH),
+            floatArrayOf(1f, 0f, 1f, 1f, 0f, FIFTH, 1f, 0f),
+            floatArrayOf(1f, 1f, 2f, 1f, FIFTH, 1f, 2f, FIFTH),
+            floatArrayOf(1f, 1f, 1f, 1f, 1f, 1f, 1f, 1f),
+            floatArrayOf(1f, 0f, FIFTH, 0f, 2f, 0f, FIFTH, 0f),
+            floatArrayOf(1f, 1f, 0f, FIFTH, 0f, 1f, 2f, 0f)
+        )
+
+        val KICK_FIGURES = arrayOf(
+            booleanArrayOf(true, false, false, false, true, false, false, false),
+            booleanArrayOf(true, false, false, true, false, false, true, false),
+            booleanArrayOf(true, false, true, false, true, false, true, false),
+            booleanArrayOf(true, false, false, false, true, false, false, true)
+        )
+
+        /**
+         * Ten tracks. All bass-led and low, but no two share a key, a progression,
+         * a bass figure and a drum pattern, so a long session does not settle.
+         */
+        val TRACKS = arrayOf(
+            TrackSpec(55.0f, true, intArrayOf(0, 0, -4, -2, 0, 0, -4, -5), 0, 0, true),
+            TrackSpec(49.0f, true, intArrayOf(0, 3, -2, 0, 0, 3, 5, 3), 2, 1, true),
+            TrackSpec(43.65f, false, intArrayOf(0, 5, 7, 5, 0, 5, 7, 2), 1, 2, false),
+            TrackSpec(58.27f, true, intArrayOf(0, -3, -5, -3, 0, -3, 2, 0), 3, 3, true),
+            TrackSpec(51.91f, true, intArrayOf(0, 0, 5, 3, 0, 0, -2, -4), 4, 0, false),
+            TrackSpec(61.74f, false, intArrayOf(0, 7, 5, 2, 0, 7, 3, 5), 0, 2, true),
+            TrackSpec(46.25f, true, intArrayOf(0, 2, 3, 5, 0, 2, 3, 7), 5, 1, true),
+            TrackSpec(65.41f, true, intArrayOf(0, -5, -3, -1, 0, -5, -7, -5), 2, 3, false),
+            TrackSpec(41.20f, false, intArrayOf(0, 4, 7, 4, 0, 9, 7, 5), 3, 0, true),
+            TrackSpec(69.30f, true, intArrayOf(0, 0, -2, -4, -5, -4, -2, 0), 1, 2, true)
+        )
     }
 }

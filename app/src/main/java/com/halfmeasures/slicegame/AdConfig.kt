@@ -52,6 +52,15 @@ object PlaySession {
         gamesPlayed++
     }
 
+    /**
+     * Clears the count. Called when the player leaves through the gate: closing the
+     * task does not always kill the process, so without this the very next launch
+     * could put the same gate straight back in front of them.
+     */
+    fun reset() {
+        gamesPlayed = 0
+    }
+
     /** The number the game about to start will be. */
     fun nextGameNumber(): Int = gamesPlayed + 1
 

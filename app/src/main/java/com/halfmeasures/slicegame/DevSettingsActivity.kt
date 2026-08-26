@@ -348,6 +348,10 @@ class DevSettingsActivity : AppCompatActivity() {
                 { "${(it * 100).roundToInt()}%" }, { settings.soundVolume = it }
             )
             toggle(
+                c.body, "Announcer", "The shouted line on a perfect cut.",
+                settings.voiceEnabled
+            ) { settings.voiceEnabled = it }
+            toggle(
                 c.body, "Music", "The bass loop under a run.",
                 settings.musicEnabled
             ) { settings.musicEnabled = it }
@@ -655,6 +659,7 @@ class DevSettingsActivity : AppCompatActivity() {
             appendLine("SOUND & GLOW")
             appendLine("  Sound: ${onOff(settings.soundEnabled)}")
             appendLine("  How loud: ${(settings.soundVolume * 100).roundToInt()}%")
+            appendLine("  Announcer: ${onOff(settings.voiceEnabled)}")
             appendLine("  Music: ${onOff(settings.musicEnabled)}")
             appendLine("  Music volume: ${(settings.musicVolume * 100).roundToInt()}%")
             appendLine("  Neon glow: %.2fx".format(settings.neonGlow))
