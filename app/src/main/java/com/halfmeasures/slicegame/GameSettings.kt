@@ -125,6 +125,10 @@ data class GameSettings(
     var soundVolume: Float = DEFAULT_SOUND_VOLUME,
     /** How hard the neon outline burns around each shape. 0 turns it off. */
     var neonGlow: Float = DEFAULT_NEON_GLOW,
+    /** Whether the bass loop plays under a run. */
+    var musicEnabled: Boolean = DEFAULT_MUSIC_ENABLED,
+    /** How loud that loop is. Held well under the effects by default. */
+    var musicVolume: Float = DEFAULT_MUSIC_VOLUME,
 
     // ---- Ads ----
     /** Whether dying offers a watch-an-ad-to-carry-on card at all. */
@@ -188,6 +192,8 @@ data class GameSettings(
             .putBoolean("sound_enabled", soundEnabled)
             .putFloat("sound_volume", soundVolume)
             .putFloat("neon_glow", neonGlow)
+            .putBoolean("music_enabled", musicEnabled)
+            .putFloat("music_volume", musicVolume)
             .putBoolean("continues_enabled", continuesEnabled)
             .putInt("continues_per_run", continuesPerRun)
             .putInt("ad_gate_every", adGateEvery)
@@ -247,6 +253,10 @@ data class GameSettings(
         const val DEFAULT_SOUND_ENABLED = true
         const val DEFAULT_SOUND_VOLUME = 0.8f
         const val DEFAULT_NEON_GLOW = 1.0f
+        const val DEFAULT_MUSIC_ENABLED = true
+        const val DEFAULT_MUSIC_VOLUME = 0.45f
+        const val MIN_MUSIC_VOLUME = 0f
+        const val MAX_MUSIC_VOLUME = 1f
         const val MIN_SOUND_VOLUME = 0f
         const val MAX_SOUND_VOLUME = 1f
         const val MIN_NEON_GLOW = 0f
@@ -400,6 +410,8 @@ data class GameSettings(
                 soundEnabled = p.getBoolean("sound_enabled", DEFAULT_SOUND_ENABLED),
                 soundVolume = p.getFloat("sound_volume", DEFAULT_SOUND_VOLUME),
                 neonGlow = p.getFloat("neon_glow", DEFAULT_NEON_GLOW),
+                musicEnabled = p.getBoolean("music_enabled", DEFAULT_MUSIC_ENABLED),
+                musicVolume = p.getFloat("music_volume", DEFAULT_MUSIC_VOLUME),
                 continuesEnabled = p.getBoolean("continues_enabled", DEFAULT_CONTINUES_ENABLED),
                 continuesPerRun = p.getInt("continues_per_run", DEFAULT_CONTINUES_PER_RUN),
                 adGateEvery = p.getInt("ad_gate_every", DEFAULT_AD_GATE_EVERY),

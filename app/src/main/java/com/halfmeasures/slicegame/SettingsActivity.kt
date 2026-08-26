@@ -62,6 +62,11 @@ class SettingsActivity : AppCompatActivity() {
         ) { settings.soundEnabled = it }
 
         toggle(
+            root, "Music", "A bass loop that plays while you are cutting.",
+            settings.musicEnabled
+        ) { settings.musicEnabled = it }
+
+        toggle(
             root, "Vibration", "A buzz on every cut, stronger the better it lands.",
             settings.vibrationEnabled
         ) { settings.vibrationEnabled = it }

@@ -87,6 +87,8 @@ class GameView @JvmOverloads constructor(
         gravity = GameShape.BASE_GRAVITY * settings.gravityScale
         sounds.enabled = settings.soundEnabled
         sounds.volume = settings.soundVolume
+        sounds.musicEnabled = settings.musicEnabled
+        sounds.musicVolume = settings.musicVolume
         // Only the title screen picks up a new starting-health setting. Every
         // other state is mid-run - including the moments either side of an ad -
         // and refilling the bar there would hand out a free heal.
@@ -339,6 +341,7 @@ class GameView @JvmOverloads constructor(
     fun startLoop() {
         // Idempotent, so this is a safe place to make sure the effects are built.
         sounds.prepare()
+        if (state == State.PLAYING) sounds.resumeMusic()
         if (loopRunning) return
         loopRunning = true
         lastFrameTimeNanos = 0L
@@ -346,6 +349,8 @@ class GameView @JvmOverloads constructor(
     }
 
     fun stopLoop() {
+        // Whatever took the foreground from us should not have to play over this.
+        sounds.pauseMusic()
         if (!loopRunning) return
         loopRunning = false
         Choreographer.getInstance().removeFrameCallback(this)
@@ -733,7 +738,7 @@ class GameView @JvmOverloads constructor(
         // so they have to be rebuilt when the level changes.
         bodyShaders.clear()
         if (settings.vibrationEnabled) haptics.tick(settings.vibrationStrength)
-                            sounds.play(Sfx.BUTTON)
+        sounds.play(Sfx.LEVEL_UP, gain = 0.9f)
         sounds.play(Sfx.LEVEL_UP, gain = 0.9f)
     }
 
@@ -829,6 +834,9 @@ class GameView @JvmOverloads constructor(
         effects.addShake(0.7f * settings.cameraShakeStrength)
         if (settings.vibrationEnabled) haptics.gameOver(settings.vibrationStrength)
         if (!beatBestScore) sounds.play(Sfx.GAME_OVER)
+        // The track belongs to the run, so it goes when the run does rather than
+        // playing on under the score card.
+        sounds.stopMusic()
     }
 
     /**
@@ -986,6 +994,7 @@ class GameView @JvmOverloads constructor(
         pressedButton = 0
         hasLastTouch = false
         resumeCountdown = AdConfig.RESUME_COUNTDOWN_SECONDS
+        sounds.startMusic()
         state = State.RESUMING
         lastFrameTimeNanos = 0L
     }
@@ -1162,11 +1171,13 @@ class GameView @JvmOverloads constructor(
         hasLastTouch = false
         trailPoints.clear()
         if (settings.vibrationEnabled) haptics.tick(settings.vibrationStrength)
-                            sounds.play(Sfx.BUTTON)
+        sounds.play(Sfx.BUTTON)
+        sounds.pauseMusic()
     }
 
     private fun resumeGame() {
         if (state != State.PAUSED) return
+        sounds.resumeMusic()
         state = State.PLAYING
         // The clock has been standing still, so drop the stale timestamp rather
         // than handing the next frame the whole paused duration as its delta.
@@ -1200,6 +1211,7 @@ class GameView @JvmOverloads constructor(
         pixels.reset()
         bodyShaders.clear()
         continuesUsed = 0
+        sounds.stopMusic()
         state = State.READY
         lastFrameTimeNanos = 0L
     }
@@ -1244,6 +1256,7 @@ class GameView @JvmOverloads constructor(
         accentColor = Theme.stageAccent(0)
         continuesUsed = 0
         PlaySession.countGame()
+        sounds.startMusic()
         state = State.PLAYING
         spawnCountdown = 0.32f
         cutBuckets.fill(0)
@@ -1333,6 +1346,7 @@ class GameView @JvmOverloads constructor(
                 if (state == State.AD_PENDING) {
                     val released = pressedButton
                     pressedButton = 0
+                    if (released != 0) sounds.play(Sfx.BUTTON)
                     if (confirmingAdExit) {
                         if (released == 1 && adConfirmLeave.contains(event.x, event.y)) {
                             cancelPendingAd("Reward skipped")
@@ -1349,8 +1363,9 @@ class GameView @JvmOverloads constructor(
                     pressedButton = 0
                     val onPrimary = released == 1 && primaryButton.contains(event.x, event.y)
                     val onSecondary = released == 2 && secondaryButton.contains(event.x, event.y)
-                    if ((onPrimary || onSecondary) && settings.vibrationEnabled) {
-                        haptics.tick(settings.vibrationStrength)
+                    if (onPrimary || onSecondary) {
+                        if (settings.vibrationEnabled) haptics.tick(settings.vibrationStrength)
+                        sounds.play(Sfx.BUTTON)
                     }
                     when (state) {
                         State.PAUSED -> {
@@ -1394,6 +1409,7 @@ class GameView @JvmOverloads constructor(
                         }
                         released == 5 && overContinue.contains(event.x, event.y) -> {
                             if (settings.vibrationEnabled) haptics.great(settings.vibrationStrength)
+                            sounds.play(Sfx.BUTTON, rate = 1.2f)
                             requestAd(AdPurpose.CONTINUE)
                         }
                     }
@@ -1463,6 +1479,8 @@ class GameView @JvmOverloads constructor(
         effects.addShake(0.6f * settings.cameraShakeStrength)
         pixels.burst(cx, cy, 1.6f)
         if (settings.vibrationEnabled) haptics.great(settings.vibrationStrength)
+        sounds.play(SfxBank.SLICE, gain = 0.9f)
+        sounds.play(SfxBank.PERFECT, gain = 0.8f, spread = 3)
         requestNewGame()
     }
 
@@ -1572,20 +1590,25 @@ class GameView @JvmOverloads constructor(
             }
         }
 
-        // The blade first, then the verdict on top of it.
-        sounds.play(Sfx.SLICE, gain = 0.8f, rate = 0.92f + random.nextFloat() * 0.18f)
+        // The blade first, then the verdict on top of it. Both come from banks of
+        // ten recipes, pitched per shot, so a long run never settles into a pattern.
+        sounds.play(SfxBank.SLICE, gain = 0.75f)
         when (grade) {
             Grade.PERFECT -> {
-                sounds.play(Sfx.PERFECT)
-                // Each perfect in a row answers a semitone higher, up to an octave,
-                // so a streak audibly climbs.
+                // Perfects hold the middle of the pitch range: these are the
+                // flourishes, and a wildly detuned one would sound like a mistake.
+                sounds.play(SfxBank.PERFECT, spread = 3)
+                // Each perfect in a row answers a step higher on top of that, so a
+                // streak audibly climbs.
                 if (perfectStreak > 1) {
-                    sounds.play(Sfx.HEAL, gain = 0.7f, rate = 1f + (perfectStreak - 1) * 0.06f)
+                    sounds.play(Sfx.HEAL, gain = 0.65f, rate = 1f + (perfectStreak - 1) * 0.06f)
                 }
             }
-            Grade.GREAT -> sounds.play(Sfx.GREAT)
-            Grade.GOOD -> sounds.play(Sfx.GOOD)
-            else -> sounds.play(Sfx.BAD, gain = 0.85f)
+            // A great is the good bank played high and confident, a plain good sits
+            // in the middle: same ten recipes, two different characters.
+            Grade.GREAT -> sounds.play(SfxBank.GOOD, gain = 1f, spread = 3)
+            Grade.GOOD -> sounds.play(SfxBank.GOOD, gain = 0.85f)
+            else -> sounds.play(SfxBank.BAD, gain = 0.85f)
         }
 
         if (grade == Grade.PERFECT && settings.slowMoOnPerfect && dangerRecovery <= 0f) {

@@ -347,6 +347,15 @@ class DevSettingsActivity : AppCompatActivity() {
                 GameSettings.MIN_SOUND_VOLUME, GameSettings.MAX_SOUND_VOLUME, settings.soundVolume,
                 { "${(it * 100).roundToInt()}%" }, { settings.soundVolume = it }
             )
+            toggle(
+                c.body, "Music", "The bass loop under a run.",
+                settings.musicEnabled
+            ) { settings.musicEnabled = it }
+            slider(
+                c.body, "Music volume", "How loud the loop is. Held under the effects by default.",
+                GameSettings.MIN_MUSIC_VOLUME, GameSettings.MAX_MUSIC_VOLUME, settings.musicVolume,
+                { "${(it * 100).roundToInt()}%" }, { settings.musicVolume = it }
+            )
             slider(
                 c.body, "Neon glow",
                 "How hard the outline burns around each shape. 0 goes back to a plain edge.",
@@ -646,6 +655,8 @@ class DevSettingsActivity : AppCompatActivity() {
             appendLine("SOUND & GLOW")
             appendLine("  Sound: ${onOff(settings.soundEnabled)}")
             appendLine("  How loud: ${(settings.soundVolume * 100).roundToInt()}%")
+            appendLine("  Music: ${onOff(settings.musicEnabled)}")
+            appendLine("  Music volume: ${(settings.musicVolume * 100).roundToInt()}%")
             appendLine("  Neon glow: %.2fx".format(settings.neonGlow))
             appendLine()
             appendLine("ADS")
