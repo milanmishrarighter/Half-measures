@@ -38,6 +38,12 @@
             android:theme="@style/Theme.HalfMeasures" />
 
         <activity
+            android:name=".DevSettingsActivity"
+            android:exported="false"
+            android:label="Developer settings"
+            android:theme="@style/Theme.HalfMeasures" />
+
+        <activity
             android:name=".InstructionsActivity"
             android:exported="false"
             android:label="How to play"

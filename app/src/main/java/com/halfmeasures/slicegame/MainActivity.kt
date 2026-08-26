@@ -54,6 +54,9 @@ class MainActivity : AppCompatActivity() {
                 )
             }
             onPreloadAd = { ads.load() }
+            // Closes the whole task, not just this activity, so the next launch is
+            // a cold start at the title screen rather than a resume.
+            onExitApp = { finishAndRemoveTask() }
             onCancelPendingAd = {
                 endAdPresentation()
                 ads.abandonPending()
@@ -108,6 +111,7 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         ads.destroy()
+        gameView.releaseSounds()
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {

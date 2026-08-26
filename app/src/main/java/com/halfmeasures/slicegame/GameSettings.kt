@@ -118,6 +118,14 @@ data class GameSettings(
     /** Health points at or below which the critical warning starts flashing. */
     var lowHealthAt: Int = DEFAULT_LOW_HEALTH_AT,
 
+    // ---- Sound ----
+    /** Whether the game makes any noise at all. */
+    var soundEnabled: Boolean = DEFAULT_SOUND_ENABLED,
+    /** How loud it is. */
+    var soundVolume: Float = DEFAULT_SOUND_VOLUME,
+    /** How hard the neon outline burns around each shape. 0 turns it off. */
+    var neonGlow: Float = DEFAULT_NEON_GLOW,
+
     // ---- Ads ----
     /** Whether dying offers a watch-an-ad-to-carry-on card at all. */
     var continuesEnabled: Boolean = DEFAULT_CONTINUES_ENABLED,
@@ -177,6 +185,9 @@ data class GameSettings(
             .putFloat("slow_mo_duration", slowMoDuration)
             .putBoolean("low_health_slow_mo", lowHealthSlowMo)
             .putInt("low_health_at", lowHealthAt)
+            .putBoolean("sound_enabled", soundEnabled)
+            .putFloat("sound_volume", soundVolume)
+            .putFloat("neon_glow", neonGlow)
             .putBoolean("continues_enabled", continuesEnabled)
             .putInt("continues_per_run", continuesPerRun)
             .putInt("ad_gate_every", adGateEvery)
@@ -233,6 +244,14 @@ data class GameSettings(
         const val DEFAULT_SLOW_MO_DURATION = 2.6f
         const val DEFAULT_LOW_HEALTH_SLOW_MO = true
         const val DEFAULT_LOW_HEALTH_AT = 20
+        const val DEFAULT_SOUND_ENABLED = true
+        const val DEFAULT_SOUND_VOLUME = 0.8f
+        const val DEFAULT_NEON_GLOW = 1.0f
+        const val MIN_SOUND_VOLUME = 0f
+        const val MAX_SOUND_VOLUME = 1f
+        const val MIN_NEON_GLOW = 0f
+        const val MAX_NEON_GLOW = 2.5f
+
         const val DEFAULT_CONTINUES_ENABLED = true
 
         /** No cap: a run can be bought back on every death. */
@@ -378,6 +397,9 @@ data class GameSettings(
                 slowMoDuration = p.getFloat("slow_mo_duration", DEFAULT_SLOW_MO_DURATION),
                 lowHealthSlowMo = p.getBoolean("low_health_slow_mo", DEFAULT_LOW_HEALTH_SLOW_MO),
                 lowHealthAt = p.getInt("low_health_at", DEFAULT_LOW_HEALTH_AT),
+                soundEnabled = p.getBoolean("sound_enabled", DEFAULT_SOUND_ENABLED),
+                soundVolume = p.getFloat("sound_volume", DEFAULT_SOUND_VOLUME),
+                neonGlow = p.getFloat("neon_glow", DEFAULT_NEON_GLOW),
                 continuesEnabled = p.getBoolean("continues_enabled", DEFAULT_CONTINUES_ENABLED),
                 continuesPerRun = p.getInt("continues_per_run", DEFAULT_CONTINUES_PER_RUN),
                 adGateEvery = p.getInt("ad_gate_every", DEFAULT_AD_GATE_EVERY),

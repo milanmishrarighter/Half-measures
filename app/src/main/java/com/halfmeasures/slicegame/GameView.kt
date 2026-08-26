@@ -68,6 +68,8 @@ class GameView @JvmOverloads constructor(
     var onCancelPendingAd: (() -> Unit)? = null
     /** Asks for an ad to be fetched, so a failed press makes the next one likelier. */
     var onPreloadAd: (() -> Unit)? = null
+    /** Closes the app outright, so the next launch starts at the title screen. */
+    var onExitApp: (() -> Unit)? = null
     /** Whether an ad is loaded right now. Nothing is offered when it is not. */
     var isRewardedAdReady: (() -> Boolean)? = null
 
@@ -76,12 +78,15 @@ class GameView @JvmOverloads constructor(
     private val random = Random(System.currentTimeMillis())
     private val effects = EffectSystem(random)
     private val haptics = Haptics(context)
+    private val sounds = SoundEngine(context)
 
     private var gravity = GameShape.BASE_GRAVITY * settings.gravityScale
 
     fun refreshSettings() {
         settings = GameSettings.load(context)
         gravity = GameShape.BASE_GRAVITY * settings.gravityScale
+        sounds.enabled = settings.soundEnabled
+        sounds.volume = settings.soundVolume
         // Only the title screen picks up a new starting-health setting. Every
         // other state is mid-run - including the moments either side of an ad -
         // and refilling the bar there would hand out a free heal.
@@ -332,6 +337,8 @@ class GameView @JvmOverloads constructor(
      * view was competing with the ad's own UI for the one main thread they share.
      */
     fun startLoop() {
+        // Idempotent, so this is a safe place to make sure the effects are built.
+        sounds.prepare()
         if (loopRunning) return
         loopRunning = true
         lastFrameTimeNanos = 0L
@@ -371,7 +378,11 @@ class GameView @JvmOverloads constructor(
         // Real time: this is an announcement to the player, not part of the
         // simulation, so slow motion must not stretch it.
         if (state == State.RESUMING) {
+            val before = ceil(resumeCountdown.toDouble()).toInt()
             resumeCountdown -= realDt
+            val after = ceil(resumeCountdown.toDouble()).toInt()
+            // One tick per digit, and a higher one on the last as play resumes.
+            if (after != before) sounds.play(Sfx.COUNTDOWN, rate = if (after <= 0) 1.5f else 1f)
             if (resumeCountdown <= 0f) {
                 state = State.PLAYING
                 spawnCountdown = 0.5f
@@ -468,7 +479,7 @@ class GameView @JvmOverloads constructor(
         // The ad cards are taller than the pause card: they carry a headline and
         // an explanation as well as the two buttons.
         val adWidth = min(w * 0.84f, 360f * density)
-        val adHeight = 208f * density + buttonHeight * 2 + buttonGap
+        val adHeight = 248f * density + buttonHeight * 2 + buttonGap
         val adTop = (h - adHeight) / 2f
         adCard.set(cx - adWidth / 2f, adTop, cx + adWidth / 2f, adTop + adHeight)
         // The waiting screen: one cancel button low on the screen, and a pair of
@@ -491,7 +502,7 @@ class GameView @JvmOverloads constructor(
         )
 
         val adInner = min(buttonWidth, adWidth - 40f * density)
-        val adFirstTop = adTop + 188f * density
+        val adFirstTop = adTop + 228f * density
         adPrimary.set(cx - adInner / 2f, adFirstTop, cx + adInner / 2f, adFirstTop + buttonHeight)
         adSecondary.set(
             cx - adInner / 2f, adFirstTop + buttonHeight + buttonGap,
@@ -647,6 +658,7 @@ class GameView @JvmOverloads constructor(
                     shapes.removeAt(i)
                     if (settings.missEndsRun) {
                         endedOnMiss = true
+                        sounds.play(Sfx.MISS)
                         endRun()
                     } else {
                         perfectStreak = 0
@@ -721,6 +733,8 @@ class GameView @JvmOverloads constructor(
         // so they have to be rebuilt when the level changes.
         bodyShaders.clear()
         if (settings.vibrationEnabled) haptics.tick(settings.vibrationStrength)
+                            sounds.play(Sfx.BUTTON)
+        sounds.play(Sfx.LEVEL_UP, gain = 0.9f)
     }
 
     /**
@@ -808,11 +822,13 @@ class GameView @JvmOverloads constructor(
         if (score > bestScore) {
             bestScore = score
             beatBestScore = true
+            sounds.play(Sfx.BEST)
             fireworkTimer = 0f
             scores.edit().putInt("best_score", bestScore).apply()
         }
         effects.addShake(0.7f * settings.cameraShakeStrength)
         if (settings.vibrationEnabled) haptics.gameOver(settings.vibrationStrength)
+        if (!beatBestScore) sounds.play(Sfx.GAME_OVER)
     }
 
     /**
@@ -1064,7 +1080,9 @@ class GameView @JvmOverloads constructor(
             true
         }
         state == State.AD_GATE -> {
-            state = adGateReturn
+            // Back out of the gate is the same as EXIT APP: there is no third
+            // option here, or the gate would not be a gate.
+            onExitApp?.invoke()
             true
         }
         state == State.PAUSED -> {
@@ -1111,6 +1129,11 @@ class GameView @JvmOverloads constructor(
      * Called when the activity loses focus. Leaving the app mid-run would otherwise
      * hand the player a dead run on their return, so it pauses itself.
      */
+    /** Frees the sound pool. Called from the activity's onDestroy. */
+    fun releaseSounds() {
+        sounds.release()
+    }
+
     fun pauseIfPlaying() {
         if (state == State.PLAYING) pauseGame()
     }
@@ -1139,6 +1162,7 @@ class GameView @JvmOverloads constructor(
         hasLastTouch = false
         trailPoints.clear()
         if (settings.vibrationEnabled) haptics.tick(settings.vibrationStrength)
+                            sounds.play(Sfx.BUTTON)
     }
 
     private fun resumeGame() {
@@ -1335,9 +1359,9 @@ class GameView @JvmOverloads constructor(
                         }
                         State.AD_GATE -> {
                             if (onPrimary) requestAd(AdPurpose.GATE)
-                            // Walking away from the gate goes back where they came
-                            // from - the title screen, or the card they died on.
-                            if (onSecondary) state = adGateReturn
+                            // The alternative to watching is leaving. Closing the
+                            // app outright, so the next launch opens at the title.
+                            if (onSecondary) onExitApp?.invoke()
                         }
                         else -> {}
                     }
@@ -1350,18 +1374,22 @@ class GameView @JvmOverloads constructor(
                     when {
                         released == 1 && primaryButton.contains(event.x, event.y) -> {
                             if (settings.vibrationEnabled) haptics.tick(settings.vibrationStrength)
+                            sounds.play(Sfx.BUTTON)
                             requestNewGame()
                         }
                         released == 2 && secondaryButton.contains(event.x, event.y) -> {
                             if (settings.vibrationEnabled) haptics.tick(settings.vibrationStrength)
+                            sounds.play(Sfx.BUTTON)
                             onOpenInstructions?.invoke()
                         }
                         released == 3 && tertiaryButton.contains(event.x, event.y) -> {
                             if (settings.vibrationEnabled) haptics.tick(settings.vibrationStrength)
+                            sounds.play(Sfx.BUTTON)
                             onOpenSettings?.invoke()
                         }
                         released == 4 && overQuaternary.contains(event.x, event.y) -> {
                             if (settings.vibrationEnabled) haptics.tick(settings.vibrationStrength)
+                            sounds.play(Sfx.BUTTON)
                             returnToMenu()
                         }
                         released == 5 && overContinue.contains(event.x, event.y) -> {
@@ -1542,6 +1570,22 @@ class GameView @JvmOverloads constructor(
                 Grade.GREAT -> haptics.great(settings.vibrationStrength)
                 else -> haptics.cut(settings.vibrationStrength, 1f - deviation / 50f)
             }
+        }
+
+        // The blade first, then the verdict on top of it.
+        sounds.play(Sfx.SLICE, gain = 0.8f, rate = 0.92f + random.nextFloat() * 0.18f)
+        when (grade) {
+            Grade.PERFECT -> {
+                sounds.play(Sfx.PERFECT)
+                // Each perfect in a row answers a semitone higher, up to an octave,
+                // so a streak audibly climbs.
+                if (perfectStreak > 1) {
+                    sounds.play(Sfx.HEAL, gain = 0.7f, rate = 1f + (perfectStreak - 1) * 0.06f)
+                }
+            }
+            Grade.GREAT -> sounds.play(Sfx.GREAT)
+            Grade.GOOD -> sounds.play(Sfx.GOOD)
+            else -> sounds.play(Sfx.BAD, gain = 0.85f)
         }
 
         if (grade == Grade.PERFECT && settings.slowMoOnPerfect && dangerRecovery <= 0f) {
@@ -1889,12 +1933,52 @@ class GameView @JvmOverloads constructor(
         canvas.drawPath(path, fillPaint)
         fillPaint.shader = null
 
-        // Bright rim, then a soft inner contour for a bevelled look.
-        rimPaint.strokeWidth = max(2f, r * 0.045f)
-        rimPaint.color = Theme.withAlpha(Theme.lighten(tintedLight(shape.paletteIndex), 0.55f), 0.75f)
-        canvas.drawPath(path, rimPaint)
+        drawNeonEdge(canvas, tintedLight(shape.paletteIndex), r)
 
         if (settings.guideLineEnabled) drawGuideLine(canvas, shape, verts, r)
+    }
+
+    /**
+     * A neon tube around the outline. Four strokes on the same path, each narrower
+     * and brighter than the last, ending on a near-white core - which is what a lit
+     * gas tube actually looks like, and what a single fat stroke never does. The
+     * whole stack breathes slightly so the edge reads as lit rather than printed.
+     *
+     * [path] is already built by the caller, so this is four fills of geometry that
+     * has been walked once.
+     */
+    private fun drawNeonEdge(canvas: Canvas, tint: Int, r: Float) {
+        val strength = settings.neonGlow
+        val base = max(2f, r * 0.045f)
+
+        if (strength <= 0.01f) {
+            rimPaint.strokeWidth = base
+            rimPaint.color = Theme.withAlpha(Theme.lighten(tint, 0.55f), 0.75f)
+            canvas.drawPath(path, rimPaint)
+            return
+        }
+
+        val breath = 0.86f + 0.14f * sin(elapsed * 2.7f + r)
+        val halo = Theme.lighten(tint, 0.15f)
+
+        // Outer bloom first, widest and faintest, then inward.
+        rimPaint.strokeWidth = base * 5.5f
+        rimPaint.color = Theme.withAlpha(halo, 0.10f * strength * breath)
+        canvas.drawPath(path, rimPaint)
+
+        rimPaint.strokeWidth = base * 3.2f
+        rimPaint.color = Theme.withAlpha(halo, 0.17f * strength * breath)
+        canvas.drawPath(path, rimPaint)
+
+        rimPaint.strokeWidth = base * 1.7f
+        rimPaint.color = Theme.withAlpha(Theme.lighten(tint, 0.5f), (0.55f * strength).coerceAtMost(0.8f))
+        canvas.drawPath(path, rimPaint)
+
+        // The core is pulled most of the way to white but keeps a little of the
+        // shape's own hue, so a red shape still glows red rather than going grey.
+        rimPaint.strokeWidth = base * 0.75f
+        rimPaint.color = Theme.withAlpha(Theme.lighten(tint, 0.88f), (0.9f * strength).coerceAtMost(1f))
+        canvas.drawPath(path, rimPaint)
     }
 
     /**
@@ -1945,10 +2029,19 @@ class GameView @JvmOverloads constructor(
         }
         path.close()
 
-        fillPaint.color = Theme.withAlpha(tintedLight(piece.paletteIndex), alpha * 0.95f)
+        val tint = tintedLight(piece.paletteIndex)
+        fillPaint.color = Theme.withAlpha(tint, alpha * 0.95f)
         canvas.drawPath(path, fillPaint)
+
+        // The halves keep the neon while they fall, fading with the rest of them.
+        val strength = settings.neonGlow
+        if (strength > 0.01f) {
+            rimPaint.strokeWidth = 9f
+            rimPaint.color = Theme.withAlpha(Theme.lighten(tint, 0.15f), alpha * 0.14f * strength)
+            canvas.drawPath(path, rimPaint)
+        }
         rimPaint.strokeWidth = 3f
-        rimPaint.color = Theme.withAlpha(Color.WHITE, alpha * 0.35f)
+        rimPaint.color = Theme.withAlpha(Theme.lighten(tint, 0.85f), alpha * 0.55f)
         canvas.drawPath(path, rimPaint)
         canvas.restore()
     }
@@ -2428,11 +2521,13 @@ class GameView @JvmOverloads constructor(
         drawAdCard(
             canvas,
             "AD BREAK", Theme.accent,
-            "GAME ${PlaySession.nextGameNumber()}",
-            "Every ${every}th game needs a short ad. Closing the app resets the count."
+            "SUPPORT THE DEVS",
+            "Every ${every}th retry requires you to watch an ad. This is to support the " +
+                "development of the app and continue making it better and more interesting. " +
+                "Please consider supporting the devs."
         )
-        drawButton(canvas, adPrimary, "WATCH AD", primary = true, pressed = pressedButton == 1)
-        drawButton(canvas, adSecondary, "NOT NOW", primary = false, pressed = pressedButton == 2)
+        drawButton(canvas, adPrimary, "RETRY", primary = true, pressed = pressedButton == 1)
+        drawButton(canvas, adSecondary, "EXIT APP", primary = false, pressed = pressedButton == 2)
     }
 
     /**
