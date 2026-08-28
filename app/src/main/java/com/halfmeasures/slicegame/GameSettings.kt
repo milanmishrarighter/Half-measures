@@ -211,9 +211,9 @@ data class GameSettings(
         const val DEFAULT_GRAVITY_SCALE = 0.8f
         const val DEFAULT_ROTATION_SCALE = 0.6f
         const val DEFAULT_WALL_STRENGTH = 0.6f
-        const val DEFAULT_STAGE_SCORE_INTERVAL = 1530
+        const val DEFAULT_STAGE_SCORE_INTERVAL = 1000
         const val DEFAULT_STARTING_SHAPE_COUNT = 4
-        const val DEFAULT_SHAPES_PER_STAGE = 2
+        const val DEFAULT_SHAPES_PER_STAGE = 4
         const val DEFAULT_CONCURRENCY_PER_STAGE = 1
         const val DEFAULT_ROTATION_PER_STAGE_PERCENT = 10f
         const val DEFAULT_START_CONCURRENCY = 1
@@ -295,7 +295,7 @@ data class GameSettings(
         const val MIN_STARTING_SHAPE_COUNT = 1
         const val MAX_STARTING_SHAPE_COUNT = 12
         const val MIN_SHAPES_PER_STAGE = 0
-        const val MAX_SHAPES_PER_STAGE = 4
+        const val MAX_SHAPES_PER_STAGE = 8
         const val MIN_CONCURRENCY_PER_STAGE = 0
         const val MAX_CONCURRENCY_PER_STAGE = 3
         const val MIN_ROTATION_PER_STAGE_PERCENT = 0f

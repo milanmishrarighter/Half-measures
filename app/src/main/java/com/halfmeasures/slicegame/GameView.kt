@@ -105,6 +105,14 @@ class GameView @JvmOverloads constructor(
     private var health = settings.startHealth
     private var score = 0
     private var bestScore = scores.getInt("best_score", 0)
+    /**
+     * Personal bests for everything the score card reports, so a run can be read
+     * against the player's own ceiling rather than only against the last one.
+     */
+    private var bestCuts = scores.getInt("best_cuts", 0)
+    private var bestPerfectCuts = scores.getInt("best_perfect_cuts", 0)
+    private var recordPerfectStreak = scores.getInt("best_perfect_streak", 0)
+    private var recordGoodStreak = scores.getInt("best_good_streak", 0)
     /** True when the run just finished beat the stored record. */
     private var beatBestScore = false
     /** Seconds until the next firework goes up on a record-breaking run. */
@@ -284,8 +292,10 @@ class GameView @JvmOverloads constructor(
      * what produced the stepped banding; one solid value cannot band at any size.
      * It eases toward the current level's hue so the change reads as a slow drift.
      */
-    private var backgroundColor = Theme.stageBackground(0)
-    private var accentColor = Theme.stageAccent(0)
+    /** Which slice of the score ramp the cached shape gradients were built for. */
+    private var lastHueBucket = 0
+    private var backgroundColor = Theme.scoreBackground(0)
+    private var accentColor = Theme.scoreAccent(0)
     private val scrimPaint = Paint()
     private val panelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val panelStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -449,7 +459,7 @@ class GameView @JvmOverloads constructor(
         perfectSlowMo = 0f
         effects.addFlash(Theme.danger, 0.5f * settings.screenFlashStrength)
         pixels.flash(1.4f)
-        if (settings.vibrationEnabled) haptics.gameOver(settings.vibrationStrength)
+        if (settings.vibrationEnabled) haptics.lowHealth(settings.vibrationStrength)
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
@@ -718,11 +728,19 @@ class GameView @JvmOverloads constructor(
 
         effects.update(dt, gravity)
 
-        // Creep toward the level's colours so a level change is a slow shift in
-        // the light rather than a hard cut.
+        // The shape gradients are cached per palette entry and tinted by the
+        // score's hue, so they have to be dropped as that hue moves.
+        val hueBucket = score / 250
+        if (hueBucket != lastHueBucket) {
+            lastHueBucket = hueBucket
+            bodyShaders.clear()
+        }
+
+        // Creep toward the score's colours so the change is a slow shift in the
+        // light rather than a hard cut.
         val colourEase = min(1f, dt * 0.9f)
-        backgroundColor = Theme.lerpColor(backgroundColor, Theme.stageBackground(stage), colourEase)
-        accentColor = Theme.lerpColor(accentColor, Theme.stageAccent(stage), colourEase)
+        backgroundColor = Theme.lerpColor(backgroundColor, Theme.scoreBackground(score), colourEase)
+        accentColor = Theme.lerpColor(accentColor, Theme.scoreAccent(score), colourEase)
 
         // Ten BPM per thousand points, so a good run audibly tightens up.
         sounds.setMusicSpeed(1f + (score / 1000) * 10f / MUSIC_BASE_BPM)
@@ -846,6 +864,7 @@ class GameView @JvmOverloads constructor(
             fireworkTimer = 0f
             scores.edit().putInt("best_score", bestScore).apply()
         }
+        commitPersonalBests()
         effects.addShake(0.7f * settings.cameraShakeStrength)
         if (settings.vibrationEnabled) haptics.gameOver(settings.vibrationStrength)
         if (!beatBestScore) sounds.play(Sfx.GAME_OVER)
@@ -926,6 +945,33 @@ class GameView @JvmOverloads constructor(
         val nowMs = System.currentTimeMillis()
         trailPoints.add(TrailPoint(ax, ay, nowMs))
         trailPoints.add(TrailPoint(bx, by, nowMs))
+    }
+
+    /**
+     * Rolls this run's stats into the stored bests. Written together at the end of
+     * a run rather than on every cut: a dozen small commits per run buys nothing,
+     * and the card is the only place they are read.
+     */
+    private fun commitPersonalBests() {
+        val cuts = max(bestCuts, cutCount)
+        val perfects = max(bestPerfectCuts, perfectCount)
+        val perfectRun = max(recordPerfectStreak, bestPerfectStreak)
+        val goodRun = max(recordGoodStreak, bestStreak)
+        if (cuts == bestCuts && perfects == bestPerfectCuts &&
+            perfectRun == recordPerfectStreak && goodRun == recordGoodStreak
+        ) {
+            return
+        }
+        bestCuts = cuts
+        bestPerfectCuts = perfects
+        recordPerfectStreak = perfectRun
+        recordGoodStreak = goodRun
+        scores.edit()
+            .putInt("best_cuts", bestCuts)
+            .putInt("best_perfect_cuts", bestPerfectCuts)
+            .putInt("best_perfect_streak", recordPerfectStreak)
+            .putInt("best_good_streak", recordGoodStreak)
+            .apply()
     }
 
     /** Half the perfect-cut slow motion: long enough to register, short enough not to drag. */
@@ -1221,8 +1267,8 @@ class GameView @JvmOverloads constructor(
         health = settings.startHealth
         maxHealth = settings.startHealth
         displayedHealth = health.toFloat()
-        backgroundColor = Theme.stageBackground(0)
-        accentColor = Theme.stageAccent(0)
+        backgroundColor = Theme.scoreBackground(0)
+        accentColor = Theme.scoreAccent(0)
         stage = 0
         pixels.reset()
         bodyShaders.clear()
@@ -1268,8 +1314,8 @@ class GameView @JvmOverloads constructor(
         dangerArmed = true
         pixels.reset()
         bodyShaders.clear()
-        backgroundColor = Theme.stageBackground(0)
-        accentColor = Theme.stageAccent(0)
+        backgroundColor = Theme.scoreBackground(0)
+        accentColor = Theme.scoreAccent(0)
         continuesUsed = 0
         PlaySession.countGame()
         sounds.startMusic()
@@ -1949,13 +1995,13 @@ class GameView @JvmOverloads constructor(
 
     /** A shape's own colour, pulled a little toward the current level's hue. */
     private fun tintedLight(paletteIndex: Int): Int =
-        Theme.lerpColor(Theme.shapePalette[paletteIndex][0], Theme.stageAccent(stage), STAGE_TINT)
+        Theme.lerpColor(Theme.shapePalette[paletteIndex][0], Theme.scoreAccent(score), STAGE_TINT)
 
     private fun bodyShader(paletteIndex: Int): RadialGradient =
         bodyShaders.getOrPut(paletteIndex) {
             val pair = Theme.shapePalette[paletteIndex]
             val light = tintedLight(paletteIndex)
-            val deep = Theme.lerpColor(pair[1], Theme.stageAccent(stage), STAGE_TINT * 0.7f)
+            val deep = Theme.lerpColor(pair[1], Theme.scoreAccent(score), STAGE_TINT * 0.7f)
             RadialGradient(
                 0f, 0f, 1f,
                 intArrayOf(Theme.lighten(light, 0.22f), light, deep),
@@ -1964,7 +2010,32 @@ class GameView @JvmOverloads constructor(
             )
         }
 
+    /**
+     * Breadcrumbs showing where a shape has been. Quantised to a grid and drawn as
+     * squares rather than circles so it reads as the same pixel material as the
+     * background embers, and tinted to the shape so a crowded screen still says
+     * which trail belongs to what.
+     */
+    private fun drawShapeTrail(canvas: Canvas, shape: GameShape) {
+        if (shape.trailCount < 2) return
+        val tint = tintedLight(shape.paletteIndex)
+        val grid = (4f * density).coerceAtLeast(3f)
+        val base = shape.radius * 0.085f
+
+        for (i in 0 until shape.trailCount - 1) {
+            // Oldest first, so this fades in toward the shape.
+            val life = (i + 1).toFloat() / shape.trailCount
+            val size = (base * (0.35f + 0.65f * life)).coerceAtLeast(1.5f)
+            val px = (shape.trailX(i) / grid).roundToInt() * grid
+            val py = (shape.trailY(i) / grid).roundToInt() * grid
+            particlePaint.style = Paint.Style.FILL
+            particlePaint.color = Theme.withAlpha(tint, 0.30f * life * life)
+            canvas.drawRect(px - size, py - size, px + size, py + size, particlePaint)
+        }
+    }
+
     private fun drawShape(canvas: Canvas, shape: GameShape) {
+        drawShapeTrail(canvas, shape)
         val verts = shape.worldVertices()
         val r = shape.radius * shape.spawnScale
 
@@ -2847,15 +2918,27 @@ class GameView @JvmOverloads constructor(
         var rowY = dividerY + ruleGap
 
         // Stats arrive one at a time rather than all at once.
-        drawStatRow(canvas, left, right, rowY, "BEST SCORE", bestScore.toString(), Theme.accent, 0)
+        drawStatRow(canvas, left, right, rowY, "BEST SCORE", bestScore.toString(), null, Theme.accent, 0)
         rowY += rowStep
-        drawStatRow(canvas, left, right, rowY, "CUTS SURVIVED", cutCount.toString(), Theme.textPrimary, 1)
+        drawStatRow(
+            canvas, left, right, rowY, "CUTS SURVIVED",
+            cutCount.toString(), bestCuts.toString(), Theme.textPrimary, 1
+        )
         rowY += rowStep
-        drawStatRow(canvas, left, right, rowY, "PERFECT CUTS", perfectCount.toString(), Theme.gold, 2)
+        drawStatRow(
+            canvas, left, right, rowY, "PERFECT CUTS",
+            perfectCount.toString(), bestPerfectCuts.toString(), Theme.gold, 2
+        )
         rowY += rowStep
-        drawStatRow(canvas, left, right, rowY, "BEST PERFECT STREAK", "${bestPerfectStreak}x", Theme.gold, 3)
+        drawStatRow(
+            canvas, left, right, rowY, "PERFECT STREAK",
+            "${bestPerfectStreak}x", "${recordPerfectStreak}x", Theme.gold, 3
+        )
         rowY += rowStep
-        drawStatRow(canvas, left, right, rowY, "BEST GOOD STREAK", "${bestStreak}x", Theme.good, 4)
+        drawStatRow(
+            canvas, left, right, rowY, "GOOD STREAK",
+            "${bestStreak}x", "${recordGoodStreak}x", Theme.good, 4
+        )
 
         // The same baseline-rule-baseline gap as the header divider above.
         drawCutBreakdown(canvas, cardLeft, cardRight, rowY + ruleGap * 2, CARD_BREAKDOWN_ROW_HEIGHT * density)
@@ -2983,7 +3066,12 @@ class GameView @JvmOverloads constructor(
         else -> Theme.danger
     }
 
-    /** One "LABEL .......... value" line on the game-over card. */
+    /**
+     * One "LABEL .......... value" line on the game-over card, with the player's
+     * standing best for that stat sitting quietly to the left of this run's
+     * figure. A run reads against your own ceiling, not just against the last one.
+     * A record set on this very run is marked rather than shown twice.
+     */
     private fun drawStatRow(
         canvas: Canvas,
         left: Float,
@@ -2991,6 +3079,7 @@ class GameView @JvmOverloads constructor(
         y: Float,
         label: String,
         value: String,
+        best: String?,
         valueColor: Int,
         order: Int
     ) {
@@ -3008,6 +3097,18 @@ class GameView @JvmOverloads constructor(
         uiBoldPaint.textSize = 17f * density
         uiBoldPaint.color = Theme.withAlpha(valueColor, alpha)
         canvas.drawText(value, right - slide, y, uiBoldPaint)
+
+        if (best == null) return
+        val valueWidth = uiBoldPaint.measureText(value)
+        uiBoldPaint.textSize = 12f * density
+        val isRecord = best == value
+        uiBoldPaint.color = Theme.withAlpha(
+            if (isRecord) Theme.gold else Theme.textFaint, alpha * if (isRecord) 0.95f else 0.7f
+        )
+        canvas.drawText(
+            if (isRecord) "NEW BEST" else "best $best",
+            right - slide - valueWidth - 10f * density, y, uiBoldPaint
+        )
     }
 
     private fun drawChip(canvas: Canvas, cx: Float, cy: Float, text: String) {

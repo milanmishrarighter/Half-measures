@@ -181,7 +181,9 @@ class PixelBackground(private val random: Random) {
     }
 
     private fun easePaletteToward(stage: Int, healthFraction: Float, warmth: Float) {
-        val palette = STAGE_PALETTES[stage.coerceIn(0, STAGE_PALETTES.size - 1)]
+        // Cycles rather than clamps: stages now run to a hundred and the field
+        // should keep moving through hues rather than parking on the last one.
+        val palette = STAGE_PALETTES[((stage % STAGE_PALETTES.size) + STAGE_PALETTES.size) % STAGE_PALETTES.size]
         // Below a third health the field bleeds red; at death's door it is fully alarmed.
         val alarm = (1f - healthFraction / 0.35f).coerceIn(0f, 1f)
 

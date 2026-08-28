@@ -3,6 +3,7 @@ package com.halfmeasures.slicegame
 import android.content.Context
 import android.graphics.Color
 import android.graphics.Typeface
+import kotlin.math.pow
 
 /**
  * One place for the game's colours and typefaces, so the play surface and the
@@ -42,6 +43,11 @@ object Theme {
         intArrayOf(Color.rgb(188, 150, 255), Color.rgb(124, 66, 214)),
         intArrayOf(Color.rgb(255, 168, 128), Color.rgb(224, 96, 54))
     )
+
+    /** Score at which the backdrop reaches full red. */
+    const val RED_AT = 100_000f
+    private const val BLUE_HUE = 232f
+    private const val RED_HUE = 360f
 
     private var display: Typeface? = null
     private var displayBold: Typeface? = null
@@ -88,51 +94,31 @@ object Theme {
         }
 
     /**
-     * The colour the whole scene drifts through as the player levels up. It starts
-     * at true black - a fresh run is as dark as the screen goes - and only picks up
-     * a hue as the score climbs, so the colour itself is a read on how far you got.
-     * Used flat as the backdrop and blended into the shapes, so a level change reads
-     * as a shift in the light rather than as a banner.
+     * The backdrop is a function of the score rather than of the difficulty stage.
+     *
+     * A run starts at true black and walks up through dark blue, violet and
+     * magenta to a bright red at [RED_AT] points. Value is raised on a square-root
+     * curve so the first few thousand points visibly move the colour - a linear
+     * ramp to 100,000 would look black for the first ten minutes - while the top
+     * end still has somewhere left to go.
      */
-    private val stageRamp = intArrayOf(
-        Color.rgb(0, 0, 0),      // black - where every run starts
-        Color.rgb(12, 16, 38),   // indigo
-        Color.rgb(26, 16, 48),   // violet
-        Color.rgb(40, 14, 46),   // plum
-        Color.rgb(44, 16, 34),   // magenta-ish
-        Color.rgb(30, 26, 22),   // warm neutral
-        Color.rgb(12, 32, 34),   // teal
-        Color.rgb(10, 34, 24)    // green
-    )
+    fun scoreProgress(score: Int): Float =
+        (score.toFloat() / RED_AT).coerceIn(0f, 1f)
 
-    /** Accent hues matching [stageRamp], for tinting the shapes and the horizon. */
-    private val stageAccents = intArrayOf(
-        Color.rgb(72, 100, 210),
-        Color.rgb(96, 132, 255),
-        Color.rgb(150, 110, 255),
-        Color.rgb(206, 104, 226),
-        Color.rgb(238, 104, 168),
-        Color.rgb(226, 176, 96),
-        Color.rgb(88, 216, 208),
-        Color.rgb(104, 224, 148)
-    )
-
-    /**
-     * Walks the ramp one entry per level, then turns around and walks back, so a
-     * long run keeps drifting through hues instead of parking on the last one.
-     * The gradual part is handled by the caller easing toward this target.
-     */
-    private fun sampleRamp(ramp: IntArray, stage: Int): Int {
-        if (stage <= 0) return ramp[0]
-        val period = (ramp.size - 1) * 2
-        val position = stage % period
-        val index = if (position < ramp.size) position else period - position
-        return ramp[index.coerceIn(0, ramp.size - 1)]
+    fun scoreBackground(score: Int): Int {
+        val t = scoreProgress(score)
+        val hue = (BLUE_HUE + (RED_HUE - BLUE_HUE) * t) % 360f
+        val value = 0.55f * t.pow(0.5f)
+        val saturation = 0.95f - 0.12f * t
+        return Color.HSVToColor(floatArrayOf(hue, saturation, value))
     }
 
-    fun stageBackground(stage: Int): Int = sampleRamp(stageRamp, stage)
-
-    fun stageAccent(stage: Int): Int = sampleRamp(stageAccents, stage)
+    /** The same hue, lit, for tinting shapes and the floor seam. */
+    fun scoreAccent(score: Int): Int {
+        val t = scoreProgress(score)
+        val hue = (BLUE_HUE + (RED_HUE - BLUE_HUE) * t) % 360f
+        return Color.HSVToColor(floatArrayOf(hue, 0.62f, 0.92f))
+    }
 
     fun withAlpha(color: Int, alpha: Float): Int =
         Color.argb(

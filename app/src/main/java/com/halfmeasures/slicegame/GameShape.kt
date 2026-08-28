@@ -53,6 +53,56 @@ private fun trapezoidOutline(): List<PointF2> = listOf(
     PointF2(0.95f, 0.62f), PointF2(-0.95f, 0.62f)
 )
 
+/**
+ * Builds an outline from x,y pairs given in a convenient 0..1 box with y running
+ * down, then re-centres it on its own centroid and scales it so its farthest
+ * vertex sits at radius 1.
+ *
+ * Every shape below is authored this way, which means a new one only has to be
+ * drawn roughly - the normalisation makes it the same visual size as everything
+ * else, and the halving maths works in the same unit space regardless.
+ */
+private fun outline(vararg v: Float): List<PointF2> {
+    val n = v.size / 2
+    var cx = 0f
+    var cy = 0f
+    for (i in 0 until n) {
+        cx += v[i * 2]
+        cy += v[i * 2 + 1]
+    }
+    cx /= n
+    cy /= n
+
+    var maxR = 0.0001f
+    for (i in 0 until n) {
+        val dx = v[i * 2] - cx
+        val dy = v[i * 2 + 1] - cy
+        maxR = kotlin.math.max(maxR, sqrt(dx * dx + dy * dy))
+    }
+
+    return (0 until n).map { i ->
+        PointF2((v[i * 2] - cx) / maxR, (v[i * 2 + 1] - cy) / maxR)
+    }
+}
+
+/** An arc of points, for the shapes that need a curve rather than a corner. */
+private fun arcInto(
+    out: ArrayList<Float>, cx: Float, cy: Float, rx: Float, ry: Float,
+    fromDeg: Float, toDeg: Float, steps: Int
+) {
+    for (i in 0..steps) {
+        val a = Math.toRadians((fromDeg + (toDeg - fromDeg) * i / steps).toDouble())
+        out.add(cx + rx * cos(a.toFloat()))
+        out.add(cy + ry * sin(a.toFloat()))
+    }
+}
+
+private fun built(build: (ArrayList<Float>) -> Unit): List<PointF2> {
+    val v = ArrayList<Float>()
+    build(v)
+    return outline(*v.toFloatArray())
+}
+
 private fun crossOutline(): List<PointF2> {
     val a = 0.34f // half-width of the arms
     val b = 1f    // arm reach
@@ -63,12 +113,129 @@ private fun crossOutline(): List<PointF2> {
     )
 }
 
+
+// ---- Letters. Blocky, and only the ones whose outline is a single loop: a
+// counter like the one in an A or an O would be a hole, and a hole is not
+// something a half-plane clip can represent.
+private fun letterC() = outline(0f,0f, 1f,0f, 1f,0.22f, 0.28f,0.22f, 0.28f,0.78f, 1f,0.78f, 1f,1f, 0f,1f)
+private fun letterE() = outline(0f,0f, 1f,0f, 1f,0.2f, 0.3f,0.2f, 0.3f,0.4f, 0.86f,0.4f, 0.86f,0.6f, 0.3f,0.6f, 0.3f,0.8f, 1f,0.8f, 1f,1f, 0f,1f)
+private fun letterF() = outline(0f,0f, 1f,0f, 1f,0.2f, 0.3f,0.2f, 0.3f,0.42f, 0.86f,0.42f, 0.86f,0.62f, 0.3f,0.62f, 0.3f,1f, 0f,1f)
+private fun letterG() = outline(0f,0f, 1f,0f, 1f,0.2f, 0.28f,0.2f, 0.28f,0.8f, 0.72f,0.8f, 0.72f,0.62f, 0.5f,0.62f, 0.5f,0.44f, 1f,0.44f, 1f,1f, 0f,1f)
+private fun letterH() = outline(0f,0f, 0.28f,0f, 0.28f,0.4f, 0.72f,0.4f, 0.72f,0f, 1f,0f, 1f,1f, 0.72f,1f, 0.72f,0.6f, 0.28f,0.6f, 0.28f,1f, 0f,1f)
+private fun letterI() = outline(0f,0f, 1f,0f, 1f,0.2f, 0.64f,0.2f, 0.64f,0.8f, 1f,0.8f, 1f,1f, 0f,1f, 0f,0.8f, 0.36f,0.8f, 0.36f,0.2f, 0f,0.2f)
+private fun letterJ() = outline(0.65f,0f, 1f,0f, 1f,1f, 0f,1f, 0f,0.78f, 0.65f,0.78f)
+private fun letterK() = outline(0f,0f, 0.28f,0f, 0.28f,0.4f, 0.7f,0f, 1f,0f, 0.56f,0.5f, 1f,1f, 0.7f,1f, 0.28f,0.6f, 0.28f,1f, 0f,1f)
+private fun letterL() = outline(0f,0f, 0.35f,0f, 0.35f,0.78f, 1f,0.78f, 1f,1f, 0f,1f)
+private fun letterM() = outline(0f,1f, 0f,0f, 0.25f,0f, 0.5f,0.46f, 0.75f,0f, 1f,0f, 1f,1f, 0.75f,1f, 0.75f,0.42f, 0.5f,0.82f, 0.25f,0.42f, 0.25f,1f)
+private fun letterN() = outline(0f,1f, 0f,0f, 0.26f,0f, 0.74f,0.6f, 0.74f,0f, 1f,0f, 1f,1f, 0.74f,1f, 0.26f,0.4f, 0.26f,1f)
+private fun letterS() = outline(0f,0f, 1f,0f, 1f,0.2f, 0.28f,0.2f, 0.28f,0.4f, 1f,0.4f, 1f,1f, 0f,1f, 0f,0.8f, 0.72f,0.8f, 0.72f,0.6f, 0f,0.6f)
+private fun letterT() = outline(0f,0f, 1f,0f, 1f,0.22f, 0.65f,0.22f, 0.65f,1f, 0.35f,1f, 0.35f,0.22f, 0f,0.22f)
+private fun letterU() = outline(0f,0f, 0.28f,0f, 0.28f,0.78f, 0.72f,0.78f, 0.72f,0f, 1f,0f, 1f,1f, 0f,1f)
+private fun letterV() = outline(0f,0f, 0.26f,0f, 0.5f,0.72f, 0.74f,0f, 1f,0f, 0.62f,1f, 0.38f,1f)
+private fun letterW() = outline(0f,0f, 0.2f,0f, 0.33f,0.62f, 0.5f,0.18f, 0.67f,0.62f, 0.8f,0f, 1f,0f, 0.8f,1f, 0.6f,1f, 0.5f,0.66f, 0.4f,1f, 0.2f,1f)
+private fun letterX() = outline(0f,0f, 0.26f,0f, 0.5f,0.34f, 0.74f,0f, 1f,0f, 0.66f,0.5f, 1f,1f, 0.74f,1f, 0.5f,0.66f, 0.26f,1f, 0f,1f, 0.34f,0.5f)
+private fun letterY() = outline(0f,0f, 0.26f,0f, 0.5f,0.42f, 0.74f,0f, 1f,0f, 0.65f,0.6f, 0.65f,1f, 0.35f,1f, 0.35f,0.6f)
+private fun letterZ() = outline(0f,0f, 1f,0f, 1f,0.2f, 0.38f,0.8f, 1f,0.8f, 1f,1f, 0f,1f, 0f,0.8f, 0.62f,0.2f, 0f,0.2f)
+
+// ---- Digits, same rule: no counters.
+private fun digitOne() = outline(0.34f,0f, 0.66f,0f, 0.66f,0.8f, 1f,0.8f, 1f,1f, 0.08f,1f, 0.08f,0.8f, 0.34f,0.8f)
+private fun digitTwo() = outline(0f,0f, 1f,0f, 1f,0.56f, 0.3f,0.56f, 0.3f,0.8f, 1f,0.8f, 1f,1f, 0f,1f, 0f,0.36f, 0.7f,0.36f, 0.7f,0.2f, 0f,0.2f)
+private fun digitThree() = outline(0f,0f, 1f,0f, 1f,1f, 0f,1f, 0f,0.8f, 0.72f,0.8f, 0.72f,0.6f, 0.26f,0.6f, 0.26f,0.42f, 0.72f,0.42f, 0.72f,0.2f, 0f,0.2f)
+private fun digitFive() = outline(0f,0f, 1f,0f, 1f,0.2f, 0.3f,0.2f, 0.3f,0.4f, 1f,0.4f, 1f,1f, 0f,1f, 0f,0.8f, 0.7f,0.8f, 0.7f,0.6f, 0f,0.6f)
+private fun digitSeven() = outline(0f,0f, 1f,0f, 1f,0.2f, 0.56f,1f, 0.28f,1f, 0.72f,0.22f, 0f,0.22f)
+
+// ---- Things. Rougher outlines than the letters, because a fish read at a
+// glance is a silhouette, not a diagram.
+private fun treeOutline() = outline(
+    0.5f,0f, 0.78f,0.32f, 0.66f,0.32f, 0.92f,0.64f, 0.6f,0.64f, 0.6f,1f,
+    0.4f,1f, 0.4f,0.64f, 0.08f,0.64f, 0.34f,0.32f, 0.22f,0.32f
+)
+private fun fishOutline() = built { v ->
+    v.addAll(listOf(0.02f, 0.16f, 0.36f, 0.5f, 0.02f, 0.84f))
+    arcInto(v, 0.6f, 0.5f, 0.42f, 0.4f, 150f, -150f, 14)
+}
+private fun heartOutline() = built { v ->
+    v.add(0.5f); v.add(1f)
+    arcInto(v, 0.24f, 0.3f, 0.26f, 0.28f, 60f, -170f, 10)
+    arcInto(v, 0.76f, 0.3f, 0.26f, 0.28f, -10f, 120f, 10)
+}
+private fun appleOutline() = built { v ->
+    arcInto(v, 0.5f, 0.58f, 0.46f, 0.42f, -80f, 260f, 22)
+    v.add(0.55f); v.add(0.1f)
+    v.add(0.45f); v.add(0.1f)
+}
+private fun arrowOutline() = outline(0.5f,0f, 1f,0.46f, 0.72f,0.46f, 0.72f,1f, 0.28f,1f, 0.28f,0.46f, 0f,0.46f)
+private fun boltOutline() = outline(0.58f,0f, 0.14f,0.56f, 0.46f,0.56f, 0.34f,1f, 0.86f,0.42f, 0.54f,0.42f)
+private fun moonOutline() = built { v ->
+    arcInto(v, 0.5f, 0.5f, 0.5f, 0.5f, 90f, 270f, 16)
+    arcInto(v, 0.28f, 0.5f, 0.4f, 0.4f, 270f, 90f, 16)
+}
+private fun cloudOutline() = built { v ->
+    arcInto(v, 0.28f, 0.62f, 0.26f, 0.26f, 180f, 300f, 8)
+    arcInto(v, 0.52f, 0.5f, 0.28f, 0.3f, 210f, 330f, 8)
+    arcInto(v, 0.76f, 0.64f, 0.24f, 0.24f, 250f, 0f, 8)
+    v.add(1f); v.add(0.88f)
+    v.add(0.02f); v.add(0.88f)
+}
+private fun houseOutline() = outline(0.5f,0f, 1f,0.4f, 0.86f,0.4f, 0.86f,1f, 0.14f,1f, 0.14f,0.4f, 0f,0.4f)
+private fun bottleOutline() = outline(0.4f,0f, 0.6f,0f, 0.6f,0.18f, 0.78f,0.36f, 0.78f,1f, 0.22f,1f, 0.22f,0.36f, 0.4f,0.18f)
+private fun mushroomOutline() = built { v ->
+    arcInto(v, 0.5f, 0.46f, 0.5f, 0.36f, 180f, 360f, 14)
+    v.add(0.66f); v.add(0.46f)
+    v.add(0.62f); v.add(1f)
+    v.add(0.38f); v.add(1f)
+    v.add(0.34f); v.add(0.46f)
+}
+private fun crownOutline() = outline(0f,1f, 0.08f,0.16f, 0.3f,0.56f, 0.5f,0.04f, 0.7f,0.56f, 0.92f,0.16f, 1f,1f)
+private fun leafOutline() = built { v ->
+    arcInto(v, 0.5f, 0.5f, 0.46f, 0.46f, 135f, -45f, 12)
+    arcInto(v, 0.5f, 0.5f, 0.46f, 0.46f, -45f, -225f, 12)
+}
+private fun ghostOutline() = built { v ->
+    arcInto(v, 0.5f, 0.42f, 0.44f, 0.42f, 180f, 360f, 14)
+    v.addAll(listOf(0.94f, 1f, 0.78f, 0.86f, 0.62f, 1f, 0.46f, 0.86f, 0.3f, 1f, 0.14f, 0.86f, 0.06f, 1f))
+}
+private fun dropOutline() = built { v ->
+    v.add(0.5f); v.add(0f)
+    arcInto(v, 0.5f, 0.62f, 0.4f, 0.38f, -50f, 230f, 18)
+}
+private fun rocketOutline() = outline(
+    0.5f,0f, 0.72f,0.32f, 0.72f,0.7f, 0.96f,0.9f, 0.72f,0.9f, 0.62f,1f,
+    0.38f,1f, 0.28f,0.9f, 0.04f,0.9f, 0.28f,0.7f, 0.28f,0.32f
+)
+private fun cactusOutline() = outline(
+    0.4f,0f, 0.6f,0f, 0.6f,0.34f, 0.84f,0.34f, 0.84f,0.66f, 0.6f,0.66f, 0.6f,1f,
+    0.4f,1f, 0.4f,0.52f, 0.16f,0.52f, 0.16f,0.24f, 0.4f,0.24f
+)
+private fun sliceOutline() = built { v ->
+    v.add(0.5f); v.add(0f)
+    arcInto(v, 0.5f, 0.06f, 0.52f, 0.94f, 62f, 118f, 10)
+}
+private fun boneOutline() = built { v ->
+    arcInto(v, 0.16f, 0.3f, 0.16f, 0.2f, 90f, 270f, 6)
+    arcInto(v, 0.16f, 0.7f, 0.16f, 0.2f, 90f, 270f, 6)
+    v.add(0.36f); v.add(0.62f)
+    v.add(0.64f); v.add(0.62f)
+    arcInto(v, 0.84f, 0.7f, 0.16f, 0.2f, 270f, 90f, 6)
+    arcInto(v, 0.84f, 0.3f, 0.16f, 0.2f, 270f, 90f, 6)
+    v.add(0.64f); v.add(0.38f)
+    v.add(0.36f); v.add(0.38f)
+}
+private fun keyOutline() = outline(
+    0.5f,0f, 0.72f,0.12f, 0.72f,0.34f, 0.58f,0.44f, 0.58f,0.62f, 0.78f,0.62f,
+    0.78f,0.76f, 0.58f,0.76f, 0.58f,0.88f, 0.74f,0.88f, 0.74f,1f, 0.42f,1f,
+    0.42f,0.44f, 0.28f,0.34f, 0.28f,0.12f
+)
+
 /**
  * The catalogue of sliceable shapes. Each kind supplies its outline in unit
- * space (roughly bounded by a radius-1 circle); [GameShape] scales, rotates and
- * positions it. Kinds are declared easiest-first and unlocked by difficulty stage,
- * so a run opens on easy round/blocky shapes and works up to spiky, concave ones
- * that are much harder to halve by eye.
+ * space (bounded by a radius-1 circle); [GameShape] scales, rotates and positions
+ * it.
+ *
+ * Declaration order here is arbitrary. The unlock schedule instead walks
+ * [ShapeKind.byDifficulty], which is measured rather than guessed - see
+ * [ShapeKind.difficulty] - so adding a shape to this list is all it takes to slot
+ * it into the right stage.
  */
 enum class ShapeKind(
     val displayName: String,
@@ -87,7 +254,57 @@ enum class ShapeKind(
     TRIANGLE("Triangle", { regularOutline(3, (-Math.PI / 2).toFloat()) }),
     STAR6("Six-Point Star", { starOutline(6, 0.58f) }),
     CROSS("Cross", { crossOutline() }),
-    STAR5("Star", { starOutline(5, 0.42f) });
+    STAR5("Star", { starOutline(5, 0.42f) }),
+
+    // Things.
+    HOUSE("House", { houseOutline() }),
+    ARROW("Arrow", { arrowOutline() }),
+    DROP("Drop", { dropOutline() }),
+    LEAF("Leaf", { leafOutline() }),
+    HEART("Heart", { heartOutline() }),
+    APPLE("Apple", { appleOutline() }),
+    MOON("Moon", { moonOutline() }),
+    CLOUD("Cloud", { cloudOutline() }),
+    TREE("Tree", { treeOutline() }),
+    FISH("Fish", { fishOutline() }),
+    BOTTLE("Bottle", { bottleOutline() }),
+    MUSHROOM("Mushroom", { mushroomOutline() }),
+    CROWN("Crown", { crownOutline() }),
+    GHOST("Ghost", { ghostOutline() }),
+    ROCKET("Rocket", { rocketOutline() }),
+    CACTUS("Cactus", { cactusOutline() }),
+    PIZZA("Pizza Slice", { sliceOutline() }),
+    BOLT("Bolt", { boltOutline() }),
+    BONE("Bone", { boneOutline() }),
+    KEY("Key", { keyOutline() }),
+
+    // Digits.
+    ONE("One", { digitOne() }),
+    TWO("Two", { digitTwo() }),
+    THREE("Three", { digitThree() }),
+    FIVE("Five", { digitFive() }),
+    SEVEN("Seven", { digitSeven() }),
+
+    // Letters.
+    LETTER_C("C", { letterC() }),
+    LETTER_E("E", { letterE() }),
+    LETTER_F("F", { letterF() }),
+    LETTER_G("G", { letterG() }),
+    LETTER_H("H", { letterH() }),
+    LETTER_I("I", { letterI() }),
+    LETTER_J("J", { letterJ() }),
+    LETTER_K("K", { letterK() }),
+    LETTER_L("L", { letterL() }),
+    LETTER_M("M", { letterM() }),
+    LETTER_N("N", { letterN() }),
+    LETTER_S("S", { letterS() }),
+    LETTER_T("T", { letterT() }),
+    LETTER_U("U", { letterU() }),
+    LETTER_V("V", { letterV() }),
+    LETTER_W("W", { letterW() }),
+    LETTER_X("X", { letterX() }),
+    LETTER_Y("Y", { letterY() }),
+    LETTER_Z("Z", { letterZ() });
 
     /** Outline in unit space, computed once per kind. */
     val unitVertices: List<PointF2> by lazy(LazyThreadSafetyMode.NONE) { builder() }
@@ -103,13 +320,105 @@ enum class ShapeKind(
         SliceMath.bisectorOffset(unitVertices, 0f, 0f, 1f, 0f, 2f)
     }
 
+    /**
+     * How hard this shape is to halve by eye, measured rather than judged.
+     *
+     * Three things make a shape hard, and all three are computed by cutting it for
+     * real at sixteen angles:
+     *
+     *  - **Sensitivity.** How much of the area a fixed small aiming error costs.
+     *    A long thin shape cut across its length forgives nothing; a circle
+     *    barely notices. This is the dominant term, because it is what actually
+     *    turns a near-miss into a bad score.
+     *  - **Eccentricity.** How far the halving line sits from the centroid. The
+     *    eye aims at the middle of a shape, so a shape whose true bisector is not
+     *    there - a triangle, a pizza slice - is quietly misleading.
+     *  - **Concavity.** How much of its own bounding hull the shape fails to
+     *    fill. Spiky, notched outlines are harder to read at a glance and harder
+     *    to imagine a line through.
+     */
+    val difficulty: Float by lazy(LazyThreadSafetyMode.NONE) {
+        val poly = unitVertices
+        val total = SliceMath.polygonArea(poly)
+        if (total <= 0f) return@lazy 0f
+
+        val samples = 16
+        // A fixed aiming error, in the same unit space the outline lives in.
+        val error = 0.06f
+        var sensitivity = 0f
+        var eccentricity = 0f
+
+        for (i in 0 until samples) {
+            val angle = (Math.PI * i / samples).toFloat()
+            val dx = cos(angle)
+            val dy = sin(angle)
+            val offset = SliceMath.bisectorOffset(poly, 0f, 0f, dx, dy, 2.5f)
+            eccentricity += kotlin.math.abs(offset)
+
+            // Cut it off-centre by the error and see what that costs.
+            val nx = -dy
+            val ny = dx
+            val px = nx * (offset + error)
+            val py = ny * (offset + error)
+            val (a, b) = SliceMath.splitPolygon(poly, px, py, px + dx, py + dy)
+            val areaA = SliceMath.polygonArea(a)
+            val areaB = SliceMath.polygonArea(b)
+            if (areaA + areaB > 0f) sensitivity += SliceMath.deviationPercent(areaA, areaB)
+        }
+
+        sensitivity /= samples
+        eccentricity /= samples
+
+        // Concavity, from the ratio of the outline's area to its convex hull's.
+        val hull = SliceMath.polygonArea(convexHull(poly)).coerceAtLeast(0.0001f)
+        val concavity = (1f - total / hull).coerceIn(0f, 1f)
+
+        sensitivity + eccentricity * 22f + concavity * 26f
+    }
+
     companion object {
+        /**
+         * The catalogue in the order a player meets it, easiest first. Computed
+         * once from the measured [difficulty], so a shape added to the enum lands
+         * at the right stage without anyone deciding where it belongs.
+         */
+        val byDifficulty: List<ShapeKind> by lazy(LazyThreadSafetyMode.NONE) {
+            values().sortedBy { it.difficulty }
+        }
+
         /**
          * How many kinds are in play at [stage]: the starting set, plus a fixed
          * number of new shapes each stage, capped at the full catalogue.
          */
         fun unlockedCount(stage: Int, startingShapes: Int, shapesPerStage: Int): Int =
             (startingShapes + stage * shapesPerStage).coerceIn(1, values().size)
+
+        /** Andrew's monotone chain, for the concavity term of [difficulty]. */
+        private fun convexHull(points: List<PointF2>): List<PointF2> {
+            if (points.size < 3) return points
+            val sorted = points.sortedWith(compareBy({ it.x }, { it.y }))
+            val hull = ArrayList<PointF2>(sorted.size * 2)
+
+            fun cross(o: PointF2, a: PointF2, b: PointF2): Float =
+                (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x)
+
+            for (p in sorted) {
+                while (hull.size >= 2 && cross(hull[hull.size - 2], hull[hull.size - 1], p) <= 0f) {
+                    hull.removeAt(hull.size - 1)
+                }
+                hull.add(p)
+            }
+            val lower = hull.size + 1
+            for (i in sorted.indices.reversed()) {
+                val p = sorted[i]
+                while (hull.size >= lower && cross(hull[hull.size - 2], hull[hull.size - 1], p) <= 0f) {
+                    hull.removeAt(hull.size - 1)
+                }
+                hull.add(p)
+            }
+            hull.removeAt(hull.size - 1)
+            return hull
+        }
     }
 }
 
@@ -137,6 +446,22 @@ class GameShape(
     var age = 0f
         private set
 
+    /**
+     * The last few places this shape has been, as a ring buffer of x,y pairs, so
+     * the game can draw the arc it is travelling. Sampled on a timer rather than
+     * every frame: at sixty frames a second an untimed trail would be a solid
+     * smear, and the point is to show a path, not a streak.
+     */
+    val trail = FloatArray(TRAIL_POINTS * 2)
+    var trailCount = 0
+        private set
+    private var trailHead = 0
+    private var trailTimer = 0f
+
+    /** Oldest-first, so index 0 is the faintest end of the tail. */
+    fun trailX(i: Int): Float = trail[((trailHead - trailCount + i + TRAIL_POINTS) % TRAIL_POINTS) * 2]
+    fun trailY(i: Int): Float = trail[((trailHead - trailCount + i + TRAIL_POINTS) % TRAIL_POINTS) * 2 + 1]
+
     /** Eases from 0 to 1 right after spawning so shapes scale in instead of appearing. */
     val spawnScale: Float
         get() {
@@ -163,6 +488,15 @@ class GameShape(
         x += vx * dtSeconds
         y += vy * dtSeconds
         rotation += angularVelocity * dtSeconds
+
+        trailTimer -= dtSeconds
+        if (trailTimer <= 0f) {
+            trailTimer = TRAIL_INTERVAL
+            trail[trailHead * 2] = x
+            trail[trailHead * 2 + 1] = y
+            trailHead = (trailHead + 1) % TRAIL_POINTS
+            if (trailCount < TRAIL_POINTS) trailCount++
+        }
     }
 
     fun isOffScreen(screenW: Int, screenH: Int): Boolean {
@@ -171,6 +505,11 @@ class GameShape(
     }
 
     companion object {
+        /** How many breadcrumbs a shape leaves behind it. */
+        const val TRAIL_POINTS = 14
+        /** Seconds between breadcrumbs - game time, so slow motion stretches it. */
+        const val TRAIL_INTERVAL = 0.045f
+
         const val BASE_GRAVITY = 1500f          // px/s^2 before gravityScale
         /** Ceiling on sideways speed, so a shape thrown from the wing never streaks across. */
         private const val MAX_HORIZONTAL_SPEED = 420f
@@ -194,7 +533,7 @@ class GameShape(
             val poolSize = ShapeKind.unlockedCount(
                 stage, settings.startingShapeCount, settings.shapesPerStage
             )
-            val kind = ShapeKind.values()[random.nextInt(poolSize)]
+            val kind = ShapeKind.byDifficulty[random.nextInt(poolSize)]
 
             val radius = (((screenW * 0.06f) + random.nextFloat() * (screenW * 0.045f)) * settings.sizeScale)
                 .coerceAtMost(screenW * 0.3f)

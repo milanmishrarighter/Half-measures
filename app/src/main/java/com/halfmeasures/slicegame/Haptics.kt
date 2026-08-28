@@ -42,13 +42,47 @@ class Haptics(context: Context) {
         )
     }
 
-    /** The full celebration - a rising triple hit. */
+    /**
+     * The full celebration: three rising knocks that run straight into a long hard
+     * hold. A perfect cut is the rarest thing a player does, so it gets the only
+     * sustained buzz in the game rather than another pattern of taps.
+     */
     fun perfect(strength: Float) {
         waveform(
-            timings = longArrayOf(0, 34, 26, 52, 26, 95),
+            timings = longArrayOf(0, 30, 18, 44, 18, 70, 0, 260, 90),
             amplitudes = intArrayOf(
-                0, scale(170, strength),
+                0, scale(180, strength),
                 0, scale(220, strength),
+                0, scale(255, strength),
+                0, scale(255, strength),
+                // Tailing off rather than stopping dead, so it releases rather
+                // than cuts out.
+                scale(120, strength)
+            )
+        )
+    }
+
+    /**
+     * Low health: a heartbeat rather than a hit. Six pulses over about a second and
+     * a half, quickening and hardening as they go, so the warning is felt as
+     * something closing in rather than as one more buzz.
+     */
+    fun lowHealth(strength: Float) {
+        waveform(
+            timings = longArrayOf(
+                0, 70, 190,
+                0, 70, 170,
+                0, 75, 150,
+                0, 80, 130,
+                0, 90, 110,
+                0, 110
+            ),
+            amplitudes = intArrayOf(
+                0, scale(150, strength), 0,
+                0, scale(170, strength), 0,
+                0, scale(195, strength), 0,
+                0, scale(215, strength), 0,
+                0, scale(235, strength), 0,
                 0, scale(255, strength)
             )
         )
