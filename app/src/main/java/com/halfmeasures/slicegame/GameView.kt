@@ -2010,32 +2010,7 @@ class GameView @JvmOverloads constructor(
             )
         }
 
-    /**
-     * Breadcrumbs showing where a shape has been. Quantised to a grid and drawn as
-     * squares rather than circles so it reads as the same pixel material as the
-     * background embers, and tinted to the shape so a crowded screen still says
-     * which trail belongs to what.
-     */
-    private fun drawShapeTrail(canvas: Canvas, shape: GameShape) {
-        if (shape.trailCount < 2) return
-        val tint = tintedLight(shape.paletteIndex)
-        val grid = (4f * density).coerceAtLeast(3f)
-        val base = shape.radius * 0.085f
-
-        for (i in 0 until shape.trailCount - 1) {
-            // Oldest first, so this fades in toward the shape.
-            val life = (i + 1).toFloat() / shape.trailCount
-            val size = (base * (0.35f + 0.65f * life)).coerceAtLeast(1.5f)
-            val px = (shape.trailX(i) / grid).roundToInt() * grid
-            val py = (shape.trailY(i) / grid).roundToInt() * grid
-            particlePaint.style = Paint.Style.FILL
-            particlePaint.color = Theme.withAlpha(tint, 0.30f * life * life)
-            canvas.drawRect(px - size, py - size, px + size, py + size, particlePaint)
-        }
-    }
-
     private fun drawShape(canvas: Canvas, shape: GameShape) {
-        drawShapeTrail(canvas, shape)
         val verts = shape.worldVertices()
         val r = shape.radius * shape.spawnScale
 
@@ -2904,9 +2879,14 @@ class GameView @JvmOverloads constructor(
         )
         canvas.drawText(score.toString(), cx, cardTop + 112f * density, displayPaint)
 
+        uiPaint.textAlign = Paint.Align.CENTER
         uiPaint.textSize = 15f * density
         uiPaint.color = Theme.withAlpha(Theme.textFaint, scoreAlpha)
         canvas.drawText("FINAL SCORE", cx, cardTop + 132f * density, uiPaint)
+
+        // The all-time best sits with the score it is measured against rather than
+        // buried in the table below, which is the only place a player looks first.
+        drawBestChip(canvas, cx, cardTop + 162f * density, scoreAlpha)
 
         rimPaint.strokeWidth = 1.5f
         rimPaint.color = Theme.withAlpha(Theme.hairline, revealAlpha(CARD_ROWS_AT - 0.1f))
@@ -2918,25 +2898,30 @@ class GameView @JvmOverloads constructor(
         var rowY = dividerY + ruleGap
 
         // Stats arrive one at a time rather than all at once.
-        drawStatRow(canvas, left, right, rowY, "BEST SCORE", bestScore.toString(), null, Theme.accent, 0)
+        // Two numeric columns, right-aligned, so the eye can run straight down
+        // either one.
+        val bestRight = right
+        val runRight = right - CARD_BEST_COLUMN * density
+
+        drawStatHeader(canvas, runRight, bestRight, rowY)
         rowY += rowStep
         drawStatRow(
-            canvas, left, right, rowY, "CUTS SURVIVED",
+            canvas, left, runRight, bestRight, rowY, "CUTS SURVIVED",
             cutCount.toString(), bestCuts.toString(), Theme.textPrimary, 1
         )
         rowY += rowStep
         drawStatRow(
-            canvas, left, right, rowY, "PERFECT CUTS",
+            canvas, left, runRight, bestRight, rowY, "PERFECT CUTS",
             perfectCount.toString(), bestPerfectCuts.toString(), Theme.gold, 2
         )
         rowY += rowStep
         drawStatRow(
-            canvas, left, right, rowY, "PERFECT STREAK",
+            canvas, left, runRight, bestRight, rowY, "PERFECT STREAK",
             "${bestPerfectStreak}x", "${recordPerfectStreak}x", Theme.gold, 3
         )
         rowY += rowStep
         drawStatRow(
-            canvas, left, right, rowY, "GOOD STREAK",
+            canvas, left, runRight, bestRight, rowY, "GOOD STREAK",
             "${bestStreak}x", "${recordGoodStreak}x", Theme.good, 4
         )
 
@@ -3067,19 +3052,63 @@ class GameView @JvmOverloads constructor(
     }
 
     /**
-     * One "LABEL .......... value" line on the game-over card, with the player's
-     * standing best for that stat sitting quietly to the left of this run's
-     * figure. A run reads against your own ceiling, not just against the last one.
-     * A record set on this very run is marked rather than shown twice.
+     * A pill carrying the all-time best, directly under the run's own score. It
+     * turns gold on a run that set it, which is the same beat the headline strikes.
+     */
+    private fun drawBestChip(canvas: Canvas, cx: Float, cy: Float, alpha: Float) {
+        val label = "BEST"
+        val value = bestScore.toString()
+        val gold = beatBestScore
+
+        uiBoldPaint.textAlign = Paint.Align.LEFT
+        uiBoldPaint.textSize = 12f * density
+        uiBoldPaint.letterSpacing = 0.18f
+        val labelWidth = uiBoldPaint.measureText(label)
+        uiBoldPaint.letterSpacing = 0f
+        uiBoldPaint.textSize = 17f * density
+        val valueWidth = uiBoldPaint.measureText(value)
+
+        val gap = 9f * density
+        val padX = 15f * density
+        val height = 30f * density
+        val width = labelWidth + gap + valueWidth + padX * 2
+
+        roundRect.set(cx - width / 2f, cy - height / 2f, cx + width / 2f, cy + height / 2f)
+        panelPaint.shader = null
+        panelPaint.alpha = 255
+        panelPaint.color = Theme.withAlpha(if (gold) Theme.gold else Theme.accent, 0.14f * alpha)
+        canvas.drawRoundRect(roundRect, height / 2f, height / 2f, panelPaint)
+
+        val baseline = cy - (uiBoldPaint.descent() + uiBoldPaint.ascent()) / 2f
+        val startX = cx - width / 2f + padX
+
+        uiBoldPaint.textSize = 12f * density
+        uiBoldPaint.letterSpacing = 0.18f
+        uiBoldPaint.color = Theme.withAlpha(Theme.textFaint, alpha)
+        canvas.drawText(label, startX, baseline, uiBoldPaint)
+        uiBoldPaint.letterSpacing = 0f
+
+        uiBoldPaint.textSize = 17f * density
+        uiBoldPaint.color = Theme.withAlpha(if (gold) Theme.gold else Theme.accent, alpha)
+        canvas.drawText(value, startX + labelWidth + gap, baseline, uiBoldPaint)
+        uiBoldPaint.textAlign = Paint.Align.CENTER
+    }
+
+    /**
+     * A row of the run's stat table: the label, this run's figure, and the
+     * player's standing best, in two right-aligned columns under a header. Two
+     * columns beat an inline "best 12" beside every number - the eye can compare
+     * straight down a column, which is the whole reason anyone wants the figure.
      */
     private fun drawStatRow(
         canvas: Canvas,
         left: Float,
-        right: Float,
+        runRight: Float,
+        bestRight: Float,
         y: Float,
         label: String,
         value: String,
-        best: String?,
+        best: String,
         valueColor: Int,
         order: Int
     ) {
@@ -3096,19 +3125,28 @@ class GameView @JvmOverloads constructor(
         uiBoldPaint.textAlign = Paint.Align.RIGHT
         uiBoldPaint.textSize = 17f * density
         uiBoldPaint.color = Theme.withAlpha(valueColor, alpha)
-        canvas.drawText(value, right - slide, y, uiBoldPaint)
+        canvas.drawText(value, runRight - slide, y, uiBoldPaint)
 
-        if (best == null) return
-        val valueWidth = uiBoldPaint.measureText(value)
-        uiBoldPaint.textSize = 12f * density
+        // The best column goes gold when this run is the one that set it.
         val isRecord = best == value
+        uiBoldPaint.textSize = 16f * density
         uiBoldPaint.color = Theme.withAlpha(
-            if (isRecord) Theme.gold else Theme.textFaint, alpha * if (isRecord) 0.95f else 0.7f
+            if (isRecord) Theme.gold else Theme.textSecondary, alpha * if (isRecord) 1f else 0.75f
         )
-        canvas.drawText(
-            if (isRecord) "NEW BEST" else "best $best",
-            right - slide - valueWidth - 10f * density, y, uiBoldPaint
-        )
+        canvas.drawText(best, bestRight - slide, y, uiBoldPaint)
+    }
+
+    /** The two column headings above the stat table. */
+    private fun drawStatHeader(canvas: Canvas, runRight: Float, bestRight: Float, y: Float) {
+        val alpha = revealAlpha(CARD_ROWS_AT - 0.05f)
+        if (alpha <= 0.01f) return
+        uiBoldPaint.textAlign = Paint.Align.RIGHT
+        uiBoldPaint.textSize = 11f * density
+        uiBoldPaint.letterSpacing = 0.14f
+        uiBoldPaint.color = Theme.withAlpha(Theme.textFaint, alpha * 0.85f)
+        canvas.drawText("THIS RUN", runRight, y, uiBoldPaint)
+        canvas.drawText("BEST", bestRight, y, uiBoldPaint)
+        uiBoldPaint.letterSpacing = 0f
     }
 
     private fun drawChip(canvas: Canvas, cx: Float, cy: Float, text: String) {
@@ -3216,7 +3254,9 @@ class GameView @JvmOverloads constructor(
         const val CARD_PAD = 28f
         /** Baseline above a rule to the rule, and the rule to the baseline below. */
         const val CARD_RULE_GAP = 30f
-        const val CARD_HEADER_HEIGHT = 162f
+        const val CARD_HEADER_HEIGHT = 202f
+        /** Width reserved for the BEST column, measured in from the card's inset. */
+        const val CARD_BEST_COLUMN = 66f
         const val CARD_STAT_ROW_HEIGHT = 26f
         const val CARD_BREAKDOWN_ROW_HEIGHT = 21f
         /** Baseline offset that centres a breakdown row's text in its row. */

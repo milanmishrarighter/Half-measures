@@ -446,21 +446,6 @@ class GameShape(
     var age = 0f
         private set
 
-    /**
-     * The last few places this shape has been, as a ring buffer of x,y pairs, so
-     * the game can draw the arc it is travelling. Sampled on a timer rather than
-     * every frame: at sixty frames a second an untimed trail would be a solid
-     * smear, and the point is to show a path, not a streak.
-     */
-    val trail = FloatArray(TRAIL_POINTS * 2)
-    var trailCount = 0
-        private set
-    private var trailHead = 0
-    private var trailTimer = 0f
-
-    /** Oldest-first, so index 0 is the faintest end of the tail. */
-    fun trailX(i: Int): Float = trail[((trailHead - trailCount + i + TRAIL_POINTS) % TRAIL_POINTS) * 2]
-    fun trailY(i: Int): Float = trail[((trailHead - trailCount + i + TRAIL_POINTS) % TRAIL_POINTS) * 2 + 1]
 
     /** Eases from 0 to 1 right after spawning so shapes scale in instead of appearing. */
     val spawnScale: Float
@@ -488,15 +473,6 @@ class GameShape(
         x += vx * dtSeconds
         y += vy * dtSeconds
         rotation += angularVelocity * dtSeconds
-
-        trailTimer -= dtSeconds
-        if (trailTimer <= 0f) {
-            trailTimer = TRAIL_INTERVAL
-            trail[trailHead * 2] = x
-            trail[trailHead * 2 + 1] = y
-            trailHead = (trailHead + 1) % TRAIL_POINTS
-            if (trailCount < TRAIL_POINTS) trailCount++
-        }
     }
 
     fun isOffScreen(screenW: Int, screenH: Int): Boolean {
@@ -505,11 +481,6 @@ class GameShape(
     }
 
     companion object {
-        /** How many breadcrumbs a shape leaves behind it. */
-        const val TRAIL_POINTS = 14
-        /** Seconds between breadcrumbs - game time, so slow motion stretches it. */
-        const val TRAIL_INTERVAL = 0.045f
-
         const val BASE_GRAVITY = 1500f          // px/s^2 before gravityScale
         /** Ceiling on sideways speed, so a shape thrown from the wing never streaks across. */
         private const val MAX_HORIZONTAL_SPEED = 420f
