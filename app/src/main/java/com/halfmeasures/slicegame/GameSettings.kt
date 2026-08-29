@@ -118,7 +118,7 @@ data class GameSettings(
     /** Health points at or below which the critical warning starts flashing. */
     var lowHealthAt: Int = DEFAULT_LOW_HEALTH_AT,
 
-    // ---- Shapes ----
+    // ---- Shape catalogue ----
     /**
      * Shape kinds the player has switched off, by enum name. Stored as names
      * rather than ordinals so reordering or removing a kind cannot silently
