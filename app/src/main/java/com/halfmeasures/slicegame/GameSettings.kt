@@ -118,6 +118,14 @@ data class GameSettings(
     /** Health points at or below which the critical warning starts flashing. */
     var lowHealthAt: Int = DEFAULT_LOW_HEALTH_AT,
 
+    // ---- Shapes ----
+    /**
+     * Shape kinds the player has switched off, by enum name. Stored as names
+     * rather than ordinals so reordering or removing a kind cannot silently
+     * disable a different one.
+     */
+    var disabledShapes: MutableSet<String> = mutableSetOf(),
+
     // ---- Sound ----
     /** Whether the game makes any noise at all. */
     var soundEnabled: Boolean = DEFAULT_SOUND_ENABLED,
@@ -191,6 +199,7 @@ data class GameSettings(
             .putFloat("slow_mo_duration", slowMoDuration)
             .putBoolean("low_health_slow_mo", lowHealthSlowMo)
             .putInt("low_health_at", lowHealthAt)
+            .putStringSet("disabled_shapes", disabledShapes)
             .putBoolean("sound_enabled", soundEnabled)
             .putFloat("sound_volume", soundVolume)
             .putFloat("neon_glow", neonGlow)
@@ -411,6 +420,10 @@ data class GameSettings(
                 slowMoDuration = p.getFloat("slow_mo_duration", DEFAULT_SLOW_MO_DURATION),
                 lowHealthSlowMo = p.getBoolean("low_health_slow_mo", DEFAULT_LOW_HEALTH_SLOW_MO),
                 lowHealthAt = p.getInt("low_health_at", DEFAULT_LOW_HEALTH_AT),
+                // Copied: the set handed back by SharedPreferences must not be
+                // mutated, and this one is edited in place by the picker.
+                disabledShapes = p.getStringSet("disabled_shapes", emptySet())
+                    ?.toMutableSet() ?: mutableSetOf(),
                 soundEnabled = p.getBoolean("sound_enabled", DEFAULT_SOUND_ENABLED),
                 soundVolume = p.getFloat("sound_volume", DEFAULT_SOUND_VOLUME),
                 neonGlow = p.getFloat("neon_glow", DEFAULT_NEON_GLOW),

@@ -393,6 +393,31 @@ enum class ShapeKind(
         fun unlockedCount(stage: Int, startingShapes: Int, shapesPerStage: Int): Int =
             (startingShapes + stage * shapesPerStage).coerceIn(1, values().size)
 
+        /** The stage at which the shape at [index] of [byDifficulty] first appears. */
+        fun stageFor(index: Int, startingShapes: Int, shapesPerStage: Int): Int {
+            if (index < startingShapes) return 0
+            val step = shapesPerStage.coerceAtLeast(1)
+            return (index - startingShapes) / step + 1
+        }
+
+        /**
+         * Chooses a kind from the unlocked window, honouring the player's picker.
+         *
+         * If they have switched off everything the current stage has unlocked, the
+         * search widens to the whole catalogue rather than spawning nothing - and
+         * if they have switched off literally everything, the catalogue wins. An
+         * empty sky is not a setting anyone meant to choose.
+         */
+        fun pick(unlockedCount: Int, disabled: Set<String>, random: Random): ShapeKind {
+            val window = byDifficulty.subList(0, unlockedCount.coerceIn(1, byDifficulty.size))
+            val allowed = window.filter { it.name !in disabled }
+            if (allowed.isNotEmpty()) return allowed[random.nextInt(allowed.size)]
+
+            val anywhere = byDifficulty.filter { it.name !in disabled }
+            if (anywhere.isNotEmpty()) return anywhere[random.nextInt(anywhere.size)]
+            return byDifficulty[0]
+        }
+
         /** Andrew's monotone chain, for the concavity term of [difficulty]. */
         private fun convexHull(points: List<PointF2>): List<PointF2> {
             if (points.size < 3) return points
@@ -504,7 +529,7 @@ class GameShape(
             val poolSize = ShapeKind.unlockedCount(
                 stage, settings.startingShapeCount, settings.shapesPerStage
             )
-            val kind = ShapeKind.byDifficulty[random.nextInt(poolSize)]
+            val kind = ShapeKind.pick(poolSize, settings.disabledShapes, random)
 
             val radius = (((screenW * 0.06f) + random.nextFloat() * (screenW * 0.045f)) * settings.sizeScale)
                 .coerceAtMost(screenW * 0.3f)

@@ -16,6 +16,7 @@ import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.widget.AppCompatCheckBox
 import androidx.appcompat.widget.SwitchCompat
 import kotlin.math.roundToInt
 
@@ -368,6 +369,11 @@ class DevSettingsActivity : AppCompatActivity() {
             )
         }
 
+        card("SHAPES").let { c ->
+            root.addView(c.wrapper)
+            shapePicker(c.body)
+        }
+
         card("ADS").let { c ->
             root.addView(c.wrapper)
             toggle(
@@ -433,6 +439,85 @@ class DevSettingsActivity : AppCompatActivity() {
     }
 
     private class Card(val wrapper: LinearLayout, val body: LinearLayout)
+
+    /**
+     * Every shape in the catalogue, in the order the game unlocks them, with the
+     * stage each one arrives at. Unticking a shape takes it out of the spawn pool
+     * without disturbing anything else: the unlock schedule is untouched, so a
+     * shape that is switched back on reappears at the stage it always would have.
+     */
+    private fun shapePicker(body: LinearLayout) {
+        body.addView(TextView(this).apply {
+            text = "Untick a shape to keep it out of the game. The number is the stage it " +
+                "normally arrives at. Switching everything off is ignored - the game falls " +
+                "back to the full set rather than throwing nothing."
+            typeface = Theme.ui(this@DevSettingsActivity)
+            setTextColor(Theme.textFaint)
+            textSize = 14f
+            setPadding(0, dp(8f), 0, dp(12f))
+        })
+
+        val boxes = ArrayList<AppCompatCheckBox>()
+        val kinds = ShapeKind.byDifficulty
+
+        body.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            addView(pillButton("ALL ON", primary = false) {
+                settings.disabledShapes.clear()
+                boxes.forEach { it.isChecked = true }
+            }.also { (it.layoutParams as LinearLayout.LayoutParams).rightMargin = dp(10f) })
+            addView(pillButton("ALL OFF", primary = false) {
+                settings.disabledShapes.addAll(kinds.map { k -> k.name })
+                boxes.forEach { it.isChecked = false }
+            })
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(10f) }
+        })
+
+        kinds.forEachIndexed { index, kind ->
+            val stage = ShapeKind.stageFor(
+                index, settings.startingShapeCount, settings.shapesPerStage
+            )
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(0, dp(2f), 0, dp(2f))
+            }
+
+            row.addView(TextView(this@DevSettingsActivity).apply {
+                text = kind.displayName
+                typeface = Theme.uiBold(this@DevSettingsActivity)
+                setTextColor(Theme.textPrimary)
+                textSize = 16f
+                layoutParams = LinearLayout.LayoutParams(
+                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
+                )
+            })
+            row.addView(TextView(this@DevSettingsActivity).apply {
+                text = if (stage == 0) "start" else "stage $stage"
+                typeface = Theme.ui(this@DevSettingsActivity)
+                setTextColor(Theme.textFaint)
+                textSize = 13f
+                setPadding(0, 0, dp(10f), 0)
+            })
+
+            val box = AppCompatCheckBox(this).apply {
+                isChecked = kind.name !in settings.disabledShapes
+                setOnCheckedChangeListener { _, checked ->
+                    if (checked) settings.disabledShapes.remove(kind.name)
+                    else settings.disabledShapes.add(kind.name)
+                }
+            }
+            boxes.add(box)
+            row.addView(box)
+
+            // The whole row is the target, not just the box.
+            row.isClickable = true
+            row.setOnClickListener { box.toggle() }
+            body.addView(row)
+        }
+    }
 
     private fun card(title: String): Card {
         val wrapper = LinearLayout(this).apply {
@@ -663,6 +748,16 @@ class DevSettingsActivity : AppCompatActivity() {
             appendLine("  Music: ${onOff(settings.musicEnabled)}")
             appendLine("  Music volume: ${(settings.musicVolume * 100).roundToInt()}%")
             appendLine("  Neon glow: %.2fx".format(settings.neonGlow))
+            appendLine()
+            appendLine("SHAPES")
+            appendLine("  In play: ${ShapeKind.values().size - settings.disabledShapes.size}" +
+                " of ${ShapeKind.values().size}")
+            if (settings.disabledShapes.isNotEmpty()) {
+                val off = ShapeKind.byDifficulty
+                    .filter { it.name in settings.disabledShapes }
+                    .joinToString(", ") { it.displayName }
+                appendLine("  Switched off: $off")
+            }
             appendLine()
             appendLine("ADS")
             appendLine("  Offer a continue when you die: ${onOff(settings.continuesEnabled)}")
