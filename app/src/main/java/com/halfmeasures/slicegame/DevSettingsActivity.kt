@@ -7,9 +7,13 @@ import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
+import android.text.Editable
+import android.text.InputType
+import android.text.TextWatcher
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.SeekBar
@@ -45,6 +49,15 @@ class DevSettingsActivity : AppCompatActivity() {
 
     override fun onPause() {
         super.onPause()
+        save()
+    }
+
+    /**
+     * Written on every change rather than only on the way out. A screen that holds
+     * its edits until onPause loses them to anything that kills the process, and
+     * makes it far too easy for another screen to overwrite them in the meantime.
+     */
+    private fun save() {
         settings.saveTo(this)
     }
 
@@ -441,16 +454,17 @@ class DevSettingsActivity : AppCompatActivity() {
     private class Card(val wrapper: LinearLayout, val body: LinearLayout)
 
     /**
-     * Every shape in the catalogue, in the order the game unlocks them, with the
-     * stage each one arrives at. Unticking a shape takes it out of the spawn pool
-     * without disturbing anything else: the unlock schedule is untouched, so a
-     * shape that is switched back on reappears at the stage it always would have.
+     * Every shape in the catalogue, in the order the game unlocks them.
+     *
+     * Each row carries a tick and the score it starts appearing at. The score is
+     * an override: a shape with an empty box uses its measured place in the unlock
+     * order, so changing one shape leaves every other one exactly where it was.
      */
     private fun shapePicker(body: LinearLayout) {
         body.addView(TextView(this).apply {
-            text = "Untick a shape to keep it out of the game. The number is the stage it " +
-                "normally arrives at. Switching everything off is ignored - the game falls " +
-                "back to the full set rather than throwing nothing."
+            text = "Untick a shape to keep it out of the game. The number is the score it " +
+                "starts appearing at - type over it to move a shape earlier or later, or " +
+                "clear it to put it back where its difficulty puts it."
             typeface = Theme.ui(this@DevSettingsActivity)
             setTextColor(Theme.textFaint)
             textSize = 14f
@@ -458,6 +472,7 @@ class DevSettingsActivity : AppCompatActivity() {
         })
 
         val boxes = ArrayList<AppCompatCheckBox>()
+        val fields = ArrayList<EditText>()
         val kinds = ShapeKind.byDifficulty
 
         body.addView(LinearLayout(this).apply {
@@ -465,24 +480,53 @@ class DevSettingsActivity : AppCompatActivity() {
             addView(pillButton("ALL ON", primary = false) {
                 settings.disabledShapes.clear()
                 boxes.forEach { it.isChecked = true }
-            }.also { (it.layoutParams as LinearLayout.LayoutParams).rightMargin = dp(10f) })
+                save()
+            }.also { (it.layoutParams as LinearLayout.LayoutParams).rightMargin = dp(8f) })
             addView(pillButton("ALL OFF", primary = false) {
                 settings.disabledShapes.addAll(kinds.map { k -> k.name })
                 boxes.forEach { it.isChecked = false }
+                save()
+            }.also { (it.layoutParams as LinearLayout.LayoutParams).rightMargin = dp(8f) })
+            addView(pillButton("RESET SCORES", primary = false) {
+                settings.shapeUnlockScores.clear()
+                save()
+                fields.forEachIndexed { i, f ->
+                    f.setText(ShapeKind.unlockScore(kinds[i], settings).toString())
+                }
             })
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply { bottomMargin = dp(10f) }
         })
 
-        kinds.forEachIndexed { index, kind ->
-            val stage = ShapeKind.stageFor(
-                index, settings.startingShapeCount, settings.shapesPerStage
-            )
+        // Column headings, so the number in each row is not a mystery.
+        body.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(TextView(this@DevSettingsActivity).apply {
+                text = "SHAPE"
+                typeface = Theme.uiBold(this@DevSettingsActivity)
+                setTextColor(Theme.textFaint)
+                textSize = 11f
+                letterSpacing = 0.14f
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            })
+            addView(TextView(this@DevSettingsActivity).apply {
+                text = "FROM SCORE"
+                typeface = Theme.uiBold(this@DevSettingsActivity)
+                setTextColor(Theme.textFaint)
+                textSize = 11f
+                letterSpacing = 0.14f
+                setPadding(0, 0, dp(38f), 0)
+            })
+            setPadding(0, 0, 0, dp(6f))
+        })
+
+        kinds.forEach { kind ->
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                setPadding(0, dp(2f), 0, dp(2f))
+                setPadding(0, dp(1f), 0, dp(1f))
             }
 
             row.addView(TextView(this@DevSettingsActivity).apply {
@@ -494,27 +538,52 @@ class DevSettingsActivity : AppCompatActivity() {
                     0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
                 )
             })
-            row.addView(TextView(this@DevSettingsActivity).apply {
-                text = if (stage == 0) "start" else "stage $stage"
+
+            val field = EditText(this).apply {
+                setText(ShapeKind.unlockScore(kind, settings).toString())
+                inputType = InputType.TYPE_CLASS_NUMBER
                 typeface = Theme.ui(this@DevSettingsActivity)
-                setTextColor(Theme.textFaint)
-                textSize = 13f
-                setPadding(0, 0, dp(10f), 0)
-            })
+                setTextColor(Theme.textPrimary)
+                setHintTextColor(Theme.textFaint)
+                textSize = 15f
+                gravity = Gravity.END
+                setPadding(dp(8f), dp(6f), dp(8f), dp(6f))
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.RECTANGLE
+                    cornerRadius = dp(8f).toFloat()
+                    setColor(Theme.withAlpha(Color.WHITE, 0.05f))
+                    setStroke(dp(1f), Theme.hairline)
+                }
+                layoutParams = LinearLayout.LayoutParams(dp(84f), ViewGroup.LayoutParams.WRAP_CONTENT)
+                    .apply { rightMargin = dp(8f) }
+                addTextChangedListener(object : TextWatcher {
+                    override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
+                    override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
+                    override fun afterTextChanged(s: Editable?) {
+                        val typed = s?.toString()?.trim().orEmpty()
+                        // An empty box means "wherever difficulty puts it", which is
+                        // different from a zero and has to stay different.
+                        if (typed.isEmpty()) settings.shapeUnlockScores.remove(kind.name)
+                        else typed.toIntOrNull()?.let {
+                            settings.shapeUnlockScores[kind.name] = it.coerceAtLeast(0)
+                        }
+                        save()
+                    }
+                })
+            }
+            fields.add(field)
+            row.addView(field)
 
             val box = AppCompatCheckBox(this).apply {
                 isChecked = kind.name !in settings.disabledShapes
                 setOnCheckedChangeListener { _, checked ->
                     if (checked) settings.disabledShapes.remove(kind.name)
                     else settings.disabledShapes.add(kind.name)
+                    save()
                 }
             }
             boxes.add(box)
             row.addView(box)
-
-            // The whole row is the target, not just the box.
-            row.isClickable = true
-            row.setOnClickListener { box.toggle() }
             body.addView(row)
         }
     }
@@ -619,7 +688,11 @@ class DevSettingsActivity : AppCompatActivity() {
                 }
 
                 override fun onStartTrackingTouch(seekBar: SeekBar?) {}
-                override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+                // Written once the finger lifts rather than on every pixel of the
+                // drag: a thousand commits per sweep would be absurd.
+                override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                    save()
+                }
             })
         }
         parent.addView(bar)
@@ -642,7 +715,10 @@ class DevSettingsActivity : AppCompatActivity() {
             isChecked = initial
             thumbTintList = ColorStateList.valueOf(Theme.accent)
             trackTintList = ColorStateList.valueOf(Theme.withAlpha(Theme.accent, 0.4f))
-            setOnCheckedChangeListener { _, checked -> onChange(checked) }
+            setOnCheckedChangeListener { _, checked ->
+                onChange(checked)
+                save()
+            }
         })
         parent.addView(row)
     }
@@ -665,7 +741,7 @@ class DevSettingsActivity : AppCompatActivity() {
             orientation = LinearLayout.HORIZONTAL
             addView(pillButton("RESET", primary = false) {
                 settings = GameSettings()
-                settings.saveTo(this@DevSettingsActivity)
+                save()
                 recreate()
             }.also {
                 (it.layoutParams as LinearLayout.LayoutParams).rightMargin = dp(12f)
@@ -752,6 +828,12 @@ class DevSettingsActivity : AppCompatActivity() {
             appendLine("SHAPES")
             appendLine("  In play: ${ShapeKind.values().size - settings.disabledShapes.size}" +
                 " of ${ShapeKind.values().size}")
+            ShapeKind.byDifficulty
+                .filter { it.name !in settings.disabledShapes }
+                .sortedBy { ShapeKind.unlockScore(it, settings) }
+                .forEach {
+                    appendLine("    ${it.displayName}: from ${ShapeKind.unlockScore(it, settings)}")
+                }
             if (settings.disabledShapes.isNotEmpty()) {
                 val off = ShapeKind.byDifficulty
                     .filter { it.name in settings.disabledShapes }

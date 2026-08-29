@@ -662,7 +662,7 @@ class GameView @JvmOverloads constructor(
                 .coerceIn(1, settings.maxConcurrency)
             spawnCountdown -= dt
             if (shapes.size < cap && spawnCountdown <= 0f && width > 0 && height > 0) {
-                shapes.add(GameShape.spawnRandom(width, height, random, nowMs, stage, settings))
+                shapes.add(GameShape.spawnRandom(width, height, random, nowMs, stage, score, settings))
                 spawnCountdown = settings.spawnGapMs / 1000f
             }
 
@@ -885,7 +885,7 @@ class GameView @JvmOverloads constructor(
         menuSpawnTimer -= dt
         if (menuSpawnTimer <= 0f && shapes.size < 3) {
             menuSpawnTimer = 0.9f + random.nextFloat() * 0.8f
-            shapes.add(GameShape.spawnRandom(width, height, random, nowMs, 0, settings))
+            shapes.add(GameShape.spawnRandom(width, height, random, nowMs, 0, 0, settings))
         }
 
         var i = shapes.size - 1

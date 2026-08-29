@@ -125,6 +125,12 @@ data class GameSettings(
      * disable a different one.
      */
     var disabledShapes: MutableSet<String> = mutableSetOf(),
+    /**
+     * Per-shape overrides of the score at which a kind starts appearing, by enum
+     * name. A shape with no entry here uses its measured position in the unlock
+     * order, so overriding one shape leaves every other one where it was.
+     */
+    var shapeUnlockScores: MutableMap<String, Int> = mutableMapOf(),
 
     // ---- Sound ----
     /** Whether the game makes any noise at all. */
@@ -199,7 +205,11 @@ data class GameSettings(
             .putFloat("slow_mo_duration", slowMoDuration)
             .putBoolean("low_health_slow_mo", lowHealthSlowMo)
             .putInt("low_health_at", lowHealthAt)
-            .putStringSet("disabled_shapes", disabledShapes)
+            // Copied on the way out. SharedPreferences keeps the instance it is
+            // handed, so putting the same mutable set twice looks like putting an
+            // unchanged value and the second write is skipped entirely.
+            .putStringSet("disabled_shapes", HashSet(disabledShapes))
+            .putString("shape_unlock_scores", encodeUnlockScores(shapeUnlockScores))
             .putBoolean("sound_enabled", soundEnabled)
             .putFloat("sound_volume", soundVolume)
             .putFloat("neon_glow", neonGlow)
@@ -214,6 +224,23 @@ data class GameSettings(
     }
 
     companion object {
+
+        /** "NAME=score;NAME=score" - preferences have no map type. */
+        private fun encodeUnlockScores(scores: Map<String, Int>): String =
+            scores.entries.joinToString(";") { "${it.key}=${it.value}" }
+
+        private fun decodeUnlockScores(raw: String?): MutableMap<String, Int> {
+            val out = mutableMapOf<String, Int>()
+            if (raw.isNullOrEmpty()) return out
+            for (part in raw.split(';')) {
+                val eq = part.indexOf('=')
+                if (eq <= 0) continue
+                val value = part.substring(eq + 1).toIntOrNull() ?: continue
+                out[part.substring(0, eq)] = value
+            }
+            return out
+        }
+
         // Defaults hand-tuned in-app and reported back by the player.
         const val DEFAULT_SIZE_SCALE = 1.9f
         const val DEFAULT_FLIGHT_HEIGHT = 0.58f
@@ -422,8 +449,11 @@ data class GameSettings(
                 lowHealthAt = p.getInt("low_health_at", DEFAULT_LOW_HEALTH_AT),
                 // Copied: the set handed back by SharedPreferences must not be
                 // mutated, and this one is edited in place by the picker.
+                // Copied: the set handed back by SharedPreferences must not be
+                // mutated, and this one is edited in place by the picker.
                 disabledShapes = p.getStringSet("disabled_shapes", emptySet())
                     ?.toMutableSet() ?: mutableSetOf(),
+                shapeUnlockScores = decodeUnlockScores(p.getString("shape_unlock_scores", "")),
                 soundEnabled = p.getBoolean("sound_enabled", DEFAULT_SOUND_ENABLED),
                 soundVolume = p.getFloat("sound_volume", DEFAULT_SOUND_VOLUME),
                 neonGlow = p.getFloat("neon_glow", DEFAULT_NEON_GLOW),

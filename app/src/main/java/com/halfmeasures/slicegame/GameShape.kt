@@ -401,20 +401,35 @@ enum class ShapeKind(
         }
 
         /**
-         * Chooses a kind from the unlocked window, honouring the player's picker.
-         *
-         * If they have switched off everything the current stage has unlocked, the
-         * search widens to the whole catalogue rather than spawning nothing - and
-         * if they have switched off literally everything, the catalogue wins. An
-         * empty sky is not a setting anyone meant to choose.
+         * The score at which a kind starts appearing: the player's override if they
+         * set one, otherwise its measured place in the unlock order turned into a
+         * score. Overriding one shape therefore leaves every other one alone.
          */
-        fun pick(unlockedCount: Int, disabled: Set<String>, random: Random): ShapeKind {
-            val window = byDifficulty.subList(0, unlockedCount.coerceIn(1, byDifficulty.size))
-            val allowed = window.filter { it.name !in disabled }
-            if (allowed.isNotEmpty()) return allowed[random.nextInt(allowed.size)]
+        fun unlockScore(kind: ShapeKind, settings: GameSettings): Int {
+            settings.shapeUnlockScores[kind.name]?.let { return it }
+            val index = byDifficulty.indexOf(kind)
+            val stage = stageFor(index, settings.startingShapeCount, settings.shapesPerStage)
+            return stage * settings.stageScoreInterval
+        }
 
-            val anywhere = byDifficulty.filter { it.name !in disabled }
-            if (anywhere.isNotEmpty()) return anywhere[random.nextInt(anywhere.size)]
+        /**
+         * Chooses a kind the player has both switched on and reached the score for.
+         *
+         * If nothing qualifies - every unlocked kind switched off, or every unlock
+         * score set above the current score - the search falls back to whatever is
+         * merely switched on, and finally to the catalogue. An empty sky is not a
+         * setting anyone meant to choose.
+         */
+        fun pick(score: Int, settings: GameSettings, random: Random): ShapeKind {
+            val enabled = byDifficulty.filter { it.name !in settings.disabledShapes }
+
+            val reached = enabled.filter { score >= unlockScore(it, settings) }
+            if (reached.isNotEmpty()) return reached[random.nextInt(reached.size)]
+
+            if (enabled.isNotEmpty()) {
+                // Nothing has unlocked yet: hand over the earliest one that will.
+                return enabled.minByOrNull { unlockScore(it, settings) } ?: enabled[0]
+            }
             return byDifficulty[0]
         }
 
@@ -524,12 +539,10 @@ class GameShape(
             random: Random,
             nowMs: Long,
             stage: Int,
+            score: Int,
             settings: GameSettings
         ): GameShape {
-            val poolSize = ShapeKind.unlockedCount(
-                stage, settings.startingShapeCount, settings.shapesPerStage
-            )
-            val kind = ShapeKind.pick(poolSize, settings.disabledShapes, random)
+            val kind = ShapeKind.pick(score, settings, random)
 
             val radius = (((screenW * 0.06f) + random.nextFloat() * (screenW * 0.045f)) * settings.sizeScale)
                 .coerceAtMost(screenW * 0.3f)

@@ -32,13 +32,20 @@ class SettingsActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        settings = GameSettings.load(this)
-        setContentView(buildUi())
     }
 
-    override fun onPause() {
-        super.onPause()
-        settings.saveTo(this)
+    /**
+     * Reloaded and rebuilt on every resume, not just on create.
+     *
+     * This screen can hand off to the dev panel and get control back, and it used
+     * to hold the copy of the settings it loaded on the way in. Anything the dev
+     * panel changed was then overwritten the moment this screen saved its own
+     * stale copy - which is exactly what happened to the shape picker.
+     */
+    override fun onResume() {
+        super.onResume()
+        settings = GameSettings.load(this)
+        setContentView(buildUi())
     }
 
     private fun buildUi(): View {
@@ -59,22 +66,22 @@ class SettingsActivity : AppCompatActivity() {
         toggle(
             root, "Sound", "Arcade blips, cut noises and jingles.",
             settings.soundEnabled
-        ) { settings.soundEnabled = it }
+        ) { settings.soundEnabled = it; save() }
 
         toggle(
             root, "Music", "A bass loop that plays while you are cutting.",
             settings.musicEnabled
-        ) { settings.musicEnabled = it }
+        ) { settings.musicEnabled = it; save() }
 
         toggle(
             root, "Announcer", "A shout when you land a perfect cut.",
             settings.voiceEnabled
-        ) { settings.voiceEnabled = it }
+        ) { settings.voiceEnabled = it; save() }
 
         toggle(
             root, "Vibration", "A buzz on every cut, stronger the better it lands.",
             settings.vibrationEnabled
-        ) { settings.vibrationEnabled = it }
+        ) { settings.vibrationEnabled = it; save() }
 
         root.addView(buildInfo())
 
@@ -103,6 +110,14 @@ class SettingsActivity : AppCompatActivity() {
             isFillViewport = true
             addView(root)
         }
+    }
+
+    /**
+     * Written on every change rather than on the way out, so nothing is riding on
+     * this screen's lifecycle to reach the disk.
+     */
+    private fun save() {
+        settings.saveTo(this)
     }
 
     /** A labelled switch on a card, matching the game's surfaces. */
@@ -186,7 +201,7 @@ class SettingsActivity : AppCompatActivity() {
             when {
                 buildTaps >= TAPS_TO_UNLOCK -> {
                     buildTaps = 0
-                    settings.saveTo(this)
+                    save()
                     startActivity(Intent(this, DevSettingsActivity::class.java))
                 }
                 // Only starts counting out loud near the end, so the door stays shut
