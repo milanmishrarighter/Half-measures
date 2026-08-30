@@ -139,6 +139,36 @@ object SliceMath {
     }
 
     /** How far the bigger piece sits above a perfect 50%: 0 = flawless, 50 = total whiff. */
+    /**
+     * Whether a polygon crosses itself.
+     *
+     * A self-intersecting outline is not a shape this file can reason about: the
+     * shoelace sum double-counts the overlap, so its area is wrong, so every
+     * judgement built on that area is wrong too. Cheap to check once per kind and
+     * worth having as a permanent gate on the catalogue.
+     */
+    fun selfIntersects(poly: List<PointF2>): Boolean {
+        val n = poly.size
+        if (n < 4) return false
+        for (i in 0 until n) {
+            val a1 = poly[i]
+            val a2 = poly[(i + 1) % n]
+            for (j in i + 1 until n) {
+                // Neighbouring edges share an endpoint and always "touch".
+                if (j == i || (j + 1) % n == i || (i + 1) % n == j) continue
+                val b1 = poly[j]
+                val b2 = poly[(j + 1) % n]
+                val d1 = side(b1.x, b1.y, b2.x, b2.y, a1.x, a1.y)
+                val d2 = side(b1.x, b1.y, b2.x, b2.y, a2.x, a2.y)
+                val d3 = side(a1.x, a1.y, a2.x, a2.y, b1.x, b1.y)
+                val d4 = side(a1.x, a1.y, a2.x, a2.y, b2.x, b2.y)
+                // Strict: collinear touching is a tidy-up problem, not a crossing.
+                if (d1 * d2 < 0f && d3 * d4 < 0f) return true
+            }
+        }
+        return false
+    }
+
     fun deviationPercent(areaA: Float, areaB: Float): Float {
         val total = areaA + areaB
         if (total <= 0f) return 50f

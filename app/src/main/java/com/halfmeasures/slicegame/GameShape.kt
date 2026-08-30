@@ -1,6 +1,10 @@
 package com.halfmeasures.slicegame
 
+import kotlin.math.abs
+import kotlin.math.atan2
 import kotlin.math.cos
+import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.sin
 import kotlin.math.sqrt
 import kotlin.random.Random
@@ -80,8 +84,55 @@ private fun outline(vararg v: Float): List<PointF2> {
         maxR = kotlin.math.max(maxR, sqrt(dx * dx + dy * dy))
     }
 
-    return (0 until n).map { i ->
+    val scaled = (0 until n).map { i ->
         PointF2((v[i * 2] - cx) / maxR, (v[i * 2 + 1] - cy) / maxR)
+    }
+    return tidy(scaled)
+}
+
+/**
+ * Drops repeated points and points that sit on the straight line between their
+ * neighbours. Both are harmless to look at and a nuisance to reason about: a
+ * zero-length edge has no side to be on, which is enough to make a self-
+ * intersection test report crossings that are not there.
+ */
+private fun tidy(poly: List<PointF2>): List<PointF2> {
+    val eps = 1e-4f
+    val once = ArrayList<PointF2>(poly.size)
+    for (p in poly) {
+        val last = once.lastOrNull()
+        if (last == null || abs(p.x - last.x) > eps || abs(p.y - last.y) > eps) once.add(p)
+    }
+    while (once.size > 1 &&
+        abs(once.first().x - once.last().x) < eps && abs(once.first().y - once.last().y) < eps
+    ) {
+        once.removeAt(once.size - 1)
+    }
+    if (once.size < 3) return once
+
+    val kept = ArrayList<PointF2>(once.size)
+    for (i in once.indices) {
+        val a = once[(i - 1 + once.size) % once.size]
+        val b = once[i]
+        val c = once[(i + 1) % once.size]
+        val cross = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
+        if (abs(cross) > 1e-6f) kept.add(b)
+    }
+    return if (kept.size >= 3) kept else once
+}
+
+/** A run of points along a circular arc, appended to a builder. */
+private fun sweepInto(
+    out: ArrayList<Float>, cx: Float, cy: Float, r: Float,
+    from: Float, to: Float, steps: Int, forward: Boolean
+) {
+    var end = to
+    val turn = (2.0 * Math.PI).toFloat()
+    if (forward) while (end < from) end += turn else while (end > from) end -= turn
+    for (i in 0..steps) {
+        val a = from + (end - from) * i / steps
+        out.add(cx + r * cos(a))
+        out.add(cy + r * sin(a))
     }
 }
 
@@ -146,19 +197,32 @@ private fun digitSeven() = outline(0f,0f, 1f,0f, 1f,0.2f, 0.56f,1f, 0.28f,1f, 0.
 
 // ---- Things. Rougher outlines than the letters, because a fish read at a
 // glance is a silhouette, not a diagram.
+/** Three clear tiers and a narrow trunk. Two shallow tiers on a wide trunk is an
+ *  upload arrow, which is what the old one looked like. */
 private fun treeOutline() = outline(
-    0.5f,0f, 0.78f,0.32f, 0.66f,0.32f, 0.92f,0.64f, 0.6f,0.64f, 0.6f,1f,
-    0.4f,1f, 0.4f,0.64f, 0.08f,0.64f, 0.34f,0.32f, 0.22f,0.32f
+    0.50f,0.00f, 0.68f,0.26f, 0.58f,0.26f, 0.80f,0.55f, 0.70f,0.55f, 0.94f,0.84f,
+    0.60f,0.84f, 0.60f,1.00f, 0.40f,1.00f, 0.40f,0.84f, 0.06f,0.84f, 0.30f,0.55f,
+    0.20f,0.55f, 0.42f,0.26f, 0.32f,0.26f
 )
 private fun fishOutline() = built { v ->
     v.addAll(listOf(0.02f, 0.16f, 0.36f, 0.5f, 0.02f, 0.84f))
     arcInto(v, 0.6f, 0.5f, 0.42f, 0.4f, 150f, -150f, 14)
 }
+/**
+ * The classic parametric heart. Two arcs meeting at a notch is easy to get wrong
+ * - the old one crossed itself - and a closed parametric curve simply cannot.
+ */
 private fun heartOutline() = built { v ->
-    v.add(0.5f); v.add(1f)
-    arcInto(v, 0.24f, 0.3f, 0.26f, 0.28f, 60f, -170f, 10)
-    arcInto(v, 0.76f, 0.3f, 0.26f, 0.28f, -10f, 120f, 10)
+    val steps = 44
+    for (i in 0 until steps) {
+        val t = (2.0 * Math.PI * i / steps).toFloat()
+        val s1 = sin(t)
+        v.add(16f * s1 * s1 * s1)
+        // Negated: the canvas runs y downward, and the curve is written y up.
+        v.add(-(13f * cos(t) - 5f * cos(2f * t) - 2f * cos(3f * t) - cos(4f * t)))
+    }
 }
+
 private fun appleOutline() = built { v ->
     arcInto(v, 0.5f, 0.58f, 0.46f, 0.42f, -80f, 260f, 22)
     v.add(0.55f); v.add(0.1f)
@@ -166,17 +230,59 @@ private fun appleOutline() = built { v ->
 }
 private fun arrowOutline() = outline(0.5f,0f, 1f,0.46f, 0.72f,0.46f, 0.72f,1f, 0.28f,1f, 0.28f,0.46f, 0f,0.46f)
 private fun boltOutline() = outline(0.58f,0f, 0.14f,0.56f, 0.46f,0.56f, 0.34f,1f, 0.86f,0.42f, 0.54f,0.42f)
+/**
+ * Two circle arcs meeting at their true intersection points, worked out rather
+ * than guessed. The old one used round angles that did not actually meet, so the
+ * tips crossed and left a wedge.
+ */
 private fun moonOutline() = built { v ->
-    arcInto(v, 0.5f, 0.5f, 0.5f, 0.5f, 90f, 270f, 16)
-    arcInto(v, 0.28f, 0.5f, 0.4f, 0.4f, 270f, 90f, 16)
+    val x1 = 0.5f; val y1 = 0.5f; val r1 = 0.5f
+    val x2 = 0.64f; val y2 = 0.5f; val r2 = 0.44f
+
+    val d = sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1))
+    val a = (r1 * r1 - r2 * r2 + d * d) / (2f * d)
+    val h = sqrt(max(r1 * r1 - a * a, 0f))
+    val px = x1 + a * (x2 - x1) / d
+    val py = y1 + a * (y2 - y1) / d
+    val ux = -(y2 - y1) / d
+    val uy = (x2 - x1) / d
+
+    val ax = px + h * ux; val ay = py + h * uy
+    val bx = px - h * ux; val by = py - h * uy
+
+    // The long way round the outside, then back along the bite.
+    sweepInto(v, x1, y1, r1, atan2(ay - y1, ax - x1), atan2(by - y1, bx - x1), 26, true)
+    sweepInto(v, x2, y2, r2, atan2(by - y2, bx - x2), atan2(ay - y2, ax - x2), 20, false)
 }
+
 private fun cloudOutline() = built { v ->
-    arcInto(v, 0.28f, 0.62f, 0.26f, 0.26f, 180f, 300f, 8)
-    arcInto(v, 0.52f, 0.5f, 0.28f, 0.3f, 210f, 330f, 8)
-    arcInto(v, 0.76f, 0.64f, 0.24f, 0.24f, 250f, 0f, 8)
-    v.add(1f); v.add(0.88f)
-    v.add(0.02f); v.add(0.88f)
+    val bumps = arrayOf(
+        floatArrayOf(0.24f, 0.56f, 0.22f),
+        floatArrayOf(0.50f, 0.50f, 0.245f),
+        floatArrayOf(0.76f, 0.56f, 0.22f)
+    )
+    val base = 0.86f
+    var x0 = Float.MAX_VALUE
+    var x1 = -Float.MAX_VALUE
+    for (b in bumps) {
+        x0 = min(x0, b[0] - b[2])
+        x1 = max(x1, b[0] + b[2])
+    }
+    val steps = 54
+    for (i in 0..steps) {
+        val x = x0 + (x1 - x0) * i / steps
+        var top = base
+        for (b in bumps) {
+            val dx = x - b[0]
+            if (abs(dx) < b[2]) top = min(top, b[1] - sqrt(b[2] * b[2] - dx * dx))
+        }
+        v.add(x)
+        v.add(top)
+    }
+    v.add(x1); v.add(base)
+    v.add(x0); v.add(base)
 }
+
 private fun houseOutline() = outline(0.5f,0f, 1f,0.4f, 0.86f,0.4f, 0.86f,1f, 0.14f,1f, 0.14f,0.4f, 0f,0.4f)
 private fun bottleOutline() = outline(0.4f,0f, 0.6f,0f, 0.6f,0.18f, 0.78f,0.36f, 0.78f,1f, 0.22f,1f, 0.22f,0.36f, 0.4f,0.18f)
 private fun mushroomOutline() = built { v ->
@@ -211,16 +317,51 @@ private fun sliceOutline() = built { v ->
     v.add(0.5f); v.add(0f)
     arcInto(v, 0.5f, 0.06f, 0.52f, 0.94f, 62f, 118f, 10)
 }
+/**
+ * A thin shaft between four knuckles, built as the top edge and then the bottom
+ * edge of their union. The old one placed the knuckle arcs at angles that folded
+ * back over the shaft, and its shaft was as thick as the lobes were tall, which
+ * is simply the letter H.
+ */
 private fun boneOutline() = built { v ->
-    arcInto(v, 0.16f, 0.3f, 0.16f, 0.2f, 90f, 270f, 6)
-    arcInto(v, 0.16f, 0.7f, 0.16f, 0.2f, 90f, 270f, 6)
-    v.add(0.36f); v.add(0.62f)
-    v.add(0.64f); v.add(0.62f)
-    arcInto(v, 0.84f, 0.7f, 0.16f, 0.2f, 270f, 90f, 6)
-    arcInto(v, 0.84f, 0.3f, 0.16f, 0.2f, 270f, 90f, 6)
-    v.add(0.64f); v.add(0.38f)
-    v.add(0.36f); v.add(0.38f)
+    val lobes = arrayOf(
+        floatArrayOf(0.18f, 0.30f, 0.185f), floatArrayOf(0.18f, 0.70f, 0.185f),
+        floatArrayOf(0.82f, 0.30f, 0.185f), floatArrayOf(0.82f, 0.70f, 0.185f)
+    )
+    val shaftLeft = 0.18f
+    val shaftRight = 0.82f
+    val shaftTop = 0.455f
+    val shaftBottom = 0.545f
+
+    val steps = 44
+    val top = ArrayList<Float>()
+    val bottom = ArrayList<Float>()
+    for (i in 0..steps) {
+        val x = i.toFloat() / steps
+        var t = Float.MAX_VALUE
+        var b = -Float.MAX_VALUE
+        if (x >= shaftLeft && x <= shaftRight) {
+            t = min(t, shaftTop)
+            b = max(b, shaftBottom)
+        }
+        for (l in lobes) {
+            val dx = x - l[0]
+            if (abs(dx) < l[2]) {
+                val h = sqrt(l[2] * l[2] - dx * dx)
+                t = min(t, l[1] - h)
+                b = max(b, l[1] + h)
+            }
+        }
+        if (t == Float.MAX_VALUE) continue
+        top.add(x); top.add(t)
+        bottom.add(x); bottom.add(b)
+    }
+    v.addAll(top)
+    for (i in bottom.size / 2 - 1 downTo 0) {
+        v.add(bottom[i * 2]); v.add(bottom[i * 2 + 1])
+    }
 }
+
 private fun keyOutline() = outline(
     0.5f,0f, 0.72f,0.12f, 0.72f,0.34f, 0.58f,0.44f, 0.58f,0.62f, 0.78f,0.62f,
     0.78f,0.76f, 0.58f,0.76f, 0.58f,0.88f, 0.74f,0.88f, 0.74f,1f, 0.42f,1f,
@@ -321,6 +462,16 @@ enum class ShapeKind(
     }
 
     /**
+     * Whether this outline is a polygon the game can actually work with. Checked
+     * once per kind, and used to keep a malformed shape out of the catalogue
+     * entirely rather than letting it reach a player - which is how a heart, a
+     * bone and a cloud that all crossed themselves stayed in for several builds.
+     */
+    val isSimple: Boolean by lazy(LazyThreadSafetyMode.NONE) {
+        !SliceMath.selfIntersects(unitVertices)
+    }
+
+    /**
      * How hard this shape is to halve by eye, measured rather than judged.
      *
      * Three things make a shape hard, and all three are computed by cutting it for
@@ -383,7 +534,7 @@ enum class ShapeKind(
          * at the right stage without anyone deciding where it belongs.
          */
         val byDifficulty: List<ShapeKind> by lazy(LazyThreadSafetyMode.NONE) {
-            values().sortedBy { it.difficulty }
+            values().filter { it.isSimple }.sortedBy { it.difficulty }
         }
 
         /**

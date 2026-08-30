@@ -70,6 +70,66 @@ class DevSettingsActivity : AppCompatActivity() {
 
         root.addView(header())
 
+        card("MAIN GAMEPLAY").let { c ->
+            root.addView(c.wrapper)
+            numberField(
+                c.body, "Start the game at this score",
+                "The level, the backdrop colour and which shapes are in play all follow from " +
+                    "the score, so this drops you straight into a run as it would be there.",
+                settings.startingScore
+            ) { settings.startingScore = it }
+            slider(
+                c.body, "Points per level", "Score this many points and the game moves up a level.",
+                GameSettings.MIN_STAGE_SCORE_INTERVAL.toFloat(), GameSettings.MAX_STAGE_SCORE_INTERVAL.toFloat(),
+                settings.stageScoreInterval.toFloat(),
+                { "${it.roundToInt()}" }, { settings.stageScoreInterval = it.roundToInt() }
+            )
+            slider(
+                c.body, "Shapes in the air at level 1", "How many can be up at the same time when you start.",
+                GameSettings.MIN_CONCURRENCY.toFloat(), GameSettings.MAX_CONCURRENCY_LIMIT.toFloat(),
+                settings.startConcurrency.toFloat(),
+                { "${it.roundToInt()}" }, { settings.startConcurrency = it.roundToInt() }
+            )
+            slider(
+                c.body, "Extra shapes each level", "How many more are allowed in the air when you level up.",
+                GameSettings.MIN_CONCURRENCY_PER_STAGE.toFloat(), GameSettings.MAX_CONCURRENCY_PER_STAGE.toFloat(),
+                settings.concurrencyPerStage.toFloat(),
+                { "+${it.roundToInt()}" }, { settings.concurrencyPerStage = it.roundToInt() }
+            )
+            slider(
+                c.body, "Never more than", "However good you get, never more shapes than this at once.",
+                GameSettings.MIN_CONCURRENCY.toFloat(), GameSettings.MAX_CONCURRENCY_LIMIT.toFloat(),
+                settings.maxConcurrency.toFloat(),
+                { "${it.roundToInt()}" }, { settings.maxConcurrency = it.roundToInt() }
+            )
+            slider(
+                c.body, "Wait between shapes", "How long the game waits before throwing up the next one.",
+                GameSettings.MIN_SPAWN_GAP_MS.toFloat(), GameSettings.MAX_SPAWN_GAP_MS.toFloat(),
+                settings.spawnGapMs.toFloat(),
+                { "%.1fs".format(it / 1000f) }, { settings.spawnGapMs = it.toLong() }
+            )
+            slider(
+                c.body, "They come faster each level",
+                "How much shorter that wait gets every level. There is a floor, so it can never " +
+                    "become a solid wall of shapes.",
+                GameSettings.MIN_SPAWN_SPEED_UP_PERCENT, GameSettings.MAX_SPAWN_SPEED_UP_PERCENT,
+                settings.spawnSpeedUpPercent,
+                { if (it < 0.5f) "Off" else "-${it.roundToInt()}% / level" },
+                { settings.spawnSpeedUpPercent = it }
+            )
+            slider(
+                c.body, "Spinning", "How much the shapes twirl. Twirly shapes are harder to cut in half.",
+                GameSettings.MIN_ROTATION_SCALE, GameSettings.MAX_ROTATION_SCALE, settings.rotationScale,
+                { "%.1fx".format(it) }, { settings.rotationScale = it }
+            )
+            slider(
+                c.body, "Extra spin each level", "How much twirlier they get when you level up.",
+                GameSettings.MIN_ROTATION_PER_STAGE_PERCENT, GameSettings.MAX_ROTATION_PER_STAGE_PERCENT,
+                settings.rotationPerStagePercent,
+                { "+${it.roundToInt()}%" }, { settings.rotationPerStagePercent = it }
+            )
+        }
+
         card("THE SHAPES").let { c ->
             root.addView(c.wrapper)
             slider(
@@ -88,11 +148,6 @@ class DevSettingsActivity : AppCompatActivity() {
                 { "%.1fx".format(it) }, { settings.gravityScale = it }
             )
             slider(
-                c.body, "Spinning", "How much the shapes twirl. Twirly shapes are harder to cut in half.",
-                GameSettings.MIN_ROTATION_SCALE, GameSettings.MAX_ROTATION_SCALE, settings.rotationScale,
-                { "%.1fx".format(it) }, { settings.rotationScale = it }
-            )
-            slider(
                 c.body, "Bouncy walls", "0% and shapes fly off the sides. Higher and they bounce back in.",
                 GameSettings.MIN_WALL_STRENGTH, GameSettings.MAX_WALL_STRENGTH, settings.wallStrength,
                 { if (it <= 0.01f) "Off" else "${(it * 100).roundToInt()}%" }, { settings.wallStrength = it }
@@ -101,12 +156,6 @@ class DevSettingsActivity : AppCompatActivity() {
 
         card("GETTING HARDER").let { c ->
             root.addView(c.wrapper)
-            slider(
-                c.body, "Points per level", "Score this many points and the game jumps to the next level.",
-                GameSettings.MIN_STAGE_SCORE_INTERVAL.toFloat(), GameSettings.MAX_STAGE_SCORE_INTERVAL.toFloat(),
-                settings.stageScoreInterval.toFloat(),
-                { "${it.roundToInt()}" }, { settings.stageScoreInterval = it.roundToInt() }
-            )
             slider(
                 c.body, "Shape types at level 1", "How many different shapes you start with. The easy ones come first.",
                 GameSettings.MIN_STARTING_SHAPE_COUNT.toFloat(), GameSettings.MAX_STARTING_SHAPE_COUNT.toFloat(),
@@ -120,46 +169,12 @@ class DevSettingsActivity : AppCompatActivity() {
                 { "${it.roundToInt()}" }, { settings.shapesPerStage = it.roundToInt() }
             )
             slider(
-                c.body, "Extra shapes each level", "How many more shapes are allowed in the air when you level up.",
-                GameSettings.MIN_CONCURRENCY_PER_STAGE.toFloat(), GameSettings.MAX_CONCURRENCY_PER_STAGE.toFloat(),
-                settings.concurrencyPerStage.toFloat(),
-                { "+${it.roundToInt()}" }, { settings.concurrencyPerStage = it.roundToInt() }
-            )
-            slider(
-                c.body, "Extra spin each level", "How much twirlier the shapes get when you level up.",
-                GameSettings.MIN_ROTATION_PER_STAGE_PERCENT, GameSettings.MAX_ROTATION_PER_STAGE_PERCENT,
-                settings.rotationPerStagePercent,
-                { "+${it.roundToInt()}%" }, { settings.rotationPerStagePercent = it }
-            )
-            slider(
                 c.body, "Throw-in spread each level",
                 "Shapes get thrown in from the far sides. This is how much further toward the middle they can start each time you level up.",
                 GameSettings.MIN_LAUNCH_CENTRE_CREEP, GameSettings.MAX_LAUNCH_CENTRE_CREEP,
                 settings.launchCentreCreep,
                 { if (it <= 0.002f) "Sides only" else "+${(it * 100).roundToInt()}%" },
                 { settings.launchCentreCreep = it }
-            )
-        }
-
-        card("HOW MANY AT ONCE").let { c ->
-            root.addView(c.wrapper)
-            slider(
-                c.body, "Shapes in the air at level 1", "How many shapes can be up at the same time when you start.",
-                GameSettings.MIN_CONCURRENCY.toFloat(), GameSettings.MAX_CONCURRENCY_LIMIT.toFloat(),
-                settings.startConcurrency.toFloat(),
-                { "${it.roundToInt()}" }, { settings.startConcurrency = it.roundToInt() }
-            )
-            slider(
-                c.body, "Never more than", "No matter how good you get, never more shapes than this at once.",
-                GameSettings.MIN_CONCURRENCY.toFloat(), GameSettings.MAX_CONCURRENCY_LIMIT.toFloat(),
-                settings.maxConcurrency.toFloat(),
-                { "${it.roundToInt()}" }, { settings.maxConcurrency = it.roundToInt() }
-            )
-            slider(
-                c.body, "Wait between shapes", "How long the game waits before throwing up the next shape.",
-                GameSettings.MIN_SPAWN_GAP_MS.toFloat(), GameSettings.MAX_SPAWN_GAP_MS.toFloat(),
-                settings.spawnGapMs.toFloat(),
-                { "%.1fs".format(it / 1000f) }, { settings.spawnGapMs = it.toLong() }
             )
         }
 
@@ -452,6 +467,64 @@ class DevSettingsActivity : AppCompatActivity() {
     }
 
     private class Card(val wrapper: LinearLayout, val body: LinearLayout)
+
+    /**
+     * A labelled number you type rather than drag. Some values are not a range to
+     * feel your way along - a starting score of 47,000 is a specific thing to ask
+     * for, and no slider is going to land on it.
+     */
+    private fun numberField(
+        parent: LinearLayout,
+        label: String,
+        detail: String,
+        initial: Int,
+        onChange: (Int) -> Unit
+    ) {
+        parent.addView(TextView(this).apply {
+            text = label
+            typeface = Theme.uiBold(this@DevSettingsActivity)
+            setTextColor(Theme.textPrimary)
+            textSize = 17f
+            setPadding(0, dp(12f), 0, 0)
+        })
+        parent.addView(TextView(this).apply {
+            text = detail
+            typeface = Theme.ui(this@DevSettingsActivity)
+            setTextColor(Theme.textFaint)
+            textSize = 14f
+            setPadding(0, dp(2f), 0, dp(6f))
+        })
+        parent.addView(EditText(this).apply {
+            setText(initial.toString())
+            inputType = InputType.TYPE_CLASS_NUMBER
+            typeface = Theme.uiBold(this@DevSettingsActivity)
+            setTextColor(Theme.textPrimary)
+            textSize = 17f
+            setPadding(dp(12f), dp(10f), dp(12f), dp(10f))
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = dp(10f).toFloat()
+                setColor(Theme.withAlpha(Color.WHITE, 0.05f))
+                setStroke(dp(1f), Theme.hairline)
+            }
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(6f) }
+            addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
+                override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
+                override fun afterTextChanged(s: Editable?) {
+                    // An empty box is someone mid-edit, not a zero.
+                    val typed = s?.toString()?.trim().orEmpty()
+                    if (typed.isEmpty()) return
+                    typed.toIntOrNull()?.let {
+                        onChange(it.coerceIn(GameSettings.MIN_STARTING_SCORE, GameSettings.MAX_STARTING_SCORE))
+                        save()
+                    }
+                }
+            })
+        })
+    }
 
     /**
      * Every shape in the catalogue, in the order the game unlocks them.
@@ -756,25 +829,27 @@ class DevSettingsActivity : AppCompatActivity() {
         val text = buildString {
             appendLine("Half Measures settings")
             appendLine()
+            appendLine("MAIN GAMEPLAY")
+            appendLine("  Start the game at this score: ${settings.startingScore}")
+            appendLine("  Points per level: ${settings.stageScoreInterval}")
+            appendLine("  Shapes in the air at level 1: ${settings.startConcurrency}")
+            appendLine("  Extra shapes each level: ${settings.concurrencyPerStage}")
+            appendLine("  Never more than: ${settings.maxConcurrency}")
+            appendLine("  Wait between shapes: %.1fs".format(settings.spawnGapMs / 1000f))
+            appendLine("  They come faster each level: ${settings.spawnSpeedUpPercent.roundToInt()}%")
+            appendLine("  Spinning: %.2fx".format(settings.rotationScale))
+            appendLine("  Extra spin each level: ${settings.rotationPerStagePercent.roundToInt()}%")
+            appendLine()
             appendLine("THE SHAPES")
             appendLine("  Size: %.2fx".format(settings.sizeScale))
             appendLine("  How high they fly: ${(settings.flightHeight * 100).roundToInt()}%")
             appendLine("  Gravity: %.2fx".format(settings.gravityScale))
-            appendLine("  Spinning: %.2fx".format(settings.rotationScale))
             appendLine("  Bouncy walls: ${(settings.wallStrength * 100).roundToInt()}%")
             appendLine()
             appendLine("GETTING HARDER")
-            appendLine("  Points per level: ${settings.stageScoreInterval}")
             appendLine("  Shape types at level 1: ${settings.startingShapeCount}")
             appendLine("  New shapes each level: ${settings.shapesPerStage}")
-            appendLine("  Extra shapes each level: ${settings.concurrencyPerStage}")
-            appendLine("  Extra spin each level: ${settings.rotationPerStagePercent.roundToInt()}%")
             appendLine("  Throw-in spread each level: ${(settings.launchCentreCreep * 100).roundToInt()}%")
-            appendLine()
-            appendLine("HOW MANY AT ONCE")
-            appendLine("  Shapes in the air at level 1: ${settings.startConcurrency}")
-            appendLine("  Never more than: ${settings.maxConcurrency}")
-            appendLine("  Wait between shapes: %.1fs".format(settings.spawnGapMs / 1000f))
             appendLine()
             appendLine("POINTS & HEALTH")
             appendLine("  Starting health: ${settings.startHealth}")

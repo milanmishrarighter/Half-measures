@@ -17,6 +17,12 @@ import android.content.Context
  * deviation of 10, a perfect cut 0, a total whiff 50.
  */
 data class GameSettings(
+    // ---- Main gameplay ----
+    /** Score a run opens on. The level, colour and shape pool all follow from it. */
+    var startingScore: Int = DEFAULT_STARTING_SCORE,
+    /** How much shorter the gap between shapes gets each level, as a percentage. */
+    var spawnSpeedUpPercent: Float = DEFAULT_SPAWN_SPEED_UP_PERCENT,
+
     // ---- Shapes ----
     var sizeScale: Float = DEFAULT_SIZE_SCALE,
     /** How high shapes rise, as a fraction of screen height. Reachability is guaranteed. */
@@ -124,7 +130,7 @@ data class GameSettings(
      * rather than ordinals so reordering or removing a kind cannot silently
      * disable a different one.
      */
-    var disabledShapes: MutableSet<String> = mutableSetOf(),
+    var disabledShapes: MutableSet<String> = DEFAULT_DISABLED_SHAPES.toMutableSet(),
     /**
      * Per-shape overrides of the score at which a kind starts appearing, by enum
      * name. A shape with no entry here uses its measured position in the unlock
@@ -208,6 +214,8 @@ data class GameSettings(
             // Copied on the way out. SharedPreferences keeps the instance it is
             // handed, so putting the same mutable set twice looks like putting an
             // unchanged value and the second write is skipped entirely.
+            .putInt("starting_score", startingScore)
+            .putFloat("spawn_speed_up_percent", spawnSpeedUpPercent)
             .putStringSet("disabled_shapes", HashSet(disabledShapes))
             .putString("shape_unlock_scores", encodeUnlockScores(shapeUnlockScores))
             .putBoolean("sound_enabled", soundEnabled)
@@ -242,6 +250,30 @@ data class GameSettings(
         }
 
         // Defaults hand-tuned in-app and reported back by the player.
+        const val DEFAULT_STARTING_SCORE = 0
+        const val DEFAULT_SPAWN_SPEED_UP_PERCENT = 0f
+        const val MIN_STARTING_SCORE = 0
+        const val MAX_STARTING_SCORE = 200_000
+        const val MIN_SPAWN_SPEED_UP_PERCENT = 0f
+        const val MAX_SPAWN_SPEED_UP_PERCENT = 25f
+        /** However fast the ladder climbs, never closer together than this. */
+        const val MIN_EFFECTIVE_SPAWN_GAP_MS = 120L
+
+        /**
+         * The catalogue as hand-picked: the shapes that read cleanly at speed, with
+         * the letters and the fiddlier objects left out. A player can put any of
+         * them back from the dev panel.
+         */
+        val DEFAULT_DISABLED_SHAPES: Set<String> = setOf(
+            "LEAF", "APPLE", "HOUSE", "GHOST", "FISH", "BOTTLE", "MUSHROOM",
+            "ROCKET", "CACTUS", "PIZZA", "KEY",
+            "ONE", "TWO", "THREE", "FIVE", "SEVEN",
+            "LETTER_C", "LETTER_E", "LETTER_F", "LETTER_G", "LETTER_H", "LETTER_I",
+            "LETTER_J", "LETTER_K", "LETTER_L", "LETTER_M", "LETTER_N", "LETTER_S",
+            "LETTER_T", "LETTER_U", "LETTER_V", "LETTER_W", "LETTER_X", "LETTER_Y",
+            "LETTER_Z"
+        )
+
         const val DEFAULT_SIZE_SCALE = 1.9f
         const val DEFAULT_FLIGHT_HEIGHT = 0.58f
         const val DEFAULT_GRAVITY_SCALE = 0.8f
@@ -451,8 +483,11 @@ data class GameSettings(
                 // mutated, and this one is edited in place by the picker.
                 // Copied: the set handed back by SharedPreferences must not be
                 // mutated, and this one is edited in place by the picker.
-                disabledShapes = p.getStringSet("disabled_shapes", emptySet())
-                    ?.toMutableSet() ?: mutableSetOf(),
+                startingScore = p.getInt("starting_score", DEFAULT_STARTING_SCORE),
+                spawnSpeedUpPercent =
+                    p.getFloat("spawn_speed_up_percent", DEFAULT_SPAWN_SPEED_UP_PERCENT),
+                disabledShapes = p.getStringSet("disabled_shapes", DEFAULT_DISABLED_SHAPES)
+                    ?.toMutableSet() ?: DEFAULT_DISABLED_SHAPES.toMutableSet(),
                 shapeUnlockScores = decodeUnlockScores(p.getString("shape_unlock_scores", "")),
                 soundEnabled = p.getBoolean("sound_enabled", DEFAULT_SOUND_ENABLED),
                 soundVolume = p.getFloat("sound_volume", DEFAULT_SOUND_VOLUME),

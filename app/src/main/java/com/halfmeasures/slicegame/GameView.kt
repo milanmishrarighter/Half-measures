@@ -663,7 +663,7 @@ class GameView @JvmOverloads constructor(
             spawnCountdown -= dt
             if (shapes.size < cap && spawnCountdown <= 0f && width > 0 && height > 0) {
                 shapes.add(GameShape.spawnRandom(width, height, random, nowMs, stage, score, settings))
-                spawnCountdown = settings.spawnGapMs / 1000f
+                spawnCountdown = spawnGapSeconds()
             }
 
             // Critical health: one short dip in speed, then the flashing bar carries it.
@@ -972,6 +972,17 @@ class GameView @JvmOverloads constructor(
             .putInt("best_perfect_streak", recordPerfectStreak)
             .putInt("best_good_streak", recordGoodStreak)
             .apply()
+    }
+
+    /**
+     * Seconds between shapes at the current level. The gap shrinks by a fixed
+     * percentage each level and is floored, so the ladder can be made to bite
+     * without the game ever turning into a solid wall of shapes.
+     */
+    private fun spawnGapSeconds(): Float {
+        val decay = (1f - settings.spawnSpeedUpPercent / 100f).coerceIn(0.5f, 1f)
+        val gap = settings.spawnGapMs * decay.toDouble().pow(stage.toDouble()).toFloat()
+        return gap.coerceAtLeast(GameSettings.MIN_EFFECTIVE_SPAWN_GAP_MS.toFloat()) / 1000f
     }
 
     /** Half the perfect-cut slow motion: long enough to register, short enough not to drag. */
@@ -1286,8 +1297,11 @@ class GameView @JvmOverloads constructor(
         maxHealth = settings.startHealth
         health = settings.startHealth
         displayedHealth = health.toFloat()
-        score = 0
-        displayedScore = 0f
+        // Everything downstream of the score - the level, the backdrop's hue, which
+        // shapes are in the pool - falls out of this one number, so starting part
+        // way up the ladder needs nothing else set.
+        score = settings.startingScore.coerceAtLeast(0)
+        displayedScore = score.toFloat()
         perfectStreak = 0
         hotStreak = 0
         coldStreak = 0
@@ -1303,9 +1317,9 @@ class GameView @JvmOverloads constructor(
         lastCutAge = 99f
         bestStreak = 0
         bestPerfectStreak = 0
-        stage = 0
+        stage = score / max(1, settings.stageScoreInterval)
         unlockedKinds = ShapeKind.unlockedCount(
-            0, settings.startingShapeCount, settings.shapesPerStage
+            stage, settings.startingShapeCount, settings.shapesPerStage
         )
         timeScale = 1f
         perfectSlowMo = 0f
@@ -1314,8 +1328,9 @@ class GameView @JvmOverloads constructor(
         dangerArmed = true
         pixels.reset()
         bodyShaders.clear()
-        backgroundColor = Theme.scoreBackground(0)
-        accentColor = Theme.scoreAccent(0)
+        lastHueBucket = score / 250
+        backgroundColor = Theme.scoreBackground(score)
+        accentColor = Theme.scoreAccent(score)
         continuesUsed = 0
         PlaySession.countGame()
         sounds.startMusic()
