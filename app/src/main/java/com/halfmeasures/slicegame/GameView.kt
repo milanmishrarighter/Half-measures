@@ -8,6 +8,7 @@ import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RadialGradient
+import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Shader
 import android.util.AttributeSet
@@ -338,6 +339,8 @@ class GameView @JvmOverloads constructor(
     private val shaderMatrix = Matrix()
     private val bodyShaders = HashMap<Int, RadialGradient>()
     private val roundRect = RectF()
+    /** Scratch for measuring a line's real ink, so gaps are set from what shows. */
+    private val inkBounds = Rect()
 
     private var density = 1f
 
@@ -2830,7 +2833,10 @@ class GameView @JvmOverloads constructor(
         if (runsFinished > 0) {
             val y = height * 0.42f
             drawScorePills(canvas, cx, y, 1f)
-            drawRankPill(canvas, cx, y + SUMMARY_STEP * density, Ranks.forScore(averageScore), 1f)
+            drawRankPill(
+                canvas, cx, y + (PILL_HEIGHT + SUMMARY_GAP) * density,
+                Ranks.forScore(averageScore), 1f
+            )
         }
 
         drawAdNotice(canvas, primaryButton.top - 14f * density)
@@ -2928,26 +2934,34 @@ class GameView @JvmOverloads constructor(
 
         // The all-time best sits with the score it is measured against rather than
         // buried in the table below, which is the only place a player looks first.
-        drawScorePills(canvas, cx, cardTop + SUMMARY_PILLS_Y * density, scoreAlpha)
+        val pillsY = cardTop + SUMMARY_PILLS_Y * density
+
+        drawScorePills(canvas, cx, pillsY, scoreAlpha)
 
         // The rank follows the average, not the best. A best score is one lucky
         // afternoon; an average is how well you actually play.
         val rank = Ranks.forScore(averageScore)
         val rankAlpha = revealAlpha(CARD_SCORE_AT + 0.1f, 0.3f)
-        drawRankPill(canvas, cx, cardTop + (SUMMARY_PILLS_Y + SUMMARY_STEP) * density, rank, rankAlpha)
-        drawRankLadder(
-            canvas, cx, cardTop + (SUMMARY_PILLS_Y + SUMMARY_STEP + LADDER_STEP) * density,
-            rank, rankAlpha
-        )
+
+        // Every gap down this block is the same clear space, measured between what
+        // the eye can actually see - pill edges, the pips' own radius, and the ink
+        // of the line below - rather than between centres of things that are not
+        // the same height.
+        val gap = SUMMARY_GAP * density
+        val pillHeight = PILL_HEIGHT * density
+        val rankY = pillsY + pillHeight + gap
+        drawRankPill(canvas, cx, rankY, rank, rankAlpha)
+
+        val pipReach = ladderReach()
+        val ladderY = rankY + pillHeight / 2f + gap + pipReach
+        drawRankLadder(canvas, cx, ladderY, rank, rankAlpha)
 
         uiPaint.textAlign = Paint.Align.CENTER
         uiPaint.textSize = 13f * density
         uiPaint.color = Theme.withAlpha(Theme.textFaint, rankAlpha)
-        canvas.drawText(
-            rankGoalText(rank), cx,
-            cardTop + (SUMMARY_PILLS_Y + SUMMARY_STEP + LADDER_STEP + GOAL_STEP + 4f) * density,
-            uiPaint
-        )
+        val goal = rankGoalText(rank)
+        uiPaint.getTextBounds(goal, 0, goal.length, inkBounds)
+        canvas.drawText(goal, cx, ladderY + pipReach + gap - inkBounds.top, uiPaint)
 
         rimPaint.strokeWidth = 1.5f
         rimPaint.color = Theme.withAlpha(Theme.hairline, revealAlpha(CARD_ROWS_AT - 0.1f))
@@ -3268,6 +3282,9 @@ class GameView @JvmOverloads constructor(
      */
     private fun drawRankPill(canvas: Canvas, cx: Float, cy: Float, rank: Rank, alpha: Float) {
         val title = rank.title.uppercase()
+        // The whole pill wears the rank's own colour - only the caption stays the
+        // same quiet grey as BEST and AVG, since that word is not the fact.
+        val tint = rungColor(rank.number)
         val labelWidth = measurePill(RANK_LABEL)
         val titleWidth = measurePill(title)
         val glyph = glyphRadius()
@@ -3280,7 +3297,7 @@ class GameView @JvmOverloads constructor(
         roundRect.set(left, cy - height / 2f, left + width, cy + height / 2f)
         panelPaint.shader = null
         panelPaint.alpha = 255
-        panelPaint.color = Theme.withAlpha(Theme.gold, 0.14f * alpha)
+        panelPaint.color = Theme.withAlpha(tint, 0.16f * alpha)
         canvas.drawRoundRect(roundRect, height / 2f, height / 2f, panelPaint)
 
         val baseline = pillBaseline(cy)
@@ -3299,7 +3316,7 @@ class GameView @JvmOverloads constructor(
 
         uiBoldPaint.textSize = pillTextSize()
         uiBoldPaint.letterSpacing = PILL_TRACKING
-        uiBoldPaint.color = Theme.withAlpha(Theme.gold, alpha)
+        uiBoldPaint.color = Theme.withAlpha(tint, alpha)
         canvas.drawText(title, x, baseline, uiBoldPaint)
         uiBoldPaint.letterSpacing = 0f
         uiBoldPaint.textAlign = Paint.Align.CENTER
@@ -3354,8 +3371,11 @@ class GameView @JvmOverloads constructor(
      * colour. Where you stand on the ladder is a shape best answered by a
      * picture, not by "1 of 13".
      */
+    /** How far the ladder reaches from its own line - the swollen pip's radius. */
+    private fun ladderReach(): Float = PIP_RADIUS * PIP_CURRENT * density
+
     private fun drawRankLadder(canvas: Canvas, cx: Float, cy: Float, rank: Rank, alpha: Float) {
-        val pip = 3.2f * density
+        val pip = PIP_RADIUS * density
         val gap = 9f * density
         val total = (Ranks.count - 1) * gap
         var x = cx - total / 2f
@@ -3526,14 +3546,12 @@ class GameView @JvmOverloads constructor(
         const val CARD_PAD = 28f
         /** Baseline above a rule to the rule, and the rule to the baseline below. */
         const val CARD_RULE_GAP = 30f
-        const val CARD_HEADER_HEIGHT = 296f
+        const val CARD_HEADER_HEIGHT = 322f
 
         /** The summary block: pills, rank pill, ladder, goal - one even rhythm. */
         const val SUMMARY_PILLS_Y = 168f
-        /** Pill centre to pill centre: the pill height plus a clear gap. */
-        const val SUMMARY_STEP = PILL_HEIGHT + 9f
-        const val LADDER_STEP = 28f
-        const val GOAL_STEP = 24f
+        /** The one clear space between every part of the summary block. */
+        const val SUMMARY_GAP = 20f
 
         const val BEST_LABEL = "BEST:"
         const val AVG_LABEL = "AVG:"
@@ -3547,6 +3565,7 @@ class GameView @JvmOverloads constructor(
         const val DELTA_GAP = 7f
         /** A badge's half-height as a fraction of the pill text's ink height. */
         const val GLYPH_OF_TEXT = 0.44f
+        const val PIP_RADIUS = 3.2f
         /** How much the pip you are standing on swells above the rest. */
         const val PIP_CURRENT = 1.35f
         const val RUNG_HUE_START = 44f
