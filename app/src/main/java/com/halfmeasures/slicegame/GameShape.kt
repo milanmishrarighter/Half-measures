@@ -268,6 +268,48 @@ enum class ShapeKind(
     val unitVertices: List<PointF2> by lazy(LazyThreadSafetyMode.NONE) { builder() }
 
     /**
+     * The same outline again, but sized and centred for a badge rather than for
+     * play.
+     *
+     * [unitVertices] scales every kind so its farthest vertex sits at radius 1,
+     * which is right for a thrown shape - they all sweep the same circle - and
+     * badly wrong for a row of icons: a circle fills that disc completely while a
+     * square only touches it at four corners, so side by side the circle looked
+     * enormous and the square shrunken.
+     *
+     * Here every kind is given the same *area* as the unit circle instead, which
+     * is what the eye actually reads as "the same size", and is re-centred on its
+     * bounding box so it hangs in the middle of the space it is given. A few long
+     * kinds would still overhang after that, so anything wider or taller than
+     * [GLYPH_BOUND] is pulled back to fit.
+     */
+    val glyphVertices: List<PointF2> by lazy(LazyThreadSafetyMode.NONE) {
+        val v = unitVertices
+        var twice = 0f
+        for (i in v.indices) {
+            val a = v[i]
+            val b = v[(i + 1) % v.size]
+            twice += a.x * b.y - b.x * a.y
+        }
+        val area = abs(twice) * 0.5f
+        var scale = if (area > 1e-5f) sqrt(UNIT_CIRCLE_AREA / area) else 1f
+
+        var minX = Float.MAX_VALUE; var maxX = -Float.MAX_VALUE
+        var minY = Float.MAX_VALUE; var maxY = -Float.MAX_VALUE
+        for (p in v) {
+            minX = min(minX, p.x); maxX = max(maxX, p.x)
+            minY = min(minY, p.y); maxY = max(maxY, p.y)
+        }
+        val midX = (minX + maxX) * 0.5f
+        val midY = (minY + maxY) * 0.5f
+
+        val reach = max(maxX - midX, maxY - midY) * scale
+        if (reach > GLYPH_BOUND) scale *= GLYPH_BOUND / reach
+
+        v.map { PointF2((it.x - midX) * scale, (it.y - midY) * scale) }
+    }
+
+    /**
      * Where the perfect halving line sits in unit space, measured along the normal
      * of the shape's local +x axis. Because a shape rotates rigidly this is a
      * constant per kind, so the on-screen guide costs nothing per frame. It is zero
@@ -289,6 +331,12 @@ enum class ShapeKind(
     }
 
     companion object {
+
+        /** Area of the unit circle - the size every badge is matched to. */
+        private const val UNIT_CIRCLE_AREA = 3.14159265f
+
+        /** How far a badge may reach from its centre before it is pulled back in. */
+        private const val GLYPH_BOUND = 1.12f
 
         /** Every kind the game will actually use, malformed outlines excluded. */
         val usable: List<ShapeKind> by lazy(LazyThreadSafetyMode.NONE) {
