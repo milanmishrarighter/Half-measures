@@ -16,6 +16,10 @@ data class PointF2(val x: Float, val y: Float)
 // into it.
 
 private fun regularOutline(sides: Int, angleOffset: Float): List<PointF2> =
+    (0 until sides).map { i ->
+        val t = angleOffset + (2.0 * Math.PI * i / sides).toFloat()
+        PointF2(cos(t), sin(t))
+    }
 
 private fun starOutline(points: Int, innerRatio: Float): List<PointF2> {
     val verts = ArrayList<PointF2>(points * 2)
