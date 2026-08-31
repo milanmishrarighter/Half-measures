@@ -33,6 +33,183 @@ private fun starOutline(points: Int, innerRatio: Float): List<PointF2> {
 
 
 
+/** A rounded bar: straight sides with semicircular caps. */
+private fun capsuleOutline(): List<PointF2> {
+    val halfLength = 0.62f   // centre of each cap
+    val capRadius = 0.46f
+    val steps = 12
+    val verts = ArrayList<PointF2>(steps * 2 + 2)
+    for (i in 0..steps) { // right cap, -90deg -> +90deg
+        val t = (-Math.PI / 2 + Math.PI * i / steps).toFloat()
+        verts.add(PointF2(halfLength + capRadius * cos(t), capRadius * sin(t)))
+    }
+    for (i in 0..steps) { // left cap, +90deg -> +270deg
+        val t = (Math.PI / 2 + Math.PI * i / steps).toFloat()
+        verts.add(PointF2(-halfLength + capRadius * cos(t), capRadius * sin(t)))
+    }
+    return verts
+}
+
+private fun diamondOutline(): List<PointF2> = listOf(
+    PointF2(0f, -1f), PointF2(0.66f, 0f), PointF2(0f, 1f), PointF2(-0.66f, 0f)
+)
+
+private fun trapezoidOutline(): List<PointF2> = listOf(
+    PointF2(-0.52f, -0.62f), PointF2(0.52f, -0.62f),
+    PointF2(0.95f, 0.62f), PointF2(-0.95f, 0.62f)
+)
+
+/**
+ * Builds an outline from x,y pairs given in a convenient 0..1 box with y running
+ * down, then re-centres it on its own centroid and scales it so its farthest
+ * vertex sits at radius 1.
+ *
+ * Every shape below is authored this way, which means a new one only has to be
+ * drawn roughly - the normalisation makes it the same visual size as everything
+ * else, and the halving maths works in the same unit space regardless.
+ */
+private fun outline(vararg v: Float): List<PointF2> {
+    val n = v.size / 2
+    var cx = 0f
+    var cy = 0f
+    for (i in 0 until n) {
+        cx += v[i * 2]
+        cy += v[i * 2 + 1]
+    }
+    cx /= n
+    cy /= n
+
+    var maxR = 0.0001f
+    for (i in 0 until n) {
+        val dx = v[i * 2] - cx
+        val dy = v[i * 2 + 1] - cy
+        maxR = kotlin.math.max(maxR, sqrt(dx * dx + dy * dy))
+    }
+
+    val scaled = (0 until n).map { i ->
+        PointF2((v[i * 2] - cx) / maxR, (v[i * 2 + 1] - cy) / maxR)
+    }
+    return tidy(scaled)
+}
+
+/**
+ * Drops repeated points and points that sit on the straight line between their
+ * neighbours. Both are harmless to look at and a nuisance to reason about: a
+ * zero-length edge has no side to be on, which is enough to make a self-
+ * intersection test report crossings that are not there.
+ */
+private fun tidy(poly: List<PointF2>): List<PointF2> {
+    val eps = 1e-4f
+    val once = ArrayList<PointF2>(poly.size)
+    for (p in poly) {
+        val last = once.lastOrNull()
+        if (last == null || abs(p.x - last.x) > eps || abs(p.y - last.y) > eps) once.add(p)
+    }
+    while (once.size > 1 &&
+        abs(once.first().x - once.last().x) < eps && abs(once.first().y - once.last().y) < eps
+    ) {
+        once.removeAt(once.size - 1)
+    }
+    if (once.size < 3) return once
+
+    val kept = ArrayList<PointF2>(once.size)
+    for (i in once.indices) {
+        val a = once[(i - 1 + once.size) % once.size]
+        val b = once[i]
+        val c = once[(i + 1) % once.size]
+        val cross = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
+        if (abs(cross) > 1e-6f) kept.add(b)
+    }
+    return if (kept.size >= 3) kept else once
+}
+
+/** A run of points along a circular arc, appended to a builder. */
+private fun sweepInto(
+    out: ArrayList<Float>, cx: Float, cy: Float, r: Float,
+    from: Float, to: Float, steps: Int, forward: Boolean
+) {
+
+/** An arc of points, for the shapes that need a curve rather than a corner. */
+private fun arcInto(
+    out: ArrayList<Float>, cx: Float, cy: Float, rx: Float, ry: Float,
+    fromDeg: Float, toDeg: Float, steps: Int
+) {
+
+private fun built(build: (ArrayList<Float>) -> Unit): List<PointF2> {
+    val v = ArrayList<Float>()
+    build(v)
+    return outline(*v.toFloatArray())
+}
+
+private fun crossOutline(): List<PointF2> {
+    val a = 0.34f // half-width of the arms
+    val b = 1f    // arm reach
+    return listOf(
+        PointF2(-a, -b), PointF2(a, -b), PointF2(a, -a), PointF2(b, -a),
+        PointF2(b, a), PointF2(a, a), PointF2(a, b), PointF2(-a, b),
+        PointF2(-a, a), PointF2(-b, a), PointF2(-b, -a), PointF2(-a, -a)
+    )
+}
+
+/** Three clear tiers and a narrow trunk. Two shallow tiers on a wide trunk is an
+ *  upload arrow, which is what the old one looked like. */
+private fun treeOutline() = outline(
+    0.50f,0.00f, 0.68f,0.26f, 0.58f,0.26f, 0.80f,0.55f, 0.70f,0.55f, 0.94f,0.84f,
+    0.60f,0.84f, 0.60f,1.00f, 0.40f,1.00f, 0.40f,0.84f, 0.06f,0.84f, 0.30f,0.55f,
+    0.20f,0.55f, 0.42f,0.26f, 0.32f,0.26f
+)
+
+/**
+ * The classic parametric heart. Two arcs meeting at a notch is easy to get wrong
+ * - the old one crossed itself - and a closed parametric curve simply cannot.
+ */
+private fun heartOutline() = built { v ->
+    val steps = 44
+    for (i in 0 until steps) {
+        val t = (2.0 * Math.PI * i / steps).toFloat()
+        val s1 = sin(t)
+        v.add(16f * s1 * s1 * s1)
+        // Negated: the canvas runs y downward, and the curve is written y up.
+        v.add(-(13f * cos(t) - 5f * cos(2f * t) - 2f * cos(3f * t) - cos(4f * t)))
+    }
+}
+
+private fun arrowOutline() = outline(0.5f,0f, 1f,0.46f, 0.72f,0.46f, 0.72f,1f, 0.28f,1f, 0.28f,0.46f, 0f,0.46f)
+
+private fun boltOutline() = outline(0.58f,0f, 0.14f,0.56f, 0.46f,0.56f, 0.34f,1f, 0.86f,0.42f, 0.54f,0.42f)
+
+/**
+ * Two circle arcs meeting at their true intersection points, worked out rather
+ * than guessed. The old one used round angles that did not actually meet, so the
+ * tips crossed and left a wedge.
+ */
+private fun moonOutline() = built { v ->
+    val x1 = 0.5f; val y1 = 0.5f; val r1 = 0.5f
+    val x2 = 0.64f; val y2 = 0.5f; val r2 = 0.44f
+
+    val d = sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1))
+    val a = (r1 * r1 - r2 * r2 + d * d) / (2f * d)
+    val h = sqrt(max(r1 * r1 - a * a, 0f))
+    val px = x1 + a * (x2 - x1) / d
+    val py = y1 + a * (y2 - y1) / d
+    val ux = -(y2 - y1) / d
+    val uy = (x2 - x1) / d
+
+    val ax = px + h * ux; val ay = py + h * uy
+    val bx = px - h * ux; val by = py - h * uy
+
+    // The long way round the outside, then back along the bite.
+    sweepInto(v, x1, y1, r1, atan2(ay - y1, ax - x1), atan2(by - y1, bx - x1), 26, true)
+    sweepInto(v, x2, y2, r2, atan2(by - y2, bx - x2), atan2(ay - y2, ax - x2), 20, false)
+}
+
+private fun crownOutline() = outline(0f,1f, 0.08f,0.16f, 0.3f,0.56f, 0.5f,0.04f, 0.7f,0.56f, 0.92f,0.16f, 1f,1f)
+
+private fun dropOutline() = built { v ->
+    v.add(0.5f); v.add(0f)
+    arcInto(v, 0.5f, 0.62f, 0.4f, 0.38f, -50f, 230f, 18)
+}
+
 /**
  * The catalogue of sliceable shapes. Each kind supplies its outline in unit
  * space (bounded by a radius-1 circle); [GameShape] scales, rotates and positions
