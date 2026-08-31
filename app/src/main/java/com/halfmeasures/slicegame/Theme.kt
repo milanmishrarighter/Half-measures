@@ -33,6 +33,10 @@ object Theme {
     val goldDeep = Color.rgb(255, 168, 46)
     val danger = Color.rgb(255, 89, 122)
     val good = Color.rgb(80, 226, 160)
+    /** A third summary hue, so best, average and rank never share a colour. */
+    val violet = Color.rgb(167, 139, 250)
+    /** The cool end of the rank ladder; the warm end is [gold]. */
+    val rankFar = Color.rgb(96, 165, 250)
 
     /** Shape fill palette - each entry is a (light, deep) pair used for the body gradient. */
     val shapePalette = arrayOf(

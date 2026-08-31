@@ -117,6 +117,9 @@ class GameView @JvmOverloads constructor(
      * score is one lucky afternoon, an average is how well you actually play.
      */
     private var scoreTotal = scores.getLong("score_total", 0L)
+    /** How the average moved on the run just finished, and whether it had one to move from. */
+    private var averageDelta = 0
+    private var averageMoved = false
     private val averageScore: Int
         get() = if (runsFinished <= 0) 0 else (scoreTotal / runsFinished).toInt()
     private var bestCuts = scores.getInt("best_cuts", 0)
@@ -877,8 +880,12 @@ class GameView @JvmOverloads constructor(
             bestScore = score
             scores.edit().putInt("best_score", bestScore).apply()
         }
+        // Captured before this run lands, so the card can say which way it went.
+        val previousAverage = averageScore
+        averageMoved = runsFinished > 0
         runsFinished++
         scoreTotal += score
+        averageDelta = averageScore - previousAverage
         scores.edit()
             .putInt("runs_finished", runsFinished)
             .putLong("score_total", scoreTotal)
@@ -2823,7 +2830,7 @@ class GameView @JvmOverloads constructor(
         if (runsFinished > 0) {
             val y = height * 0.42f
             drawScorePills(canvas, cx, y, 1f)
-            drawRankPill(canvas, cx, y + 40f * density, Ranks.forScore(averageScore), 1f)
+            drawRankPill(canvas, cx, y + SUMMARY_STEP * density, Ranks.forScore(averageScore), 1f)
         }
 
         drawAdNotice(canvas, primaryButton.top - 14f * density)
@@ -2921,19 +2928,26 @@ class GameView @JvmOverloads constructor(
 
         // The all-time best sits with the score it is measured against rather than
         // buried in the table below, which is the only place a player looks first.
-        drawScorePills(canvas, cx, cardTop + 164f * density, scoreAlpha)
+        drawScorePills(canvas, cx, cardTop + SUMMARY_PILLS_Y * density, scoreAlpha)
 
         // The rank follows the average, not the best. A best score is one lucky
         // afternoon; an average is how well you actually play.
         val rank = Ranks.forScore(averageScore)
         val rankAlpha = revealAlpha(CARD_SCORE_AT + 0.1f, 0.3f)
-        drawRankPill(canvas, cx, cardTop + 206f * density, rank, rankAlpha)
-        drawRankLadder(canvas, cx, cardTop + 234f * density, rank, rankAlpha)
+        drawRankPill(canvas, cx, cardTop + (SUMMARY_PILLS_Y + SUMMARY_STEP) * density, rank, rankAlpha)
+        drawRankLadder(
+            canvas, cx, cardTop + (SUMMARY_PILLS_Y + SUMMARY_STEP + LADDER_STEP) * density,
+            rank, rankAlpha
+        )
 
         uiPaint.textAlign = Paint.Align.CENTER
         uiPaint.textSize = 13f * density
         uiPaint.color = Theme.withAlpha(Theme.textFaint, rankAlpha)
-        canvas.drawText(rankGoalText(rank), cx, cardTop + 258f * density, uiPaint)
+        canvas.drawText(
+            rankGoalText(rank), cx,
+            cardTop + (SUMMARY_PILLS_Y + SUMMARY_STEP + LADDER_STEP + GOAL_STEP + 4f) * density,
+            uiPaint
+        )
 
         rimPaint.strokeWidth = 1.5f
         rimPaint.color = Theme.withAlpha(Theme.hairline, revealAlpha(CARD_ROWS_AT - 0.1f))
@@ -3120,11 +3134,6 @@ class GameView @JvmOverloads constructor(
         else -> Theme.danger
     }
 
-    /**
-     * The rank badge: the rank's own shape, drawn from the same outline the game
-     * throws, with the rank number beside its title. A badge that is a shape you
-     * have actually been cutting says more than a number in a box.
-     */
     /** Width a labelled pill needs, so a row of them can be centred as a group. */
     private fun pillWidth(label: String, value: String): Float {
         uiBoldPaint.textSize = 12f * density
@@ -3148,9 +3157,10 @@ class GameView @JvmOverloads constructor(
         label: String,
         value: String,
         accent: Int,
-        alpha: Float
+        alpha: Float,
+        delta: Int = 0
     ) {
-        val width = pillWidth(label, value)
+        val width = pillWidth(label, value) + deltaWidth(delta)
         val height = PILL_HEIGHT * density
         roundRect.set(left, cy - height / 2f, left + width, cy + height / 2f)
         panelPaint.shader = null
@@ -3172,7 +3182,37 @@ class GameView @JvmOverloads constructor(
         uiBoldPaint.textSize = 17f * density
         uiBoldPaint.color = Theme.withAlpha(accent, alpha)
         canvas.drawText(value, x, baseline, uiBoldPaint)
+        if (delta != 0) {
+            drawDeltaMark(canvas, x + uiBoldPaint.measureText(value) + 6f * density, cy, delta, alpha)
+        }
         uiBoldPaint.textAlign = Paint.Align.CENTER
+    }
+
+    private fun deltaWidth(delta: Int): Float =
+        if (delta == 0) 0f else 14f * density
+
+    /**
+     * Just the head of an arrow: a small filled triangle, up in green or down in
+     * red. A whole arrow beside a number reads as a control you could press.
+     */
+    private fun drawDeltaMark(canvas: Canvas, left: Float, cy: Float, delta: Int, alpha: Float) {
+        val w = 8f * density
+        val h = 6f * density
+        val up = delta > 0
+        path.rewind()
+        if (up) {
+            path.moveTo(left + w / 2f, cy - h / 2f)
+            path.lineTo(left + w, cy + h / 2f)
+            path.lineTo(left, cy + h / 2f)
+        } else {
+            path.moveTo(left + w / 2f, cy + h / 2f)
+            path.lineTo(left + w, cy - h / 2f)
+            path.lineTo(left, cy - h / 2f)
+        }
+        path.close()
+        fillPaint.shader = null
+        fillPaint.color = Theme.withAlpha(if (up) Theme.good else Theme.danger, alpha)
+        canvas.drawPath(path, fillPaint)
     }
 
     /** BEST and AVERAGE together, centred on [cx] as one block. */
@@ -3180,11 +3220,15 @@ class GameView @JvmOverloads constructor(
         val bestValue = bestScore.toString()
         val avgValue = averageScore.toString()
         val gap = 10f * density
-        val total = pillWidth("BEST", bestValue) + gap + pillWidth("AVG", avgValue)
-        var x = cx - total / 2f
-        drawPillAt(canvas, x, cy, "BEST", bestValue, if (beatBestScore) Theme.gold else Theme.accent, alpha)
-        x += pillWidth("BEST", bestValue) + gap
-        drawPillAt(canvas, x, cy, "AVG", avgValue, Theme.good, alpha)
+        val delta = if (averageMoved) averageDelta else 0
+        val bestW = pillWidth("BEST", bestValue)
+        val avgW = pillWidth("AVG", avgValue) + deltaWidth(delta)
+        var x = cx - (bestW + gap + avgW) / 2f
+        // Three fixed hues across the block, so best, average and rank are never
+        // telling each other apart by position alone.
+        drawPillAt(canvas, x, cy, "BEST", bestValue, Theme.accent, alpha)
+        x += bestW + gap
+        drawPillAt(canvas, x, cy, "AVG", avgValue, Theme.violet, alpha, delta)
     }
 
     /**
@@ -3193,17 +3237,24 @@ class GameView @JvmOverloads constructor(
      * the card - it used to hang off the left edge of a centred block.
      */
     private fun drawRankPill(canvas: Canvas, cx: Float, cy: Float, rank: Rank, alpha: Float) {
-        val glyph = 11f * density
         val title = rank.title.uppercase()
+
+        uiBoldPaint.textSize = 12f * density
+        uiBoldPaint.letterSpacing = 0.18f
+        val labelWidth = uiBoldPaint.measureText(RANK_LABEL)
+        uiBoldPaint.letterSpacing = 0f
 
         uiBoldPaint.textSize = 15f * density
         uiBoldPaint.letterSpacing = 0.08f
         val titleWidth = uiBoldPaint.measureText(title)
+        // The badge is sized off the title's own ink, top to bottom, rather than
+        // off a number picked by eye - at a fixed radius it towered over the text.
+        val glyph = (uiBoldPaint.descent() - uiBoldPaint.ascent()) * 0.45f
         uiBoldPaint.letterSpacing = 0f
 
         val height = PILL_HEIGHT * density
-        val width = PILL_PAD * density + glyph * 2 + PILL_GAP * density +
-            titleWidth + PILL_PAD * density
+        val width = PILL_PAD * density + labelWidth + PILL_GAP * density +
+            glyph * 2 + PILL_GAP * density + titleWidth + PILL_PAD * density
         val left = cx - width / 2f
 
         roundRect.set(left, cy - height / 2f, left + width, cy + height / 2f)
@@ -3212,18 +3263,24 @@ class GameView @JvmOverloads constructor(
         panelPaint.color = Theme.withAlpha(Theme.gold, 0.14f * alpha)
         canvas.drawRoundRect(roundRect, height / 2f, height / 2f, panelPaint)
 
-        drawRankGlyph(canvas, left + PILL_PAD * density + glyph, cy, rank, glyph, alpha)
+        var x = left + PILL_PAD * density
 
+        // Captioned like BEST and AVG, so all three read as the same kind of fact.
         uiBoldPaint.textAlign = Paint.Align.LEFT
+        uiBoldPaint.textSize = 12f * density
+        uiBoldPaint.letterSpacing = 0.18f
+        uiBoldPaint.color = Theme.withAlpha(Theme.textFaint, alpha)
+        canvas.drawText(RANK_LABEL, x, cy - (uiBoldPaint.descent() + uiBoldPaint.ascent()) / 2f, uiBoldPaint)
+        uiBoldPaint.letterSpacing = 0f
+        x += labelWidth + PILL_GAP * density
+
+        drawRankGlyph(canvas, x + glyph, cy, rank, glyph, alpha)
+        x += glyph * 2 + PILL_GAP * density
+
         uiBoldPaint.textSize = 15f * density
         uiBoldPaint.letterSpacing = 0.08f
         uiBoldPaint.color = Theme.withAlpha(Theme.gold, alpha)
-        canvas.drawText(
-            title,
-            left + PILL_PAD * density + glyph * 2 + PILL_GAP * density,
-            cy - (uiBoldPaint.descent() + uiBoldPaint.ascent()) / 2f,
-            uiBoldPaint
-        )
+        canvas.drawText(title, x, cy - (uiBoldPaint.descent() + uiBoldPaint.ascent()) / 2f, uiBoldPaint)
         uiBoldPaint.letterSpacing = 0f
         uiBoldPaint.textAlign = Paint.Align.CENTER
     }
@@ -3232,6 +3289,7 @@ class GameView @JvmOverloads constructor(
         canvas: Canvas, cx: Float, cy: Float, rank: Rank, r: Float, alpha: Float
     ) {
         val verts = rank.shape.unitVertices
+        val tint = rungColor(rank.number)
 
         path.rewind()
         verts.forEachIndexed { i, p ->
@@ -3242,12 +3300,21 @@ class GameView @JvmOverloads constructor(
         path.close()
 
         fillPaint.shader = null
-        fillPaint.color = Theme.withAlpha(Theme.gold, 0.22f * alpha)
+        fillPaint.color = Theme.withAlpha(tint, 0.22f * alpha)
         canvas.drawPath(path, fillPaint)
         rimPaint.strokeWidth = 2f * density
-        rimPaint.color = Theme.withAlpha(Theme.gold, 0.95f * alpha)
+        rimPaint.color = Theme.withAlpha(tint, 0.95f * alpha)
         canvas.drawPath(path, rimPaint)
     }
+
+    /**
+     * The ladder's own colour at rung [number]: warm gold at the bottom cooling
+     * to blue at the top, a step at a time. Thirteen identical gold dots said
+     * nothing about how far up the climb had got.
+     */
+    private fun rungColor(number: Int): Int = Theme.lerpColor(
+        Theme.gold, Theme.rankFar, (number - 1) / (Ranks.count - 1f).coerceAtLeast(1f)
+    )
 
     /**
      * Thirteen pips, the ones you have earned filled. Where you stand on the
@@ -3263,7 +3330,7 @@ class GameView @JvmOverloads constructor(
         for (i in 1..Ranks.count) {
             val earned = i <= rank.number
             panelPaint.color = Theme.withAlpha(
-                if (earned) Theme.gold else Color.WHITE, (if (earned) 0.9f else 0.16f) * alpha
+                if (earned) rungColor(i) else Color.WHITE, (if (earned) 0.9f else 0.16f) * alpha
             )
             canvas.drawCircle(x, cy, if (i == rank.number) pip * 1.6f else pip, panelPaint)
             x += gap
@@ -3425,7 +3492,15 @@ class GameView @JvmOverloads constructor(
         const val CARD_PAD = 28f
         /** Baseline above a rule to the rule, and the rule to the baseline below. */
         const val CARD_RULE_GAP = 30f
-        const val CARD_HEADER_HEIGHT = 288f
+        const val CARD_HEADER_HEIGHT = 286f
+
+        /** The summary block: pills, rank pill, ladder, goal - one even rhythm. */
+        const val SUMMARY_PILLS_Y = 166f
+        /** Pill centre to pill centre: the pill height plus a clear gap. */
+        const val SUMMARY_STEP = PILL_HEIGHT + 8f
+        const val LADDER_STEP = 27f
+        const val GOAL_STEP = 22f
+        const val RANK_LABEL = "RANK"
         /** Width reserved for the BEST column, measured in from the card's inset. */
         const val CARD_BEST_COLUMN = 66f
         const val CARD_STAT_ROW_HEIGHT = 26f
