@@ -16,10 +16,6 @@ data class PointF2(val x: Float, val y: Float)
 // into it.
 
 private fun regularOutline(sides: Int, angleOffset: Float): List<PointF2> =
-    (0 until sides).map { i ->
-        val t = angleOffset + (2.0 * Math.PI * i / sides).toFloat()
-        PointF2(cos(t), sin(t))
-    }
 
 private fun starOutline(points: Int, innerRatio: Float): List<PointF2> {
     val verts = ArrayList<PointF2>(points * 2)
@@ -30,8 +26,6 @@ private fun starOutline(points: Int, innerRatio: Float): List<PointF2> {
     }
     return verts
 }
-
-
 
 /** A rounded bar: straight sides with semicircular caps. */
 private fun capsuleOutline(): List<PointF2> {
@@ -128,12 +122,27 @@ private fun sweepInto(
     out: ArrayList<Float>, cx: Float, cy: Float, r: Float,
     from: Float, to: Float, steps: Int, forward: Boolean
 ) {
+    var end = to
+    val turn = (2.0 * Math.PI).toFloat()
+    if (forward) while (end < from) end += turn else while (end > from) end -= turn
+    for (i in 0..steps) {
+        val a = from + (end - from) * i / steps
+        out.add(cx + r * cos(a))
+        out.add(cy + r * sin(a))
+    }
+}
 
 /** An arc of points, for the shapes that need a curve rather than a corner. */
 private fun arcInto(
     out: ArrayList<Float>, cx: Float, cy: Float, rx: Float, ry: Float,
     fromDeg: Float, toDeg: Float, steps: Int
 ) {
+    for (i in 0..steps) {
+        val a = Math.toRadians((fromDeg + (toDeg - fromDeg) * i / steps).toDouble())
+        out.add(cx + rx * cos(a.toFloat()))
+        out.add(cy + ry * sin(a.toFloat()))
+    }
+}
 
 private fun built(build: (ArrayList<Float>) -> Unit): List<PointF2> {
     val v = ArrayList<Float>()

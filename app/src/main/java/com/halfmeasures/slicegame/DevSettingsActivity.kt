@@ -893,8 +893,8 @@ class DevSettingsActivity : AppCompatActivity() {
                 " of ${ShapeKind.values().size}")
             ShapeKind.ordered(settings)
                 .filter { it.name !in settings.disabledShapes }
-                .forEach {
-                    appendLine("    ${it.displayName}: from ${ShapeKind.unlockScore(it, settings)}")
+                .forEach { kind ->
+                    appendLine("    ${kind.displayName}: from ${ShapeKind.unlockScore(kind, settings)}")
                 }
             if (settings.disabledShapes.isNotEmpty()) {
                 val off = ShapeKind.ordered(settings)
