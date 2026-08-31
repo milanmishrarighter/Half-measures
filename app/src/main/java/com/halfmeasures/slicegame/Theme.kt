@@ -48,6 +48,8 @@ object Theme {
     const val RED_AT = 100_000f
     private const val BLUE_HUE = 232f
     private const val RED_HUE = 360f
+    /** The backdrop never gets brighter than this; it sits behind lit shapes. */
+    private const val MAX_BACKDROP_VALUE = 0.34f
 
     private var display: Typeface? = null
     private var displayBold: Typeface? = null
@@ -105,20 +107,29 @@ object Theme {
     fun scoreProgress(score: Int): Float =
         (score.toFloat() / RED_AT).coerceIn(0f, 1f)
 
+    /**
+     * Both the hue and the brightness climb on steep early curves.
+     *
+     * A linear walk to 100,000 spends the first ten minutes indistinguishable
+     * from black, which is what the last attempt did. These exponents put a
+     * visible dark blue on the board by the first thousand points, a blue-violet
+     * by five thousand and a clear violet by ten - while still leaving the top of
+     * the range somewhere to go. Value tops out well short of full: this is a
+     * backdrop behind bright shapes, so every step is a dark version of its hue.
+     */
+    private fun hueFor(t: Float): Float =
+        (BLUE_HUE + (RED_HUE - BLUE_HUE) * t.pow(0.55f)) % 360f
+
     fun scoreBackground(score: Int): Int {
         val t = scoreProgress(score)
-        val hue = (BLUE_HUE + (RED_HUE - BLUE_HUE) * t) % 360f
-        val value = 0.55f * t.pow(0.5f)
-        val saturation = 0.95f - 0.12f * t
-        return Color.HSVToColor(floatArrayOf(hue, saturation, value))
+        val value = MAX_BACKDROP_VALUE * t.pow(0.30f)
+        val saturation = 0.88f - 0.10f * t
+        return Color.HSVToColor(floatArrayOf(hueFor(t), saturation, value))
     }
 
     /** The same hue, lit, for tinting shapes and the floor seam. */
-    fun scoreAccent(score: Int): Int {
-        val t = scoreProgress(score)
-        val hue = (BLUE_HUE + (RED_HUE - BLUE_HUE) * t) % 360f
-        return Color.HSVToColor(floatArrayOf(hue, 0.62f, 0.92f))
-    }
+    fun scoreAccent(score: Int): Int =
+        Color.HSVToColor(floatArrayOf(hueFor(scoreProgress(score)), 0.62f, 0.92f))
 
     fun withAlpha(color: Int, alpha: Float): Int =
         Color.argb(

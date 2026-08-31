@@ -109,6 +109,8 @@ class GameView @JvmOverloads constructor(
      * Personal bests for everything the score card reports, so a run can be read
      * against the player's own ceiling rather than only against the last one.
      */
+    /** Runs finished on this device. A first run has no record to break. */
+    private var runsFinished = scores.getInt("runs_finished", 0)
     private var bestCuts = scores.getInt("best_cuts", 0)
     private var bestPerfectCuts = scores.getInt("best_perfect_cuts", 0)
     private var recordPerfectStreak = scores.getInt("best_perfect_streak", 0)
@@ -162,7 +164,6 @@ class GameView @JvmOverloads constructor(
     private var perfectCount = 0
     private var cutCount = 0
     private var endedOnMiss = false
-    private var unlockedKinds = 0
 
     private var lastFrameTimeNanos = 0L
     /** Whether the frame loop is running. Owned by the activity's lifecycle. */
@@ -483,7 +484,7 @@ class GameView @JvmOverloads constructor(
         val cx = w / 2f
 
         // Sat a little higher than centre so the stack clears the bottom of the screen.
-        val readyTop = h * 0.53f
+        val readyTop = h * 0.56f
         readyPrimary.set(cx - buttonWidth / 2f, readyTop, cx + buttonWidth / 2f, readyTop + buttonHeight)
         readySecondary.set(
             cx - buttonWidth / 2f, readyTop + buttonHeight + buttonGap,
@@ -649,7 +650,10 @@ class GameView @JvmOverloads constructor(
             healthFraction = if (maxHealth > 0) displayedHealth / maxHealth else 1f,
             stage = stage,
             warmth = streakWarmth(),
-            emberDensity = settings.emberDensity,
+            // The field thickens as the run goes: five percent more embers every
+            // thousand points, capped so a long run does not end up a snowstorm.
+            emberDensity = settings.emberDensity *
+                (1f + EMBER_GROWTH_PER_1K * (score / 1000)).coerceAtMost(MAX_EMBER_GROWTH),
             emberBrightness = settings.emberBrightness,
             emberSize = settings.emberSize,
             driftSpeed = settings.backgroundMotion
@@ -764,9 +768,6 @@ class GameView @JvmOverloads constructor(
         if (newStage == stage) return
 
         stage = newStage
-        unlockedKinds = ShapeKind.unlockedCount(
-            stage, settings.startingShapeCount, settings.shapesPerStage
-        )
         // The shape gradients are cached per palette entry and tinted by level,
         // so they have to be rebuilt when the level changes.
         bodyShaders.clear()
@@ -857,13 +858,19 @@ class GameView @JvmOverloads constructor(
         cardReveal = 0f
         hasLastTouch = false
         trailPoints.clear()
-        if (score > bestScore) {
-            bestScore = score
+        // A record needs something to beat. On the very first run everything is a
+        // record by definition, and celebrating that is just noise.
+        if (score > bestScore && runsFinished > 0) {
             beatBestScore = true
             sounds.play(Sfx.BEST)
             fireworkTimer = 0f
+        }
+        if (score > bestScore) {
+            bestScore = score
             scores.edit().putInt("best_score", bestScore).apply()
         }
+        runsFinished++
+        scores.edit().putInt("runs_finished", runsFinished).apply()
         commitPersonalBests()
         effects.addShake(0.7f * settings.cameraShakeStrength)
         if (settings.vibrationEnabled) haptics.gameOver(settings.vibrationStrength)
@@ -1318,9 +1325,6 @@ class GameView @JvmOverloads constructor(
         bestStreak = 0
         bestPerfectStreak = 0
         stage = score / max(1, settings.stageScoreInterval)
-        unlockedKinds = ShapeKind.unlockedCount(
-            stage, settings.startingShapeCount, settings.shapesPerStage
-        )
         timeScale = 1f
         perfectSlowMo = 0f
         dangerRecovery = 0f
@@ -2802,8 +2806,19 @@ class GameView @JvmOverloads constructor(
         uiPaint.color = Theme.withAlpha(Theme.accent, hintPulse)
         canvas.drawText("Tap PLAY - or slice straight through it.", cx, titleY + 100f * density, uiPaint)
 
-        if (bestScore > 0) {
-            drawChip(canvas, cx, height * 0.43f, "BEST  $bestScore")
+        // Only after a run: a rank handed out before anyone has played says
+        // nothing about them.
+        if (runsFinished > 0) {
+            val rank = Ranks.forScore(bestScore)
+            val y = height * 0.43f
+            drawChip(canvas, cx, y, "BEST  $bestScore")
+
+            drawRankBadge(canvas, cx - 74f * density, y + 34f * density, rank, 1f)
+            uiBoldPaint.textAlign = Paint.Align.LEFT
+            uiBoldPaint.textSize = 15f * density
+            uiBoldPaint.color = Theme.gold
+            canvas.drawText(rank.title.uppercase(), cx - 50f * density, y + 39f * density, uiBoldPaint)
+            uiBoldPaint.textAlign = Paint.Align.CENTER
         }
 
         drawAdNotice(canvas, primaryButton.top - 14f * density)
@@ -2902,6 +2917,36 @@ class GameView @JvmOverloads constructor(
         // The all-time best sits with the score it is measured against rather than
         // buried in the table below, which is the only place a player looks first.
         drawBestChip(canvas, cx, cardTop + 162f * density, scoreAlpha)
+
+        val rank = Ranks.forScore(bestScore)
+        val rankAlpha = revealAlpha(CARD_SCORE_AT + 0.1f, 0.3f)
+        drawRankBadge(canvas, cardLeft + CARD_PAD * density + 17f * density,
+            cardTop + 212f * density, rank, rankAlpha)
+
+        uiBoldPaint.textAlign = Paint.Align.LEFT
+        uiBoldPaint.textSize = 11f * density
+        uiBoldPaint.letterSpacing = 0.18f
+        uiBoldPaint.color = Theme.withAlpha(Theme.textFaint, rankAlpha)
+        val rankTextLeft = cardLeft + CARD_PAD * density + 44f * density
+        canvas.drawText("RANK ${rank.number} OF ${Ranks.count}", rankTextLeft,
+            cardTop + 205f * density, uiBoldPaint)
+        uiBoldPaint.letterSpacing = 0f
+        uiBoldPaint.textSize = 17f * density
+        uiBoldPaint.color = Theme.withAlpha(Theme.gold, rankAlpha)
+        canvas.drawText(rank.title.uppercase(), rankTextLeft, cardTop + 224f * density, uiBoldPaint)
+
+        drawRankLadder(canvas, cx, cardTop + 246f * density, rank, rankAlpha)
+
+        // What the next rung is, and the gap to it.
+        val nextRank = Ranks.next(rank)
+        uiPaint.textAlign = Paint.Align.CENTER
+        uiPaint.textSize = 13f * density
+        uiPaint.color = Theme.withAlpha(Theme.textFaint, rankAlpha)
+        canvas.drawText(
+            if (nextRank == null) "TOP RANK"
+            else "${Ranks.pointsTo(bestScore, nextRank)} to ${nextRank.title}",
+            cx, cardTop + 268f * density, uiPaint
+        )
 
         rimPaint.strokeWidth = 1.5f
         rimPaint.color = Theme.withAlpha(Theme.hairline, revealAlpha(CARD_ROWS_AT - 0.1f))
@@ -3064,6 +3109,52 @@ class GameView @JvmOverloads constructor(
         3 -> Color.rgb(255, 190, 90)
         4 -> Color.rgb(255, 140, 80)
         else -> Theme.danger
+    }
+
+    /**
+     * The rank badge: the rank's own shape, drawn from the same outline the game
+     * throws, with the rank number beside its title. A badge that is a shape you
+     * have actually been cutting says more than a number in a box.
+     */
+    private fun drawRankBadge(canvas: Canvas, cx: Float, cy: Float, rank: Rank, alpha: Float) {
+        val r = 17f * density
+        val verts = rank.shape.unitVertices
+
+        path.rewind()
+        verts.forEachIndexed { i, p ->
+            val x = cx + p.x * r
+            val y = cy + p.y * r
+            if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+        }
+        path.close()
+
+        fillPaint.shader = null
+        fillPaint.color = Theme.withAlpha(Theme.gold, 0.22f * alpha)
+        canvas.drawPath(path, fillPaint)
+        rimPaint.strokeWidth = 2f * density
+        rimPaint.color = Theme.withAlpha(Theme.gold, 0.95f * alpha)
+        canvas.drawPath(path, rimPaint)
+    }
+
+    /**
+     * Thirteen pips, the ones you have earned filled. Where you stand on the
+     * ladder is a shape best answered by a picture, not by "1 of 13".
+     */
+    private fun drawRankLadder(canvas: Canvas, cx: Float, cy: Float, rank: Rank, alpha: Float) {
+        val pip = 3.2f * density
+        val gap = 9f * density
+        val total = (Ranks.count - 1) * gap
+        var x = cx - total / 2f
+        panelPaint.shader = null
+        panelPaint.alpha = 255
+        for (i in 1..Ranks.count) {
+            val earned = i <= rank.number
+            panelPaint.color = Theme.withAlpha(
+                if (earned) Theme.gold else Color.WHITE, (if (earned) 0.9f else 0.16f) * alpha
+            )
+            canvas.drawCircle(x, cy, if (i == rank.number) pip * 1.6f else pip, panelPaint)
+            x += gap
+        }
     }
 
     /**
@@ -3232,6 +3323,10 @@ class GameView @JvmOverloads constructor(
         /** Side of the square pause target, in dp. */
         const val PAUSE_BUTTON_SIZE = 34f
 
+        /** Extra embers per thousand points, and the ceiling on that. */
+        const val EMBER_GROWTH_PER_1K = 0.05f
+        const val MAX_EMBER_GROWTH = 5f
+
         /** Shortest gap between two swipe noises, in real milliseconds. */
         const val SWIPE_SOUND_GAP_MS = 190L
 
@@ -3269,7 +3364,7 @@ class GameView @JvmOverloads constructor(
         const val CARD_PAD = 28f
         /** Baseline above a rule to the rule, and the rule to the baseline below. */
         const val CARD_RULE_GAP = 30f
-        const val CARD_HEADER_HEIGHT = 202f
+        const val CARD_HEADER_HEIGHT = 292f
         /** Width reserved for the BEST column, measured in from the card's inset. */
         const val CARD_BEST_COLUMN = 66f
         const val CARD_STAT_ROW_HEIGHT = 26f

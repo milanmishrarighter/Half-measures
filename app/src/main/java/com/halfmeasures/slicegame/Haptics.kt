@@ -1,6 +1,7 @@
 package com.halfmeasures.slicegame
 
 import android.content.Context
+import android.media.AudioAttributes
 import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
@@ -27,6 +28,19 @@ class Haptics(context: Context) {
 
     private val available: Boolean = vibrator?.hasVibrator() == true
 
+    /**
+     * Every effect is played with an explicit game usage.
+     *
+     * Without attributes the system files a vibration under USAGE_UNKNOWN, and an
+     * unknown-usage vibration is the first thing dropped when the device is in a
+     * state that suppresses haptics. That is the likeliest reason a buzz went
+     * missing here and there while its neighbours worked.
+     */
+    private val attributes: AudioAttributes = AudioAttributes.Builder()
+        .setUsage(AudioAttributes.USAGE_GAME)
+        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+        .build()
+
     /** Ordinary cut - scales with how good the cut was, so a near-miss feels duller. */
     fun cut(strength: Float, quality: Float) {
         val q = quality.coerceIn(0f, 1f)
@@ -49,7 +63,10 @@ class Haptics(context: Context) {
      */
     fun perfect(strength: Float) {
         waveform(
-            timings = longArrayOf(0, 30, 18, 44, 18, 70, 0, 260, 90),
+            // Held for 170ms rather than 260: two perfects in a row can land
+            // inside half a second, and an effect that outlasts the gap eats the
+            // one that should follow it.
+            timings = longArrayOf(0, 30, 18, 44, 18, 70, 0, 170, 70),
             amplitudes = intArrayOf(
                 0, scale(180, strength),
                 0, scale(220, strength),
@@ -107,7 +124,7 @@ class Haptics(context: Context) {
         val v = vibrator ?: return
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                v.vibrate(VibrationEffect.createOneShot(durationMs, amplitude.coerceIn(1, 255)))
+                play(v, VibrationEffect.createOneShot(durationMs, amplitude.coerceIn(1, 255)))
             } else {
                 @Suppress("DEPRECATION")
                 v.vibrate(durationMs)
@@ -122,7 +139,7 @@ class Haptics(context: Context) {
         val v = vibrator ?: return
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                v.vibrate(VibrationEffect.createWaveform(timings, amplitudes, -1))
+                play(v, VibrationEffect.createWaveform(timings, amplitudes, -1))
             } else {
                 @Suppress("DEPRECATION")
                 v.vibrate(timings, -1)
@@ -130,5 +147,18 @@ class Haptics(context: Context) {
         } catch (e: Exception) {
             // Ignore - haptics are a nicety, not a requirement.
         }
+    }
+
+    /**
+     * Stops whatever is playing before starting the next effect.
+     *
+     * A new vibration is supposed to replace the one in progress, but in practice
+     * a request that arrives while the motor is still running its previous pattern
+     * can be swallowed - which is what a second perfect landing inside the first
+     * one's tail looks like. Cancelling first makes the hand-off explicit.
+     */
+    private fun play(v: Vibrator, effect: VibrationEffect) {
+        v.cancel()
+        v.vibrate(effect, attributes)
     }
 }

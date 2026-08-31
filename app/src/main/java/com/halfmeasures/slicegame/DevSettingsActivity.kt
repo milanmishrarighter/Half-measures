@@ -128,6 +128,15 @@ class DevSettingsActivity : AppCompatActivity() {
                 settings.rotationPerStagePercent,
                 { "+${it.roundToInt()}%" }, { settings.rotationPerStagePercent = it }
             )
+            slider(
+                c.body, "Throw-in spread each level",
+                "Shapes are thrown in from the sides. This is how much further toward the " +
+                    "middle they can start each time you level up.",
+                GameSettings.MIN_LAUNCH_CENTRE_CREEP, GameSettings.MAX_LAUNCH_CENTRE_CREEP,
+                settings.launchCentreCreep,
+                { if (it <= 0.002f) "Sides only" else "+${(it * 100).roundToInt()}%" },
+                { settings.launchCentreCreep = it }
+            )
         }
 
         card("THE SHAPES").let { c ->
@@ -151,30 +160,6 @@ class DevSettingsActivity : AppCompatActivity() {
                 c.body, "Bouncy walls", "0% and shapes fly off the sides. Higher and they bounce back in.",
                 GameSettings.MIN_WALL_STRENGTH, GameSettings.MAX_WALL_STRENGTH, settings.wallStrength,
                 { if (it <= 0.01f) "Off" else "${(it * 100).roundToInt()}%" }, { settings.wallStrength = it }
-            )
-        }
-
-        card("GETTING HARDER").let { c ->
-            root.addView(c.wrapper)
-            slider(
-                c.body, "Shape types at level 1", "How many different shapes you start with. The easy ones come first.",
-                GameSettings.MIN_STARTING_SHAPE_COUNT.toFloat(), GameSettings.MAX_STARTING_SHAPE_COUNT.toFloat(),
-                settings.startingShapeCount.toFloat(),
-                { "${it.roundToInt()}" }, { settings.startingShapeCount = it.roundToInt() }
-            )
-            slider(
-                c.body, "New shapes each level", "How many brand new shapes show up when you level up.",
-                GameSettings.MIN_SHAPES_PER_STAGE.toFloat(), GameSettings.MAX_SHAPES_PER_STAGE.toFloat(),
-                settings.shapesPerStage.toFloat(),
-                { "${it.roundToInt()}" }, { settings.shapesPerStage = it.roundToInt() }
-            )
-            slider(
-                c.body, "Throw-in spread each level",
-                "Shapes get thrown in from the far sides. This is how much further toward the middle they can start each time you level up.",
-                GameSettings.MIN_LAUNCH_CENTRE_CREEP, GameSettings.MAX_LAUNCH_CENTRE_CREEP,
-                settings.launchCentreCreep,
-                { if (it <= 0.002f) "Sides only" else "+${(it * 100).roundToInt()}%" },
-                { settings.launchCentreCreep = it }
             )
         }
 
@@ -537,7 +522,8 @@ class DevSettingsActivity : AppCompatActivity() {
         body.addView(TextView(this).apply {
             text = "Untick a shape to keep it out of the game. The number is the score it " +
                 "starts appearing at - type over it to move a shape earlier or later, or " +
-                "clear it to put it back where its difficulty puts it."
+                "clear it to put it back where the game puts it. The list is in running " +
+                "order - use SORT to redo it after changing a score."
             typeface = Theme.ui(this@DevSettingsActivity)
             setTextColor(Theme.textFaint)
             textSize = 14f
@@ -546,7 +532,7 @@ class DevSettingsActivity : AppCompatActivity() {
 
         val boxes = ArrayList<AppCompatCheckBox>()
         val fields = ArrayList<EditText>()
-        val kinds = ShapeKind.byDifficulty
+        val kinds = ShapeKind.ordered(settings)
 
         body.addView(LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -566,6 +552,12 @@ class DevSettingsActivity : AppCompatActivity() {
                 fields.forEachIndexed { i, f ->
                     f.setText(ShapeKind.unlockScore(kinds[i], settings).toString())
                 }
+            }.also { (it.layoutParams as LinearLayout.LayoutParams).rightMargin = dp(8f) })
+            // Rebuilding as you type would take the keyboard with it, so the
+            // re-sort is a button rather than something that happens underneath.
+            addView(pillButton("SORT", primary = false) {
+                save()
+                recreate()
             })
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
@@ -839,17 +831,13 @@ class DevSettingsActivity : AppCompatActivity() {
             appendLine("  They come faster each level: ${settings.spawnSpeedUpPercent.roundToInt()}%")
             appendLine("  Spinning: %.2fx".format(settings.rotationScale))
             appendLine("  Extra spin each level: ${settings.rotationPerStagePercent.roundToInt()}%")
+            appendLine("  Throw-in spread each level: ${(settings.launchCentreCreep * 100).roundToInt()}%")
             appendLine()
             appendLine("THE SHAPES")
             appendLine("  Size: %.2fx".format(settings.sizeScale))
             appendLine("  How high they fly: ${(settings.flightHeight * 100).roundToInt()}%")
             appendLine("  Gravity: %.2fx".format(settings.gravityScale))
             appendLine("  Bouncy walls: ${(settings.wallStrength * 100).roundToInt()}%")
-            appendLine()
-            appendLine("GETTING HARDER")
-            appendLine("  Shape types at level 1: ${settings.startingShapeCount}")
-            appendLine("  New shapes each level: ${settings.shapesPerStage}")
-            appendLine("  Throw-in spread each level: ${(settings.launchCentreCreep * 100).roundToInt()}%")
             appendLine()
             appendLine("POINTS & HEALTH")
             appendLine("  Starting health: ${settings.startHealth}")
@@ -903,14 +891,13 @@ class DevSettingsActivity : AppCompatActivity() {
             appendLine("SHAPES")
             appendLine("  In play: ${ShapeKind.values().size - settings.disabledShapes.size}" +
                 " of ${ShapeKind.values().size}")
-            ShapeKind.byDifficulty
+            ShapeKind.ordered(settings)
                 .filter { it.name !in settings.disabledShapes }
-                .sortedBy { ShapeKind.unlockScore(it, settings) }
                 .forEach {
                     appendLine("    ${it.displayName}: from ${ShapeKind.unlockScore(it, settings)}")
                 }
             if (settings.disabledShapes.isNotEmpty()) {
-                val off = ShapeKind.byDifficulty
+                val off = ShapeKind.ordered(settings)
                     .filter { it.name in settings.disabledShapes }
                     .joinToString(", ") { it.displayName }
                 appendLine("  Switched off: $off")

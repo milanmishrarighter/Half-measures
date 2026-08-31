@@ -8,7 +8,7 @@ import android.content.Context
  *
  * Difficulty runs on stages: every [stageScoreInterval] points the run advances a
  * stage, which allows [concurrencyPerStage] more shapes on screen (never past
- * [maxConcurrency]), introduces [shapesPerStage] new shape kinds, and adds
+ * [maxConcurrency]), unlocks the shapes whose score you have reached, and adds
  * [rotationPerStagePercent] more spin. Whenever fewer shapes are alive than the
  * current cap, a new one spawns every [spawnGapMs].
  *
@@ -35,10 +35,6 @@ data class GameSettings(
     // ---- Difficulty stages ----
     /** Score needed to advance one stage. Each stage adds shapes, spin and traffic. */
     var stageScoreInterval: Int = DEFAULT_STAGE_SCORE_INTERVAL,
-    /** Shape kinds in play at stage 0. */
-    var startingShapeCount: Int = DEFAULT_STARTING_SHAPE_COUNT,
-    /** New shape kinds introduced each stage. */
-    var shapesPerStage: Int = DEFAULT_SHAPES_PER_STAGE,
     /** Extra shapes allowed on screen per stage. */
     var concurrencyPerStage: Int = DEFAULT_CONCURRENCY_PER_STAGE,
     /** Spin speed added per stage, as a percentage. */
@@ -130,7 +126,7 @@ data class GameSettings(
      * rather than ordinals so reordering or removing a kind cannot silently
      * disable a different one.
      */
-    var disabledShapes: MutableSet<String> = DEFAULT_DISABLED_SHAPES.toMutableSet(),
+    var disabledShapes: MutableSet<String> = mutableSetOf(),
     /**
      * Per-shape overrides of the score at which a kind starts appearing, by enum
      * name. A shape with no entry here uses its measured position in the unlock
@@ -170,8 +166,6 @@ data class GameSettings(
             .putFloat("rotation_scale", rotationScale)
             .putFloat("wall_strength", wallStrength)
             .putInt("stage_score_interval", stageScoreInterval)
-            .putInt("starting_shape_count", startingShapeCount)
-            .putInt("shapes_per_stage", shapesPerStage)
             .putInt("concurrency_per_stage", concurrencyPerStage)
             .putFloat("rotation_per_stage_percent", rotationPerStagePercent)
             .putInt("start_concurrency", startConcurrency)
@@ -251,7 +245,7 @@ data class GameSettings(
 
         // Defaults hand-tuned in-app and reported back by the player.
         const val DEFAULT_STARTING_SCORE = 0
-        const val DEFAULT_SPAWN_SPEED_UP_PERCENT = 0f
+        const val DEFAULT_SPAWN_SPEED_UP_PERCENT = 2f
         const val MIN_STARTING_SCORE = 0
         const val MAX_STARTING_SCORE = 200_000
         const val MIN_SPAWN_SPEED_UP_PERCENT = 0f
@@ -259,33 +253,16 @@ data class GameSettings(
         /** However fast the ladder climbs, never closer together than this. */
         const val MIN_EFFECTIVE_SPAWN_GAP_MS = 120L
 
-        /**
-         * The catalogue as hand-picked: the shapes that read cleanly at speed, with
-         * the letters and the fiddlier objects left out. A player can put any of
-         * them back from the dev panel.
-         */
-        val DEFAULT_DISABLED_SHAPES: Set<String> = setOf(
-            "LEAF", "APPLE", "HOUSE", "GHOST", "FISH", "BOTTLE", "MUSHROOM",
-            "ROCKET", "CACTUS", "PIZZA", "KEY",
-            "ONE", "TWO", "THREE", "FIVE", "SEVEN",
-            "LETTER_C", "LETTER_E", "LETTER_F", "LETTER_G", "LETTER_H", "LETTER_I",
-            "LETTER_J", "LETTER_K", "LETTER_L", "LETTER_M", "LETTER_N", "LETTER_S",
-            "LETTER_T", "LETTER_U", "LETTER_V", "LETTER_W", "LETTER_X", "LETTER_Y",
-            "LETTER_Z"
-        )
-
         const val DEFAULT_SIZE_SCALE = 1.9f
         const val DEFAULT_FLIGHT_HEIGHT = 0.58f
         const val DEFAULT_GRAVITY_SCALE = 0.8f
         const val DEFAULT_ROTATION_SCALE = 0.6f
         const val DEFAULT_WALL_STRENGTH = 0.6f
         const val DEFAULT_STAGE_SCORE_INTERVAL = 1000
-        const val DEFAULT_STARTING_SHAPE_COUNT = 4
-        const val DEFAULT_SHAPES_PER_STAGE = 4
         const val DEFAULT_CONCURRENCY_PER_STAGE = 1
         const val DEFAULT_ROTATION_PER_STAGE_PERCENT = 10f
         const val DEFAULT_START_CONCURRENCY = 1
-        const val DEFAULT_MAX_CONCURRENCY = 5
+        const val DEFAULT_MAX_CONCURRENCY = 8
         const val DEFAULT_SPAWN_GAP_MS = 1000L
         const val DEFAULT_START_HEALTH = 100
         const val DEFAULT_PERFECT_THRESHOLD = 1.5f
@@ -360,10 +337,6 @@ data class GameSettings(
         const val MAX_WALL_STRENGTH = 1f
         const val MIN_STAGE_SCORE_INTERVAL = 500
         const val MAX_STAGE_SCORE_INTERVAL = 15000
-        const val MIN_STARTING_SHAPE_COUNT = 1
-        const val MAX_STARTING_SHAPE_COUNT = 12
-        const val MIN_SHAPES_PER_STAGE = 0
-        const val MAX_SHAPES_PER_STAGE = 8
         const val MIN_CONCURRENCY_PER_STAGE = 0
         const val MAX_CONCURRENCY_PER_STAGE = 3
         const val MIN_ROTATION_PER_STAGE_PERCENT = 0f
@@ -438,8 +411,6 @@ data class GameSettings(
                 rotationScale = p.getFloat("rotation_scale", DEFAULT_ROTATION_SCALE),
                 wallStrength = p.getFloat("wall_strength", DEFAULT_WALL_STRENGTH),
                 stageScoreInterval = p.getInt("stage_score_interval", DEFAULT_STAGE_SCORE_INTERVAL),
-                startingShapeCount = p.getInt("starting_shape_count", DEFAULT_STARTING_SHAPE_COUNT),
-                shapesPerStage = p.getInt("shapes_per_stage", DEFAULT_SHAPES_PER_STAGE),
                 concurrencyPerStage = p.getInt("concurrency_per_stage", DEFAULT_CONCURRENCY_PER_STAGE),
                 rotationPerStagePercent = p.getFloat("rotation_per_stage_percent", DEFAULT_ROTATION_PER_STAGE_PERCENT),
                 startConcurrency = p.getInt("start_concurrency", DEFAULT_START_CONCURRENCY),
@@ -486,8 +457,8 @@ data class GameSettings(
                 startingScore = p.getInt("starting_score", DEFAULT_STARTING_SCORE),
                 spawnSpeedUpPercent =
                     p.getFloat("spawn_speed_up_percent", DEFAULT_SPAWN_SPEED_UP_PERCENT),
-                disabledShapes = p.getStringSet("disabled_shapes", DEFAULT_DISABLED_SHAPES)
-                    ?.toMutableSet() ?: DEFAULT_DISABLED_SHAPES.toMutableSet(),
+                disabledShapes = p.getStringSet("disabled_shapes", emptySet())
+                    ?.toMutableSet() ?: mutableSetOf(),
                 shapeUnlockScores = decodeUnlockScores(p.getString("shape_unlock_scores", "")),
                 soundEnabled = p.getBoolean("sound_enabled", DEFAULT_SOUND_ENABLED),
                 soundVolume = p.getFloat("sound_volume", DEFAULT_SOUND_VOLUME),
