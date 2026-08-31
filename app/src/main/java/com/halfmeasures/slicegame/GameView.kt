@@ -111,6 +111,14 @@ class GameView @JvmOverloads constructor(
      */
     /** Runs finished on this device. A first run has no record to break. */
     private var runsFinished = scores.getInt("runs_finished", 0)
+    /**
+     * Every final score ever posted, so the average can be kept without storing
+     * the runs themselves. The average is what the rank is drawn from: a best
+     * score is one lucky afternoon, an average is how well you actually play.
+     */
+    private var scoreTotal = scores.getLong("score_total", 0L)
+    private val averageScore: Int
+        get() = if (runsFinished <= 0) 0 else (scoreTotal / runsFinished).toInt()
     private var bestCuts = scores.getInt("best_cuts", 0)
     private var bestPerfectCuts = scores.getInt("best_perfect_cuts", 0)
     private var recordPerfectStreak = scores.getInt("best_perfect_streak", 0)
@@ -870,7 +878,11 @@ class GameView @JvmOverloads constructor(
             scores.edit().putInt("best_score", bestScore).apply()
         }
         runsFinished++
-        scores.edit().putInt("runs_finished", runsFinished).apply()
+        scoreTotal += score
+        scores.edit()
+            .putInt("runs_finished", runsFinished)
+            .putLong("score_total", scoreTotal)
+            .apply()
         commitPersonalBests()
         effects.addShake(0.7f * settings.cameraShakeStrength)
         if (settings.vibrationEnabled) haptics.gameOver(settings.vibrationStrength)
@@ -2809,16 +2821,9 @@ class GameView @JvmOverloads constructor(
         // Only after a run: a rank handed out before anyone has played says
         // nothing about them.
         if (runsFinished > 0) {
-            val rank = Ranks.forScore(bestScore)
-            val y = height * 0.43f
-            drawChip(canvas, cx, y, "BEST  $bestScore")
-
-            drawRankBadge(canvas, cx - 74f * density, y + 34f * density, rank, 1f)
-            uiBoldPaint.textAlign = Paint.Align.LEFT
-            uiBoldPaint.textSize = 15f * density
-            uiBoldPaint.color = Theme.gold
-            canvas.drawText(rank.title.uppercase(), cx - 50f * density, y + 39f * density, uiBoldPaint)
-            uiBoldPaint.textAlign = Paint.Align.CENTER
+            val y = height * 0.42f
+            drawScorePills(canvas, cx, y, 1f)
+            drawRankPill(canvas, cx, y + 40f * density, Ranks.forScore(averageScore), 1f)
         }
 
         drawAdNotice(canvas, primaryButton.top - 14f * density)
@@ -2916,37 +2921,19 @@ class GameView @JvmOverloads constructor(
 
         // The all-time best sits with the score it is measured against rather than
         // buried in the table below, which is the only place a player looks first.
-        drawBestChip(canvas, cx, cardTop + 162f * density, scoreAlpha)
+        drawScorePills(canvas, cx, cardTop + 164f * density, scoreAlpha)
 
-        val rank = Ranks.forScore(bestScore)
+        // The rank follows the average, not the best. A best score is one lucky
+        // afternoon; an average is how well you actually play.
+        val rank = Ranks.forScore(averageScore)
         val rankAlpha = revealAlpha(CARD_SCORE_AT + 0.1f, 0.3f)
-        drawRankBadge(canvas, cardLeft + CARD_PAD * density + 17f * density,
-            cardTop + 212f * density, rank, rankAlpha)
+        drawRankPill(canvas, cx, cardTop + 206f * density, rank, rankAlpha)
+        drawRankLadder(canvas, cx, cardTop + 234f * density, rank, rankAlpha)
 
-        uiBoldPaint.textAlign = Paint.Align.LEFT
-        uiBoldPaint.textSize = 11f * density
-        uiBoldPaint.letterSpacing = 0.18f
-        uiBoldPaint.color = Theme.withAlpha(Theme.textFaint, rankAlpha)
-        val rankTextLeft = cardLeft + CARD_PAD * density + 44f * density
-        canvas.drawText("RANK ${rank.number} OF ${Ranks.count}", rankTextLeft,
-            cardTop + 205f * density, uiBoldPaint)
-        uiBoldPaint.letterSpacing = 0f
-        uiBoldPaint.textSize = 17f * density
-        uiBoldPaint.color = Theme.withAlpha(Theme.gold, rankAlpha)
-        canvas.drawText(rank.title.uppercase(), rankTextLeft, cardTop + 224f * density, uiBoldPaint)
-
-        drawRankLadder(canvas, cx, cardTop + 246f * density, rank, rankAlpha)
-
-        // What the next rung is, and the gap to it.
-        val nextRank = Ranks.next(rank)
         uiPaint.textAlign = Paint.Align.CENTER
         uiPaint.textSize = 13f * density
         uiPaint.color = Theme.withAlpha(Theme.textFaint, rankAlpha)
-        canvas.drawText(
-            if (nextRank == null) "TOP RANK"
-            else "${Ranks.pointsTo(bestScore, nextRank)} to ${nextRank.title}",
-            cx, cardTop + 268f * density, uiPaint
-        )
+        canvas.drawText(rankGoalText(rank), cx, cardTop + 258f * density, uiPaint)
 
         rimPaint.strokeWidth = 1.5f
         rimPaint.color = Theme.withAlpha(Theme.hairline, revealAlpha(CARD_ROWS_AT - 0.1f))
@@ -3101,6 +3088,28 @@ class GameView @JvmOverloads constructor(
         }
     }
 
+    /**
+     * What it takes to rank up, stated as the thing the player can actually aim
+     * at. "2,062 to Hexagon Halver" told them a gap they would have to do
+     * arithmetic on; the target average is the number itself.
+     */
+    private fun rankGoalText(rank: Rank): String {
+        if (Ranks.next(rank) == null) return "TOP RANK"
+        return "Get your average to ${formatScore(rank.ceiling)} to rank up"
+    }
+
+    /** Thousands separators, so a five-figure target reads at a glance. */
+    private fun formatScore(value: Int): String {
+        val digits = value.toString()
+        if (digits.length <= 3) return digits
+        val out = StringBuilder()
+        for ((i, c) in digits.withIndex()) {
+            if (i > 0 && (digits.length - i) % 3 == 0) out.append(',')
+            out.append(c)
+        }
+        return out.toString()
+    }
+
     /** Bands shade from gold at dead centre through to red at a total whiff. */
     private fun bucketColor(index: Int): Int = when (index) {
         0 -> Theme.gold
@@ -3116,8 +3125,112 @@ class GameView @JvmOverloads constructor(
      * throws, with the rank number beside its title. A badge that is a shape you
      * have actually been cutting says more than a number in a box.
      */
-    private fun drawRankBadge(canvas: Canvas, cx: Float, cy: Float, rank: Rank, alpha: Float) {
-        val r = 17f * density
+    /** Width a labelled pill needs, so a row of them can be centred as a group. */
+    private fun pillWidth(label: String, value: String): Float {
+        uiBoldPaint.textSize = 12f * density
+        uiBoldPaint.letterSpacing = 0.18f
+        val labelWidth = uiBoldPaint.measureText(label)
+        uiBoldPaint.letterSpacing = 0f
+        uiBoldPaint.textSize = 17f * density
+        return labelWidth + PILL_GAP * density + uiBoldPaint.measureText(value) +
+            PILL_PAD * 2 * density
+    }
+
+    /**
+     * A small labelled capsule: a quiet caption and a bright figure. The whole
+     * summary block is built from these so it reads as one family rather than as
+     * a chip, a badge and a heading that happen to be near each other.
+     */
+    private fun drawPillAt(
+        canvas: Canvas,
+        left: Float,
+        cy: Float,
+        label: String,
+        value: String,
+        accent: Int,
+        alpha: Float
+    ) {
+        val width = pillWidth(label, value)
+        val height = PILL_HEIGHT * density
+        roundRect.set(left, cy - height / 2f, left + width, cy + height / 2f)
+        panelPaint.shader = null
+        panelPaint.alpha = 255
+        panelPaint.color = Theme.withAlpha(accent, 0.14f * alpha)
+        canvas.drawRoundRect(roundRect, height / 2f, height / 2f, panelPaint)
+
+        val baseline = cy - (uiBoldPaint.descent() + uiBoldPaint.ascent()) / 2f
+        var x = left + PILL_PAD * density
+
+        uiBoldPaint.textAlign = Paint.Align.LEFT
+        uiBoldPaint.textSize = 12f * density
+        uiBoldPaint.letterSpacing = 0.18f
+        uiBoldPaint.color = Theme.withAlpha(Theme.textFaint, alpha)
+        canvas.drawText(label, x, baseline, uiBoldPaint)
+        x += uiBoldPaint.measureText(label) + PILL_GAP * density
+        uiBoldPaint.letterSpacing = 0f
+
+        uiBoldPaint.textSize = 17f * density
+        uiBoldPaint.color = Theme.withAlpha(accent, alpha)
+        canvas.drawText(value, x, baseline, uiBoldPaint)
+        uiBoldPaint.textAlign = Paint.Align.CENTER
+    }
+
+    /** BEST and AVERAGE together, centred on [cx] as one block. */
+    private fun drawScorePills(canvas: Canvas, cx: Float, cy: Float, alpha: Float) {
+        val bestValue = bestScore.toString()
+        val avgValue = averageScore.toString()
+        val gap = 10f * density
+        val total = pillWidth("BEST", bestValue) + gap + pillWidth("AVG", avgValue)
+        var x = cx - total / 2f
+        drawPillAt(canvas, x, cy, "BEST", bestValue, if (beatBestScore) Theme.gold else Theme.accent, alpha)
+        x += pillWidth("BEST", bestValue) + gap
+        drawPillAt(canvas, x, cy, "AVG", avgValue, Theme.good, alpha)
+    }
+
+    /**
+     * The rank, as a pill of the same family: the rank's own shape drawn from the
+     * outline the game throws, then the title. Centred like everything else on
+     * the card - it used to hang off the left edge of a centred block.
+     */
+    private fun drawRankPill(canvas: Canvas, cx: Float, cy: Float, rank: Rank, alpha: Float) {
+        val glyph = 11f * density
+        val title = rank.title.uppercase()
+
+        uiBoldPaint.textSize = 15f * density
+        uiBoldPaint.letterSpacing = 0.08f
+        val titleWidth = uiBoldPaint.measureText(title)
+        uiBoldPaint.letterSpacing = 0f
+
+        val height = PILL_HEIGHT * density
+        val width = PILL_PAD * density + glyph * 2 + PILL_GAP * density +
+            titleWidth + PILL_PAD * density
+        val left = cx - width / 2f
+
+        roundRect.set(left, cy - height / 2f, left + width, cy + height / 2f)
+        panelPaint.shader = null
+        panelPaint.alpha = 255
+        panelPaint.color = Theme.withAlpha(Theme.gold, 0.14f * alpha)
+        canvas.drawRoundRect(roundRect, height / 2f, height / 2f, panelPaint)
+
+        drawRankGlyph(canvas, left + PILL_PAD * density + glyph, cy, rank, glyph, alpha)
+
+        uiBoldPaint.textAlign = Paint.Align.LEFT
+        uiBoldPaint.textSize = 15f * density
+        uiBoldPaint.letterSpacing = 0.08f
+        uiBoldPaint.color = Theme.withAlpha(Theme.gold, alpha)
+        canvas.drawText(
+            title,
+            left + PILL_PAD * density + glyph * 2 + PILL_GAP * density,
+            cy - (uiBoldPaint.descent() + uiBoldPaint.ascent()) / 2f,
+            uiBoldPaint
+        )
+        uiBoldPaint.letterSpacing = 0f
+        uiBoldPaint.textAlign = Paint.Align.CENTER
+    }
+
+    private fun drawRankGlyph(
+        canvas: Canvas, cx: Float, cy: Float, rank: Rank, r: Float, alpha: Float
+    ) {
         val verts = rank.shape.unitVertices
 
         path.rewind()
@@ -3155,49 +3268,6 @@ class GameView @JvmOverloads constructor(
             canvas.drawCircle(x, cy, if (i == rank.number) pip * 1.6f else pip, panelPaint)
             x += gap
         }
-    }
-
-    /**
-     * A pill carrying the all-time best, directly under the run's own score. It
-     * turns gold on a run that set it, which is the same beat the headline strikes.
-     */
-    private fun drawBestChip(canvas: Canvas, cx: Float, cy: Float, alpha: Float) {
-        val label = "BEST"
-        val value = bestScore.toString()
-        val gold = beatBestScore
-
-        uiBoldPaint.textAlign = Paint.Align.LEFT
-        uiBoldPaint.textSize = 12f * density
-        uiBoldPaint.letterSpacing = 0.18f
-        val labelWidth = uiBoldPaint.measureText(label)
-        uiBoldPaint.letterSpacing = 0f
-        uiBoldPaint.textSize = 17f * density
-        val valueWidth = uiBoldPaint.measureText(value)
-
-        val gap = 9f * density
-        val padX = 15f * density
-        val height = 30f * density
-        val width = labelWidth + gap + valueWidth + padX * 2
-
-        roundRect.set(cx - width / 2f, cy - height / 2f, cx + width / 2f, cy + height / 2f)
-        panelPaint.shader = null
-        panelPaint.alpha = 255
-        panelPaint.color = Theme.withAlpha(if (gold) Theme.gold else Theme.accent, 0.14f * alpha)
-        canvas.drawRoundRect(roundRect, height / 2f, height / 2f, panelPaint)
-
-        val baseline = cy - (uiBoldPaint.descent() + uiBoldPaint.ascent()) / 2f
-        val startX = cx - width / 2f + padX
-
-        uiBoldPaint.textSize = 12f * density
-        uiBoldPaint.letterSpacing = 0.18f
-        uiBoldPaint.color = Theme.withAlpha(Theme.textFaint, alpha)
-        canvas.drawText(label, startX, baseline, uiBoldPaint)
-        uiBoldPaint.letterSpacing = 0f
-
-        uiBoldPaint.textSize = 17f * density
-        uiBoldPaint.color = Theme.withAlpha(if (gold) Theme.gold else Theme.accent, alpha)
-        canvas.drawText(value, startX + labelWidth + gap, baseline, uiBoldPaint)
-        uiBoldPaint.textAlign = Paint.Align.CENTER
     }
 
     /**
@@ -3255,20 +3325,6 @@ class GameView @JvmOverloads constructor(
         uiBoldPaint.letterSpacing = 0f
     }
 
-    private fun drawChip(canvas: Canvas, cx: Float, cy: Float, text: String) {
-        uiBoldPaint.textAlign = Paint.Align.CENTER
-        uiBoldPaint.textSize = 17f * density
-        val textWidth = uiBoldPaint.measureText(text)
-        val padX = 20f * density
-        val padY = 11f * density
-        roundRect.set(cx - textWidth / 2f - padX, cy - padY - 8f * density,
-            cx + textWidth / 2f + padX, cy + padY + 6f * density)
-        panelPaint.color = Theme.withAlpha(Theme.accent, 0.13f)
-        canvas.drawRoundRect(roundRect, roundRect.height() / 2f, roundRect.height() / 2f, panelPaint)
-        uiBoldPaint.color = Theme.accent
-        canvas.drawText(text, cx, cy + 5f * density, uiBoldPaint)
-    }
-
     private fun drawButton(
         canvas: Canvas,
         rect: RectF,
@@ -3323,6 +3379,11 @@ class GameView @JvmOverloads constructor(
         /** Side of the square pause target, in dp. */
         const val PAUSE_BUTTON_SIZE = 34f
 
+        /** Shared pill metrics, in dp, so every capsule on a screen matches. */
+        const val PILL_HEIGHT = 30f
+        const val PILL_PAD = 14f
+        const val PILL_GAP = 8f
+
         /** Extra embers per thousand points, and the ceiling on that. */
         const val EMBER_GROWTH_PER_1K = 0.05f
         const val MAX_EMBER_GROWTH = 5f
@@ -3364,7 +3425,7 @@ class GameView @JvmOverloads constructor(
         const val CARD_PAD = 28f
         /** Baseline above a rule to the rule, and the rule to the baseline below. */
         const val CARD_RULE_GAP = 30f
-        const val CARD_HEADER_HEIGHT = 292f
+        const val CARD_HEADER_HEIGHT = 288f
         /** Width reserved for the BEST column, measured in from the card's inset. */
         const val CARD_BEST_COLUMN = 66f
         const val CARD_STAT_ROW_HEIGHT = 26f
