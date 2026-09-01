@@ -366,13 +366,6 @@ class DevSettingsActivity : AppCompatActivity() {
                 { settings.grainAmount = it }
             )
             slider(
-                c.body, "Diffuser glow",
-                "A soft filter over the whole scene - light bleeds out of everything bright and fogs the black around it.",
-                GameSettings.MIN_BLOOM_STRENGTH, GameSettings.MAX_BLOOM_STRENGTH, settings.bloomStrength,
-                { if (it <= 0.01f) "Off" else "%.1fx".format(it) },
-                { settings.bloomStrength = it }
-            )
-            slider(
                 c.body, "Neon glow",
                 "How hard the outline burns around each shape. 0 goes back to a plain edge.",
                 GameSettings.MIN_NEON_GLOW, GameSettings.MAX_NEON_GLOW, settings.neonGlow,
@@ -883,7 +876,6 @@ class DevSettingsActivity : AppCompatActivity() {
             appendLine("  Music: ${onOff(settings.musicEnabled)}")
             appendLine("  Music volume: ${(settings.musicVolume * 100).roundToInt()}%")
             appendLine("  Film grain: %.0f%%".format(settings.grainAmount * 100f))
-            appendLine("  Diffuser glow: %.1fx".format(settings.bloomStrength))
             appendLine("  Neon glow: %.2fx".format(settings.neonGlow))
             appendLine()
             appendLine("SHAPES")

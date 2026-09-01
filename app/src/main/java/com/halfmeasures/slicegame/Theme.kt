@@ -119,41 +119,6 @@ object Theme {
         return Color.HSVToColor(floatArrayOf(hue, 0.55f + 0.20f * level, 0.74f + 0.26f * level))
     }
 
-    /**
-     * The shape body, centre outward.
-     *
-     * Concentric, so it turns with the shape and can never come apart from it -
-     * that was what killed the vertical ramp. The colours are the deep ones: a
-     * luminous but still saturated core falling away to a near-black rim of the
-     * same hue, on six eased stops so the fall is gradual rather than a disc of
-     * colour with a ring around it.
-     *
-     * Nothing in here goes to white. A pale rim reads as a halo painted onto the
-     * shape rather than as the shape being round, and the neon edge is already
-     * carrying the light at the outline.
-     */
-    fun shapeOrbRamp(score: Int, slot: Int): IntArray {
-        val hsv = energyHsv(score)
-        val hue = (hsv[0] + SHAPE_HUE_OFFSETS[slot % SHAPE_HUE_OFFSETS.size] + 360f) % 360f
-        val top = 0.55f + 0.45f * energyLevel(score)
-        fun at(sat: Float, value: Float) =
-            Color.HSVToColor(floatArrayOf(hue, sat, (value * top).coerceIn(0f, 1f)))
-        return intArrayOf(
-            at(0.70f, 1.00f),
-            at(0.78f, 0.86f),
-            at(0.85f, 0.66f),
-            at(0.90f, 0.46f),
-            at(0.94f, 0.30f),
-            at(0.97f, 0.18f)
-        )
-    }
-
-    /**
-     * Centre outward, bunched toward the middle. Even stops put the whole fall in
-     * the outer half and left a flat plate of colour in the centre.
-     */
-    val SHAPE_ORB_STOPS = floatArrayOf(0f, 0.22f, 0.42f, 0.62f, 0.82f, 1f)
-
     fun shapeDeep(score: Int, slot: Int): Int {
         val hsv = energyHsv(score)
         val level = energyLevel(score)

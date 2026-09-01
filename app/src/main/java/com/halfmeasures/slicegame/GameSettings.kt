@@ -142,8 +142,6 @@ data class GameSettings(
     /** How hard the neon outline burns around each shape. 0 turns it off. */
     /** How much film grain sits over the shape bodies. */
     var grainAmount: Float = DEFAULT_GRAIN_AMOUNT,
-    /** The diffuser over the whole scene - a post pass, not a per-shape halo. */
-    var bloomStrength: Float = DEFAULT_BLOOM_STRENGTH,
     var neonGlow: Float = DEFAULT_NEON_GLOW,
     /** Whether the announcer shouts on a perfect cut. */
     var voiceEnabled: Boolean = DEFAULT_VOICE_ENABLED,
@@ -219,7 +217,6 @@ data class GameSettings(
             .putBoolean("sound_enabled", soundEnabled)
             .putFloat("sound_volume", soundVolume)
             .putFloat("grain_amount", grainAmount)
-            .putFloat("bloom_strength", bloomStrength)
             .putFloat("neon_glow", neonGlow)
             .putBoolean("voice_enabled", voiceEnabled)
             .putBoolean("music_enabled", musicEnabled)
@@ -310,10 +307,12 @@ data class GameSettings(
         const val MIN_GRAIN_AMOUNT = 0f
         const val MAX_GRAIN_AMOUNT = 0.45f
 
-        const val DEFAULT_BLOOM_STRENGTH = 0.9f
-        const val MIN_BLOOM_STRENGTH = 0f
-        const val MAX_BLOOM_STRENGTH = 2.5f
-        const val DEFAULT_NEON_GLOW = 1.0f
+        /**
+         * Off. The four-stroke glow stack around an outline was not liked; what
+         * is left at zero is the single crisp edge the shapes always had, and the
+         * slider is still here for anyone who wants the tube back.
+         */
+        const val DEFAULT_NEON_GLOW = 0f
         const val DEFAULT_VOICE_ENABLED = true
         const val DEFAULT_MUSIC_ENABLED = true
         const val DEFAULT_MUSIC_VOLUME = 0.30f
@@ -476,7 +475,6 @@ data class GameSettings(
                 soundEnabled = p.getBoolean("sound_enabled", DEFAULT_SOUND_ENABLED),
                 soundVolume = p.getFloat("sound_volume", DEFAULT_SOUND_VOLUME),
                 grainAmount = p.getFloat("grain_amount", DEFAULT_GRAIN_AMOUNT),
-                bloomStrength = p.getFloat("bloom_strength", DEFAULT_BLOOM_STRENGTH),
                 neonGlow = p.getFloat("neon_glow", DEFAULT_NEON_GLOW),
                 voiceEnabled = p.getBoolean("voice_enabled", DEFAULT_VOICE_ENABLED),
                 musicEnabled = p.getBoolean("music_enabled", DEFAULT_MUSIC_ENABLED),

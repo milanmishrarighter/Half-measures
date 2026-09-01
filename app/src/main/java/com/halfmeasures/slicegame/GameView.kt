@@ -9,8 +9,6 @@ import android.graphics.LinearGradient
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
-import android.graphics.PorterDuff
-import android.graphics.PorterDuffXfermode
 import android.graphics.RadialGradient
 import android.graphics.Rect
 import android.graphics.RectF
@@ -353,23 +351,6 @@ class GameView @JvmOverloads constructor(
     private val grainMatrix = Matrix()
     private val grainPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val shapeBounds = RectF()
-    /**
-     * The diffuser's two buffers and the paints that composite them. Allocated on
-     * resize, because their size is a fraction of the screen's.
-     */
-    private var glowNear: Bitmap? = null
-    private var glowFar: Bitmap? = null
-    private var glowNearCanvas: Canvas? = null
-    private var glowFarCanvas: Canvas? = null
-    private val nearRect = Rect()
-    private val farRect = Rect()
-    private val screenRect = Rect()
-    private val filterPaint = Paint(Paint.FILTER_BITMAP_FLAG)
-    /** Additive, so the glow only ever brightens what is under it. */
-    private val addPaint = Paint(Paint.FILTER_BITMAP_FLAG).apply {
-        xfermode = PorterDuffXfermode(PorterDuff.Mode.ADD)
-    }
-
     private val grainShader: BitmapShader by lazy {
         BitmapShader(buildGrainTile(), Shader.TileMode.REPEAT, Shader.TileMode.REPEAT)
     }
@@ -522,7 +503,6 @@ class GameView @JvmOverloads constructor(
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
-        allocateGlowBuffers(w, h)
         if (w <= 0 || h <= 0) return
 
         pixels.resize(w, h)
@@ -2042,9 +2022,6 @@ class GameView @JvmOverloads constructor(
 
         for (piece in pieces) drawPiece(canvas, piece)
         for (shape in shapes) drawShape(canvas, shape)
-        // Over the shapes but under the effects: the blade and the debris are
-        // already bright, and fogging them as well buries the read on a cut.
-        drawDiffuser(canvas)
         drawShockwaves(canvas)
         drawParticles(canvas)
         drawTrail(canvas)
@@ -2102,29 +2079,24 @@ class GameView @JvmOverloads constructor(
      */
     private fun tintedLight(paletteIndex: Int): Int = Theme.shapeLight(score, paletteIndex)
 
-    /**
-     * The shape body: one concentric ramp per colour slot.
-     *
-     * Concentric because anything else comes apart from a tumbling shape - a
-     * highlight placed by the screen holds still while the shape turns through
-     * it, which reads as a hole rather than as light. Deep colours, six eased
-     * stops, and nothing anywhere near white.
-     */
+    /** The shape body: a highlight in the upper left falling to the deep colour. */
     private fun bodyShader(paletteIndex: Int): Shader =
         bodyShaders.getOrPut(paletteIndex) {
+            val light = Theme.shapeLight(score, paletteIndex)
+            val deep = Theme.shapeDeep(score, paletteIndex)
             RadialGradient(
                 0f, 0f, 1f,
-                Theme.shapeOrbRamp(score, paletteIndex),
-                Theme.SHAPE_ORB_STOPS,
+                intArrayOf(Theme.lighten(light, 0.22f), light, deep),
+                floatArrayOf(0f, 0.45f, 1f),
                 Shader.TileMode.CLAMP
             )
         }
 
-    /** Centres [bodyShader] on a shape of radius [r] at [cx],[cy]. */
+    /** Places [bodyShader] on a shape of radius [r] centred at [cx],[cy]. */
     private fun placeBody(shader: Shader, cx: Float, cy: Float, r: Float) {
         shaderMatrix.reset()
-        shaderMatrix.postScale(r, r)
-        shaderMatrix.postTranslate(cx, cy)
+        shaderMatrix.postScale(r * 1.55f, r * 1.55f)
+        shaderMatrix.postTranslate(cx - r * 0.38f, cy - r * 0.42f)
         shader.setLocalMatrix(shaderMatrix)
     }
 
@@ -2165,89 +2137,30 @@ class GameView @JvmOverloads constructor(
         canvas.restore()
     }
 
-    /**
-     * Sizes the diffuser's buffers against the screen. They are fractions of it,
-     * so even at 1080p the wide one is a few thousand pixels.
-     */
-    private fun allocateGlowBuffers(w: Int, h: Int) {
-        if (w <= 0 || h <= 0) return
-        val nw = (w / GLOW_NEAR_STEP).coerceAtLeast(1)
-        val nh = (h / GLOW_NEAR_STEP).coerceAtLeast(1)
-        val fw = (nw / GLOW_FAR_STEP).coerceAtLeast(1)
-        val fh = (nh / GLOW_FAR_STEP).coerceAtLeast(1)
-        val near = Bitmap.createBitmap(nw, nh, Bitmap.Config.ARGB_8888)
-        val far = Bitmap.createBitmap(fw, fh, Bitmap.Config.ARGB_8888)
-        glowNear = near
-        glowFar = far
-        glowNearCanvas = Canvas(near)
-        glowFarCanvas = Canvas(far)
-        nearRect.set(0, 0, nw, nh)
-        farRect.set(0, 0, fw, fh)
-        screenRect.set(0, 0, w, h)
-    }
-
-    /**
-     * The diffuser: one soft, additive pass over the whole scene.
-     *
-     * A halo drawn per shape is a halo, not a diffuser - it stops at the shape's
-     * own edge and never pools between two of them. This renders the lit things
-     * once more into a buffer a fraction of the screen's size, then adds that
-     * buffer back stretched over the frame. Scaling a small image up is a blur,
-     * and an additive blur of the bright parts is exactly what a diffusion filter
-     * on a lens does: light bleeds out of everything and fogs the black.
-     *
-     * Two buffers rather than one - a tight one and a very wide one - because a
-     * single radius gives a halo with an edge to it, and two summed give a falloff.
-     * Both are small enough that drawing into them costs almost nothing even
-     * though they are software surfaces.
-     */
-    private fun drawDiffuser(canvas: Canvas) {
-        val strength = settings.bloomStrength
-        if (strength <= 0.01f) return
-        val near = glowNear ?: return
-        val far = glowFar ?: return
-        val nearCanvas = glowNearCanvas ?: return
-        val farCanvas = glowFarCanvas ?: return
-
-        near.eraseColor(Color.TRANSPARENT)
-        nearCanvas.save()
-        nearCanvas.scale(1f / GLOW_NEAR_STEP, 1f / GLOW_NEAR_STEP)
-        glowPaint.shader = null
-        for (piece in pieces) {
-            path.rewind()
-            piece.points.forEachIndexed { i, p ->
-                val x = p.x + (piece.x - piece.originX)
-                val y = p.y + (piece.y - piece.originY)
-                if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
-            }
-            path.close()
-            glowPaint.color = Theme.withAlpha(tintedLight(piece.paletteIndex), piece.remaining * 0.8f)
-            nearCanvas.drawPath(path, glowPaint)
-        }
-        for (shape in shapes) {
-            buildPath(shape.worldVertices())
-            // The shape's own colour, not a whitened one. Feeding the diffuser
-            // the near-white edge colour and then adding it back blew every body
-            // out to a pale disc - the fog has to be the colour of the thing.
-            glowPaint.color = tintedLight(shape.paletteIndex)
-            nearCanvas.drawPath(path, glowPaint)
-        }
-        nearCanvas.restore()
-
-        // The wide pass is the near one shrunk again, which costs one small blit
-        // instead of a second walk over every shape.
-        far.eraseColor(Color.TRANSPARENT)
-        farCanvas.drawBitmap(near, nearRect, farRect, filterPaint)
-
-        addPaint.alpha = (GLOW_NEAR_MIX * strength).toInt().coerceIn(0, 255)
-        canvas.drawBitmap(near, nearRect, screenRect, addPaint)
-        addPaint.alpha = (GLOW_FAR_MIX * strength).toInt().coerceIn(0, 255)
-        canvas.drawBitmap(far, farRect, screenRect, addPaint)
-    }
-
     private fun drawShape(canvas: Canvas, shape: GameShape) {
         val verts = shape.worldVertices()
         val r = shape.radius * shape.spawnScale
+
+        // Two translucent copies scaled up behind the body. Cheap, hardware
+        // accelerated, and enough to lift a shape off the black.
+        canvas.save()
+        canvas.translate(shape.x, shape.y)
+        canvas.scale(1.14f, 1.14f)
+        canvas.translate(-shape.x, -shape.y)
+        buildPath(verts)
+        glowPaint.color = Theme.withAlpha(tintedLight(shape.paletteIndex), 0.10f)
+        canvas.drawPath(path, glowPaint)
+        canvas.restore()
+
+        canvas.save()
+        canvas.translate(shape.x, shape.y)
+        canvas.scale(1.06f, 1.06f)
+        canvas.translate(-shape.x, -shape.y)
+        buildPath(verts)
+        glowPaint.color = Theme.withAlpha(tintedLight(shape.paletteIndex), 0.16f)
+        canvas.drawPath(path, glowPaint)
+        canvas.restore()
+
         buildPath(verts)
         val shader = bodyShader(shape.paletteIndex)
         placeBody(shader, shape.x, shape.y, r)
@@ -3746,13 +3659,6 @@ class GameView @JvmOverloads constructor(
         /** Grain tile edge, in pixels, and how strongly it sits over the body. */
         const val GRAIN_TILE = 128
 
-        /** How far down the two diffuser buffers are from the screen. */
-        const val GLOW_NEAR_STEP = 5
-        const val GLOW_FAR_STEP = 4
-        /** How much of each is added back at 1x. Together they must stay well
-         *  under full, or the bodies wash out instead of glowing. */
-        const val GLOW_NEAR_MIX = 56f
-        const val GLOW_FAR_MIX = 82f
 
         /** Shared pill metrics, in dp, so every capsule on a screen matches. */
         const val PILL_HEIGHT = 34f
