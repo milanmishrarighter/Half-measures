@@ -144,6 +144,30 @@ object Theme {
         )
     }
 
+    /**
+     * The soft-focus ramp, centre outward: the shape's colour at full chroma in
+     * the middle, opening out to a pale halo at the rim.
+     *
+     * Radial rather than vertical, which is the whole point of it - a highlight
+     * placed by the screen sits still while the shape tumbles through it, and
+     * that is what made the lit-glass look read as a hole rather than a surface.
+     * Anything centred on the shape turns with it and cannot come apart.
+     */
+    fun shapeHaloRamp(score: Int, slot: Int): IntArray {
+        val hsv = energyHsv(score)
+        val hue = (hsv[0] + SHAPE_HUE_OFFSETS[slot % SHAPE_HUE_OFFSETS.size] + 360f) % 360f
+        val top = 0.62f + 0.38f * energyLevel(score)
+        return intArrayOf(
+            Color.HSVToColor(floatArrayOf(hue, 0.95f, top)),
+            Color.HSVToColor(floatArrayOf(hue, 0.92f, top)),
+            Color.HSVToColor(floatArrayOf(hue, 0.42f, (0.55f + 0.45f * top).coerceAtMost(1f))),
+            Color.HSVToColor(floatArrayOf(hue, 0.14f, (0.72f + 0.28f * top).coerceAtMost(1f)))
+        )
+    }
+
+    /** Centre outward, for [shapeHaloRamp]. */
+    val SHAPE_HALO_STOPS = floatArrayOf(0f, 0.34f, 0.80f, 1f)
+
     /** Where each of [shapeRamp]'s colours sits down the shape. */
     val SHAPE_RAMP_STOPS = floatArrayOf(0f, 0.30f, 0.66f, 0.84f, 1f)
 

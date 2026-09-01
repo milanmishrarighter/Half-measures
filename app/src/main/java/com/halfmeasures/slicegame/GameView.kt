@@ -87,6 +87,9 @@ class GameView @JvmOverloads constructor(
 
     fun refreshSettings() {
         settings = GameSettings.load(context)
+        // The body shaders are built for whichever style was on when they were
+        // cached, so a style change has to drop them.
+        bodyShaders.clear()
         gravity = GameShape.BASE_GRAVITY * settings.gravityScale
         sounds.enabled = settings.soundEnabled
         sounds.volume = settings.soundVolume
@@ -344,12 +347,7 @@ class GameView @JvmOverloads constructor(
 
     private val path = Path()
     private val shaderMatrix = Matrix()
-    private val bodyShaders = HashMap<Int, RadialGradient>()
-    /**
-     * The material's shaders, keyed the same way. A vertical ramp per colour slot,
-     * and one tile of film grain shared by all of them.
-     */
-    private val materialShaders = HashMap<Int, LinearGradient>()
+    private val bodyShaders = HashMap<Int, Shader>()
     private val grainMatrix = Matrix()
     private val grainPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val shapeBounds = RectF()
@@ -784,7 +782,6 @@ class GameView @JvmOverloads constructor(
         if (hueBucket != lastHueBucket) {
             lastHueBucket = hueBucket
             bodyShaders.clear()
-            materialShaders.clear()
         }
 
         // Creep toward the score's colours so the change is a slow shift in the
@@ -818,7 +815,6 @@ class GameView @JvmOverloads constructor(
         // The shape gradients are cached per palette entry and tinted by level,
         // so they have to be rebuilt when the level changes.
         bodyShaders.clear()
-        materialShaders.clear()
         if (settings.vibrationEnabled) haptics.tick(settings.vibrationStrength)
         sounds.play(Sfx.LEVEL_UP, gain = 0.9f)
     }
@@ -1357,7 +1353,6 @@ class GameView @JvmOverloads constructor(
         stage = 0
         pixels.reset()
         bodyShaders.clear()
-        materialShaders.clear()
         continuesUsed = 0
         // The menu gets a track too, at its written tempo. Only a run in progress
         // pushes it faster.
@@ -1403,7 +1398,6 @@ class GameView @JvmOverloads constructor(
         dangerArmed = true
         pixels.reset()
         bodyShaders.clear()
-        materialShaders.clear()
         lastHueBucket = score / 250
         backgroundColor = Theme.scoreBackground(score)
         accentColor = Theme.scoreAccent(score)
@@ -2086,25 +2080,58 @@ class GameView @JvmOverloads constructor(
     private fun tintedLight(paletteIndex: Int): Int = Theme.shapeLight(score, paletteIndex)
 
     /**
-     * The lit-glass material: one vertical ramp for the body, one tile of grain
-     * over it.
+     * The body treatment, one of three, cached per colour slot.
      *
-     * The ramp runs near-black at the top through the shape's own colour to a
-     * narrow hot band low down and back into colour at the bottom, which is what a
-     * translucent solid lit from below does. It is fixed to the screen's vertical
-     * rather than to the shape, so everything on screen agrees about where the
-     * light is instead of each shape carrying its own - the old radial highlight
-     * sat in the upper left of every shape however it was tumbling.
+     * Every one of them is centred on the shape or anchored to it - nothing is
+     * pinned to the screen. The lit-glass ramp was, and a highlight that holds
+     * still while the shape tumbles through it reads as a hole in the shape
+     * rather than as light on it.
      */
-    private fun materialShader(paletteIndex: Int): LinearGradient =
-        materialShaders.getOrPut(paletteIndex) {
-            LinearGradient(
-                0f, -1f, 0f, 1f,
-                Theme.shapeRamp(score, paletteIndex),
-                Theme.SHAPE_RAMP_STOPS,
-                Shader.TileMode.CLAMP
-            )
+    private fun bodyShader(paletteIndex: Int): Shader =
+        bodyShaders.getOrPut(paletteIndex) {
+            when (settings.shapeStyle) {
+                GameSettings.STYLE_LIT_GLASS -> LinearGradient(
+                    0f, -1f, 0f, 1f,
+                    Theme.shapeRamp(score, paletteIndex),
+                    Theme.SHAPE_RAMP_STOPS,
+                    Shader.TileMode.CLAMP
+                )
+                // Saturated in the middle, opening out to a pale halo at the rim.
+                GameSettings.STYLE_SOFT_FOCUS -> RadialGradient(
+                    0f, 0f, 1f,
+                    Theme.shapeHaloRamp(score, paletteIndex),
+                    Theme.SHAPE_HALO_STOPS,
+                    Shader.TileMode.CLAMP
+                )
+                else -> {
+                    val light = Theme.shapeLight(score, paletteIndex)
+                    val deep = Theme.shapeDeep(score, paletteIndex)
+                    RadialGradient(
+                        0f, 0f, 1f,
+                        intArrayOf(Theme.lighten(light, 0.22f), light, deep),
+                        floatArrayOf(0f, 0.45f, 1f),
+                        Shader.TileMode.CLAMP
+                    )
+                }
+            }
         }
+
+    /**
+     * Places [bodyShader] on a shape of radius [r] centred at [cx],[cy]. The
+     * classic look is lit from the upper left, so it is the one that sits off
+     * centre; the other two are concentric with the shape.
+     */
+    private fun placeBody(shader: Shader, cx: Float, cy: Float, r: Float) {
+        shaderMatrix.reset()
+        if (settings.shapeStyle == GameSettings.STYLE_CLASSIC) {
+            shaderMatrix.postScale(r * 1.55f, r * 1.55f)
+            shaderMatrix.postTranslate(cx - r * 0.38f, cy - r * 0.42f)
+        } else {
+            shaderMatrix.postScale(r, r * 1.04f)
+            shaderMatrix.postTranslate(cx, cy)
+        }
+        shader.setLocalMatrix(shaderMatrix)
+    }
 
     /**
      * One tile of film grain: monochrome speckle at low alpha, repeated. Grain is
@@ -2126,7 +2153,7 @@ class GameView @JvmOverloads constructor(
 
     /** Lays grain over whatever path was last built, clipped to it. */
     private fun drawGrain(canvas: Canvas, seed: Float, alpha: Float) {
-        if (alpha <= 0.01f) return
+        if (!settings.shapeGrain || alpha <= 0.01f) return
         path.computeBounds(shapeBounds, true)
         canvas.save()
         canvas.clipPath(path)
@@ -2142,64 +2169,44 @@ class GameView @JvmOverloads constructor(
         canvas.restore()
     }
 
-    private fun bodyShader(paletteIndex: Int): RadialGradient =
-        bodyShaders.getOrPut(paletteIndex) {
-            val light = tintedLight(paletteIndex)
-            val deep = Theme.shapeDeep(score, paletteIndex)
-            RadialGradient(
-                0f, 0f, 1f,
-                intArrayOf(Theme.lighten(light, 0.22f), light, deep),
-                floatArrayOf(0f, 0.45f, 1f),
-                Shader.TileMode.CLAMP
-            )
+    /**
+     * Bloom: translucent copies of the shape, scaled up behind it. Three passes at
+     * full strength rather than two, and the widest only earns its cost once the
+     * meter is past halfway - a faint outermost pass is invisible and still costs
+     * a whole path fill per shape per frame.
+     */
+    private fun drawBloom(canvas: Canvas, verts: List<PointF2>, cx: Float, cy: Float, tint: Int) {
+        val glow = settings.shapeGlow
+        if (glow <= 0.01f) return
+        for (pass in BLOOM_PASSES) {
+            val scale = pass[0]
+            val alpha = pass[1] * glow
+            if (alpha < 0.012f) continue
+            canvas.save()
+            canvas.translate(cx, cy)
+            canvas.scale(scale, scale)
+            canvas.translate(-cx, -cy)
+            buildPath(verts)
+            glowPaint.color = Theme.withAlpha(tint, alpha.coerceAtMost(0.5f))
+            canvas.drawPath(path, glowPaint)
+            canvas.restore()
         }
+    }
 
     private fun drawShape(canvas: Canvas, shape: GameShape) {
         val verts = shape.worldVertices()
         val r = shape.radius * shape.spawnScale
+        val tint = tintedLight(shape.paletteIndex)
 
-        // Fake bloom: two scaled-up translucent copies behind the body. Cheaper and
-        // hardware-accelerated, unlike a blur mask filter.
-        canvas.save()
-        canvas.translate(shape.x, shape.y)
-        canvas.scale(1.14f, 1.14f)
-        canvas.translate(-shape.x, -shape.y)
-        buildPath(verts)
-        glowPaint.color = Theme.withAlpha(tintedLight(shape.paletteIndex), 0.10f)
-        canvas.drawPath(path, glowPaint)
-        canvas.restore()
-
-        canvas.save()
-        canvas.translate(shape.x, shape.y)
-        canvas.scale(1.06f, 1.06f)
-        canvas.translate(-shape.x, -shape.y)
-        buildPath(verts)
-        glowPaint.color = Theme.withAlpha(tintedLight(shape.paletteIndex), 0.16f)
-        canvas.drawPath(path, glowPaint)
-        canvas.restore()
+        drawBloom(canvas, verts, shape.x, shape.y, tint)
 
         buildPath(verts)
-        if (settings.grainyShapes) {
-            val shader = materialShader(shape.paletteIndex)
-            shaderMatrix.reset()
-            shaderMatrix.postScale(r, r * 1.04f)
-            shaderMatrix.postTranslate(shape.x, shape.y)
-            shader.setLocalMatrix(shaderMatrix)
-            fillPaint.shader = shader
-            canvas.drawPath(path, fillPaint)
-            fillPaint.shader = null
-            drawGrain(canvas, shape.spawnTimeMs.toFloat() % 997f, GRAIN_ALPHA)
-        } else {
-            // The original: a highlight in the upper left, no grain.
-            val shader = bodyShader(shape.paletteIndex)
-            shaderMatrix.reset()
-            shaderMatrix.postScale(r * 1.55f, r * 1.55f)
-            shaderMatrix.postTranslate(shape.x - r * 0.38f, shape.y - r * 0.42f)
-            shader.setLocalMatrix(shaderMatrix)
-            fillPaint.shader = shader
-            canvas.drawPath(path, fillPaint)
-            fillPaint.shader = null
-        }
+        val shader = bodyShader(shape.paletteIndex)
+        placeBody(shader, shape.x, shape.y, r)
+        fillPaint.shader = shader
+        canvas.drawPath(path, fillPaint)
+        fillPaint.shader = null
+        drawGrain(canvas, shape.spawnTimeMs.toFloat() % 997f, GRAIN_ALPHA)
 
         drawNeonEdge(canvas, tintedLight(shape.paletteIndex), r)
 
@@ -2298,24 +2305,14 @@ class GameView @JvmOverloads constructor(
         path.close()
 
         val tint = tintedLight(piece.paletteIndex)
-        if (settings.grainyShapes) {
-            // The halves keep the material, or a shape would change substance at
-            // the instant it came apart.
-            val shader = materialShader(piece.paletteIndex)
-            shaderMatrix.reset()
-            shaderMatrix.postScale(piece.radiusHint, piece.radiusHint * 1.04f)
-            shaderMatrix.postTranslate(piece.originX, piece.originY)
-            shader.setLocalMatrix(shaderMatrix)
-            fillPaint.shader = shader
-            fillPaint.alpha = (alpha * 242f).toInt().coerceIn(0, 255)
-            canvas.drawPath(path, fillPaint)
-            fillPaint.shader = null
-            fillPaint.alpha = 255
-            drawGrain(canvas, piece.originX, GRAIN_ALPHA * alpha)
-        } else {
-            fillPaint.color = Theme.withAlpha(tint, alpha * 0.95f)
-            canvas.drawPath(path, fillPaint)
-        }
+        val shader = bodyShader(piece.paletteIndex)
+        placeBody(shader, piece.originX, piece.originY, piece.radiusHint)
+        fillPaint.shader = shader
+        fillPaint.alpha = (alpha * 242f).toInt().coerceIn(0, 255)
+        canvas.drawPath(path, fillPaint)
+        fillPaint.shader = null
+        fillPaint.alpha = 255
+        drawGrain(canvas, piece.originX, GRAIN_ALPHA * alpha)
 
         // The halves keep the neon while they fall, fading with the rest of them.
         val strength = settings.neonGlow
@@ -3701,6 +3698,13 @@ class GameView @JvmOverloads constructor(
         /** Grain tile edge, in pixels, and how strongly it sits over the body. */
         const val GRAIN_TILE = 128
         const val GRAIN_ALPHA = 0.13f
+
+        /** Bloom passes behind a shape: how far each is scaled up, and its alpha. */
+        val BLOOM_PASSES = arrayOf(
+            floatArrayOf(1.30f, 0.055f),
+            floatArrayOf(1.14f, 0.100f),
+            floatArrayOf(1.06f, 0.160f)
+        )
 
         /** Shared pill metrics, in dp, so every capsule on a screen matches. */
         const val PILL_HEIGHT = 34f

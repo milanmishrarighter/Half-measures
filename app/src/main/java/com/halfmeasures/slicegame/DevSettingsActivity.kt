@@ -358,11 +358,24 @@ class DevSettingsActivity : AppCompatActivity() {
                 GameSettings.MIN_MUSIC_VOLUME, GameSettings.MAX_MUSIC_VOLUME, settings.musicVolume,
                 { "${(it * 100).roundToInt()}%" }, { settings.musicVolume = it }
             )
+            slider(
+                c.body, "Shape style",
+                "Classic is the old highlight. Lit glass is a vertical gradient. Soft focus is saturated in the middle opening out to a pale rim.",
+                0f, (GameSettings.STYLE_NAMES.size - 1).toFloat(), settings.shapeStyle.toFloat(),
+                { GameSettings.STYLE_NAMES[it.roundToInt().coerceIn(0, GameSettings.STYLE_NAMES.size - 1)] },
+                { settings.shapeStyle = it.roundToInt().coerceIn(0, GameSettings.STYLE_NAMES.size - 1) }
+            )
             toggle(
-                c.body, "Grainy shapes",
-                "Shapes lit from below through a vertical gradient, with film grain over them. Off puts back the plain highlight.",
-                settings.grainyShapes
-            ) { settings.grainyShapes = it }
+                c.body, "Film grain",
+                "A fine speckle over the shape bodies, whichever style is on.",
+                settings.shapeGrain
+            ) { settings.shapeGrain = it }
+            slider(
+                c.body, "Shape glow",
+                "How hard the bloom behind each shape burns. 1 is what it always was.",
+                GameSettings.MIN_SHAPE_GLOW, GameSettings.MAX_SHAPE_GLOW, settings.shapeGlow,
+                { if (it <= 0.01f) "Off" else "%.1fx".format(it) }, { settings.shapeGlow = it }
+            )
             slider(
                 c.body, "Neon glow",
                 "How hard the outline burns around each shape. 0 goes back to a plain edge.",
@@ -873,7 +886,9 @@ class DevSettingsActivity : AppCompatActivity() {
             appendLine("  Announcer: ${onOff(settings.voiceEnabled)}")
             appendLine("  Music: ${onOff(settings.musicEnabled)}")
             appendLine("  Music volume: ${(settings.musicVolume * 100).roundToInt()}%")
-            appendLine("  Grainy shapes: ${if (settings.grainyShapes) "on" else "off"}")
+            appendLine("  Shape style: ${GameSettings.STYLE_NAMES.getOrElse(settings.shapeStyle) { "?" }}")
+            appendLine("  Film grain: ${if (settings.shapeGrain) "on" else "off"}")
+            appendLine("  Shape glow: %.1fx".format(settings.shapeGlow))
             appendLine("  Neon glow: %.2fx".format(settings.neonGlow))
             appendLine()
             appendLine("SHAPES")
