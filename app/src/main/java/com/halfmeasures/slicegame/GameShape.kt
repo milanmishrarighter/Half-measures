@@ -389,12 +389,10 @@ class GameShape(
     var vy: Float,
     var rotation: Float,
     val angularVelocity: Float,
-    /** Index into [Theme.shapePalette]. */
+    /** Which of the run-colour slots this shape wears - see Theme.shapeLight. */
     val paletteIndex: Int,
     val spawnTimeMs: Long
 ) {
-    val lightColor: Int get() = Theme.shapePalette[paletteIndex][0]
-    val deepColor: Int get() = Theme.shapePalette[paletteIndex][1]
 
     /** How long the shape has been alive, in seconds - drives the spawn pop-in. */
     var age = 0f
@@ -496,7 +494,7 @@ class GameShape(
             return GameShape(
                 kind, x, y, radius, vx, vy,
                 random.nextFloat() * 6.28f, spin,
-                random.nextInt(Theme.shapePalette.size), nowMs
+                random.nextInt(Theme.shapeSlots), nowMs
             )
         }
     }

@@ -18,7 +18,7 @@ import kotlin.math.sin
 import kotlin.random.Random
 
 /** One-off noises that happen rarely enough not to need variety. */
-enum class Sfx { BUTTON, MISS, HEAL, LEVEL_UP, COUNTDOWN, GAME_OVER, BEST }
+enum class Sfx { BUTTON, MISS, HEAL, LEVEL_UP, COUNTDOWN, GAME_OVER, BEST, RANK_UP, RANK_DOWN }
 
 /**
  * The events that happen constantly. Each is a bank of ten separately written
@@ -385,6 +385,40 @@ class SoundEngine(context: Context) {
             tone(b, 330, 420, 1568f, 1568f, SQUARE, 0.40f, duty = 0.25f, crush = 3)
             tone(b, 340, 400, 2093f, 2093f, TRIANGLE, 0.18f, attackMs = 10)
             tone(b, 330, 380, 98f, 98f, SINE, 0.4f)
+        }
+
+        /**
+         * Promotion. A rising major arpeggio played twice, the second an octave up
+         * and answered by a held fifth over a bass note - bigger than the record
+         * fanfare and clearly a different event, because they can land together.
+         */
+        Sfx.RANK_UP -> buffer(1200) { b ->
+            val root = 392f
+            arp(b, floatArrayOf(root, root * MAJOR_THIRD, root * FIFTH), 80, 100, 0.34f, crush = 3)
+            arp2(b, 260, floatArrayOf(root * 2f, root * 2f * MAJOR_THIRD, root * 2f * FIFTH), 80, 110, 0.32f)
+            tone(b, 520, 520, root * 4f, root * 4f, SQUARE, 0.30f, attackMs = 6, duty = 0.25f, crush = 3)
+            tone(b, 520, 500, root * 3f, root * 3f, TRIANGLE, 0.22f, attackMs = 12)
+            tone(b, 500, 460, root / 4f, root / 4f, SINE, 0.46f, attackMs = 8)
+            // A last flick upward, so it ends on the way up rather than settling.
+            tone(b, 900, 240, root * 4f, root * 6f, TRIANGLE, 0.20f, attackMs = 6)
+        }
+
+        /**
+         * Demotion. The same shape upside down: a minor arpeggio walking down,
+         * detuning as it goes, over a bass note that sags a semitone.
+         */
+        Sfx.RANK_DOWN -> buffer(1000) { b ->
+            val root = 330f
+            val notes = floatArrayOf(root * 2f, root * FIFTH, root * MINOR_THIRD, root)
+            notes.forEachIndexed { i, hz ->
+                val last = i == notes.size - 1
+                tone(
+                    b, i * 150, if (last) 380 else 160, hz, if (last) hz * 0.94f else hz * 0.99f,
+                    SQUARE, 0.34f, attackMs = 4, duty = if (last) 0.125f else 0.25f, crush = 4
+                )
+            }
+            tone(b, 450, 420, root / 4f, root / 4f * 0.94f, SINE, 0.44f, attackMs = 10)
+            tone(b, 600, 300, 0f, 0f, NOISE, 0.05f, attackMs = 40, crush = 6)
         }
     }
 
@@ -1041,7 +1075,7 @@ class SoundEngine(context: Context) {
 
     private companion object {
         /** Bumped whenever the set is retuned, so the cache cannot serve stale waves. */
-        const val RENDER_VERSION = 3
+        const val RENDER_VERSION = 4
 
         const val BANK_SIZE = 10
         const val RATE = 22050

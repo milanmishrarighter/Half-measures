@@ -39,16 +39,6 @@ object Theme {
     /** The cool end of the rank ladder; the warm end is [gold]. */
     val rankFar = Color.rgb(96, 165, 250)
 
-    /** Shape fill palette - each entry is a (light, deep) pair used for the body gradient. */
-    val shapePalette = arrayOf(
-        intArrayOf(Color.rgb(255, 122, 158), Color.rgb(206, 43, 92)),
-        intArrayOf(Color.rgb(255, 216, 122), Color.rgb(232, 145, 26)),
-        intArrayOf(Color.rgb(120, 240, 200), Color.rgb(24, 168, 142)),
-        intArrayOf(Color.rgb(120, 196, 255), Color.rgb(30, 118, 208)),
-        intArrayOf(Color.rgb(188, 150, 255), Color.rgb(124, 66, 214)),
-        intArrayOf(Color.rgb(255, 168, 128), Color.rgb(224, 96, 54))
-    )
-
     /**
      * The score's colour, as a spiral rather than a line.
      *
@@ -65,7 +55,11 @@ object Theme {
      */
     private const val ENERGY_START_HUE = 220f
     private const val ENERGY_INTRO_END = 3_000f
-    private const val ENERGY_LAP = 5_000f
+    /**
+     * How long one trip around the hue wheel takes. Five laps plus the intro puts
+     * full neon at fifty thousand points.
+     */
+    private const val ENERGY_LAP = 9_400f
 
     /** Brightness at the end of each lap; the last one is neon and holds there. */
     private val ENERGY_VALUES = floatArrayOf(0.60f, 0.72f, 0.84f, 0.93f, 0.98f, 1f)
@@ -99,8 +93,38 @@ object Theme {
         return ((v - ENERGY_INTRO_VALUE) / (1f - ENERGY_INTRO_VALUE)).coerceIn(0f, 1f)
     }
 
-    /** The run's colour at [score] - blade, debris, embers, shape tint. */
+    /** The run's colour at [score] - debris, embers, shape tint. */
     fun scoreEnergy(score: Int): Int = Color.HSVToColor(energyHsv(score))
+
+    /**
+     * A shape's two body colours at [score].
+     *
+     * The shapes used to carry six fixed hues pulled part of the way toward the
+     * run's colour, which at a blue score still left a shape sitting on orange.
+     * They are built from the run's hue outright now, each palette slot a few
+     * degrees either side of it - enough that a screenful of shapes is not one
+     * flat colour, not so much that any of them leaves the family. They brighten
+     * with the run like everything else.
+     */
+    private val SHAPE_HUE_OFFSETS = floatArrayOf(-26f, -15f, -5f, 6f, 17f, 29f)
+
+    val shapeSlots: Int get() = SHAPE_HUE_OFFSETS.size
+
+    fun shapeLight(score: Int, slot: Int): Int {
+        val hsv = energyHsv(score)
+        val level = energyLevel(score)
+        val hue = (hsv[0] + SHAPE_HUE_OFFSETS[slot % SHAPE_HUE_OFFSETS.size] + 360f) % 360f
+        // Saturation climbs with value: neon is bright *and* saturated. Letting it
+        // fall as the value rose turned the top of the range pastel.
+        return Color.HSVToColor(floatArrayOf(hue, 0.55f + 0.20f * level, 0.74f + 0.26f * level))
+    }
+
+    fun shapeDeep(score: Int, slot: Int): Int {
+        val hsv = energyHsv(score)
+        val level = energyLevel(score)
+        val hue = (hsv[0] + SHAPE_HUE_OFFSETS[slot % SHAPE_HUE_OFFSETS.size] + 360f) % 360f
+        return Color.HSVToColor(floatArrayOf(hue, 0.86f + 0.10f * level, 0.44f + 0.30f * level))
+    }
 
     /** The same colour held back, for anything that sits behind the play. */
     fun scoreEnergyDim(score: Int): Int {

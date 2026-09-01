@@ -376,7 +376,7 @@ class GameView @JvmOverloads constructor(
     fun startLoop() {
         // Idempotent, so this is a safe place to make sure the effects are built.
         sounds.prepare()
-        if (state == State.PLAYING) sounds.resumeMusic()
+        if (state == State.PLAYING || state == State.READY) sounds.resumeMusic()
         if (loopRunning) return
         loopRunning = true
         lastFrameTimeNanos = 0L
@@ -822,8 +822,8 @@ class GameView @JvmOverloads constructor(
         val scoreY = gameOverCardVisual.top + 100f * density * CARD_SCALE
         val x = scoreX + (random.nextFloat() - 0.5f) * gameOverCardVisual.width() * 0.85f
         val y = scoreY + (random.nextFloat() - 0.5f) * 130f * density
-        val palette = Theme.shapePalette[random.nextInt(Theme.shapePalette.size)]
-        val color = if (random.nextFloat() < 0.4f) Theme.gold else palette[0]
+        val color = if (random.nextFloat() < 0.4f) Theme.gold
+            else Theme.shapeLight(score, random.nextInt(Theme.shapeSlots))
 
         // Chunky pixel debris, matching the background's blocky vocabulary.
         pixels.burst(x, y, 2.4f)
@@ -1325,7 +1325,10 @@ class GameView @JvmOverloads constructor(
         pixels.reset()
         bodyShaders.clear()
         continuesUsed = 0
-        sounds.stopMusic()
+        // The menu gets a track too, at its written tempo. Only a run in progress
+        // pushes it faster.
+        sounds.setMusicSpeed(1f)
+        sounds.startMusic()
         state = State.READY
         lastFrameTimeNanos = 0L
     }
@@ -2048,19 +2051,12 @@ class GameView @JvmOverloads constructor(
      * shapes are the brightest thing on a black field, so they climb the same
      * spiral rather than sitting at one brightness all run.
      */
-    private fun tintedLight(paletteIndex: Int): Int = Theme.lighten(
-        Theme.lerpColor(Theme.shapePalette[paletteIndex][0], Theme.scoreEnergy(score), STAGE_TINT),
-        SHAPE_LIFT * Theme.energyLevel(score)
-    )
+    private fun tintedLight(paletteIndex: Int): Int = Theme.shapeLight(score, paletteIndex)
 
     private fun bodyShader(paletteIndex: Int): RadialGradient =
         bodyShaders.getOrPut(paletteIndex) {
-            val pair = Theme.shapePalette[paletteIndex]
             val light = tintedLight(paletteIndex)
-            val deep = Theme.lighten(
-                Theme.lerpColor(pair[1], Theme.scoreEnergy(score), STAGE_TINT * 0.7f),
-                SHAPE_LIFT * 0.6f * Theme.energyLevel(score)
-            )
+            val deep = Theme.shapeDeep(score, paletteIndex)
             RadialGradient(
                 0f, 0f, 1f,
                 intArrayOf(Theme.lighten(light, 0.22f), light, deep),
@@ -2278,7 +2274,9 @@ class GameView @JvmOverloads constructor(
             val life = (1f - age).coerceIn(0f, 1f)
 
             // A wide soft halo under a bright core reads as a blade streak.
-            trailPaint.color = Theme.withAlpha(accentColor, life * 0.30f)
+            // The blade keeps its own teal. Colouring it with the run turned the
+            // one thing the player is steering into part of the scenery.
+            trailPaint.color = Theme.withAlpha(Theme.accent, life * 0.30f)
             trailPaint.strokeWidth = (34f * life + 6f) * thickness
             canvas.drawLine(p0.x, p0.y, p1.x, p1.y, trailPaint)
 
@@ -2877,8 +2875,8 @@ class GameView @JvmOverloads constructor(
                 1 -> sounds.play(Sfx.HEAL, gain = 0.7f, rate = 0.92f)
                 2 -> {
                     // The rank line lands with its own flourish, up or down.
-                    if (rankMoved > 0) sounds.play(Sfx.LEVEL_UP, gain = 0.95f)
-                    else if (rankMoved < 0) sounds.play(SfxBank.BAD, gain = 0.7f)
+                    if (rankMoved > 0) sounds.play(Sfx.RANK_UP, gain = 1f)
+                    else if (rankMoved < 0) sounds.play(Sfx.RANK_DOWN, gain = 0.9f)
                     else sounds.play(Sfx.BUTTON, gain = 0.45f, rate = 1.15f)
                 }
                 // One tick per stat row, each a step higher than the last.
@@ -3672,9 +3670,6 @@ class GameView @JvmOverloads constructor(
 
         /** Seconds the last-cut readout stays under the score. */
         /** How far a shape's colour is pulled toward the level's hue. */
-        const val STAGE_TINT = 0.40f
-        /** How far a shape's colour is lifted by the time the run hits neon. */
-        const val SHAPE_LIFT = 0.30f
 
         const val LAST_CUT_HOLD = 1.1f
         /** Longest the ending waits for airborne shapes to clear. */
