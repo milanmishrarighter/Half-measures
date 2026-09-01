@@ -10,16 +10,16 @@ package com.halfmeasures.slicegame
  * because the manifest cannot read a Kotlin constant, and the SDK refuses to
  * start if the two disagree.
  *
- * Going live is [USE_TEST_ADS] to false, with both live values filled in. Until
- * then the app serves Google's published demo inventory, which works without an
- * account and always fills. Test ads are not politeness: clicking a real ad unit
- * from your own device is what gets an AdMob account disabled, and the demo units
- * are the sanctioned way to exercise the reward flow without doing that.
+ * This build is live. Set [USE_TEST_ADS] back to true to return to Google's demo
+ * inventory, which works without an account and always fills. That is not
+ * politeness: clicking a real ad unit from your own device is what gets an AdMob
+ * account disabled, so any hands-on testing of the reward flow belongs on the
+ * demo units or on a registered test device.
  */
 object AdConfig {
 
     /** Serve Google's demo ads instead of real inventory. */
-    const val USE_TEST_ADS = true
+    const val USE_TEST_ADS = false
 
     // Google's published test identifiers. Not secrets, and not tied to anyone.
     const val TEST_APPLICATION_ID = "ca-app-pub-3940256099942544~3347511713"
@@ -28,10 +28,10 @@ object AdConfig {
     /**
      * The real AdMob application ID - the one with a tilde in it.
      *
-     * Still blank. Whatever goes here must also be pasted into the
-     * `com.google.android.gms.ads.APPLICATION_ID` meta-data in AndroidManifest.xml.
+     * Stated again in the `com.google.android.gms.ads.APPLICATION_ID` meta-data in
+     * AndroidManifest.xml. The two must stay identical.
      */
-    const val LIVE_APPLICATION_ID = ""
+    const val LIVE_APPLICATION_ID = "ca-app-pub-6520630912116541~7739652502"
 
     /** The real rewarded ad unit ID, serving both the continue and the retry gate. */
     const val LIVE_REWARDED_UNIT_ID = "ca-app-pub-6520630912116541/8048925060"

@@ -11,13 +11,13 @@
         android:supportsRtl="true">
 
         <!--
-            Google's published test application ID. The SDK refuses to start
-            without this value, and it cannot read AdConfig, so the real ID has to
-            be pasted here as well as there when the AdMob account exists.
+            The live application ID. The SDK refuses to start without this value,
+            and it cannot read AdConfig, so the same string is stated in both
+            places and the two have to be kept identical.
         -->
         <meta-data
             android:name="com.google.android.gms.ads.APPLICATION_ID"
-            android:value="ca-app-pub-3940256099942544~3347511713" />
+            android:value="ca-app-pub-6520630912116541~7739652502" />
 
         <activity
             android:name=".MainActivity"
