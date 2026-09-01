@@ -581,7 +581,7 @@ class GameView @JvmOverloads constructor(
 
         val rows = if (continueOffered) 3 else 2
         // Wide enough to seat the "could not load an ad" line when there is one.
-        val cardGap = 30f * density
+        val cardGap = 22f * density
         val blockHeight = visualHeight + cardGap + rowHeight * rows + gap * (rows - 1)
         val blockTop = ((h - blockHeight) / 2f).coerceAtLeast(12f * density)
 
@@ -668,6 +668,8 @@ class GameView @JvmOverloads constructor(
             healthFraction = if (maxHealth > 0) displayedHealth / maxHealth else 1f,
             stage = stage,
             warmth = streakWarmth(),
+            runColor = Theme.scoreEnergy(score),
+            runGlow = Theme.scoreEnergyDim(score),
             // The field thickens as the run goes: five percent more embers every
             // thousand points, capped so a long run does not end up a snowstorm.
             emberDensity = settings.emberDensity *
@@ -1899,7 +1901,9 @@ class GameView @JvmOverloads constructor(
                 x = shape.x, y = shape.y,
                 dirX = dirX, dirY = dirY,
                 spread = r * 0.9f,
-                color = tintedLight(shape.paletteIndex),
+                // Half the shape's own colour, half the run's, so the spray reads as
+                // this cut of this shape at this point in the run.
+                color = Theme.lerpColor(tintedLight(shape.paletteIndex), accentColor, 0.5f),
                 count = (bladeCount * amount).roundToInt().coerceIn(3, 160),
                 speed = bladeSpeed,
                 sizeScale = if (grade == Grade.PERFECT) 1.5f else 1.15f
@@ -2040,15 +2044,24 @@ class GameView @JvmOverloads constructor(
         path.close()
     }
 
-    /** A shape's own colour, pulled a little toward the current level's hue. */
-    private fun tintedLight(paletteIndex: Int): Int =
-        Theme.lerpColor(Theme.shapePalette[paletteIndex][0], Theme.scoreShapeTint(score), STAGE_TINT)
+    /**
+     * A shape's own colour, pulled toward the run's colour and lifted with it. The
+     * shapes are the brightest thing on a black field, so they climb the same
+     * spiral rather than sitting at one brightness all run.
+     */
+    private fun tintedLight(paletteIndex: Int): Int = Theme.lighten(
+        Theme.lerpColor(Theme.shapePalette[paletteIndex][0], Theme.scoreEnergy(score), STAGE_TINT),
+        SHAPE_LIFT * Theme.energyLevel(score)
+    )
 
     private fun bodyShader(paletteIndex: Int): RadialGradient =
         bodyShaders.getOrPut(paletteIndex) {
             val pair = Theme.shapePalette[paletteIndex]
             val light = tintedLight(paletteIndex)
-            val deep = Theme.lerpColor(pair[1], Theme.scoreShapeTint(score), STAGE_TINT * 0.7f)
+            val deep = Theme.lighten(
+                Theme.lerpColor(pair[1], Theme.scoreEnergy(score), STAGE_TINT * 0.7f),
+                SHAPE_LIFT * 0.6f * Theme.energyLevel(score)
+            )
             RadialGradient(
                 0f, 0f, 1f,
                 intArrayOf(Theme.lighten(light, 0.22f), light, deep),
@@ -2266,7 +2279,7 @@ class GameView @JvmOverloads constructor(
             val life = (1f - age).coerceIn(0f, 1f)
 
             // A wide soft halo under a bright core reads as a blade streak.
-            trailPaint.color = Theme.withAlpha(Theme.accent, life * 0.30f)
+            trailPaint.color = Theme.withAlpha(accentColor, life * 0.30f)
             trailPaint.strokeWidth = (34f * life + 6f) * thickness
             canvas.drawLine(p0.x, p0.y, p1.x, p1.y, trailPaint)
 
@@ -3661,6 +3674,8 @@ class GameView @JvmOverloads constructor(
         /** Seconds the last-cut readout stays under the score. */
         /** How far a shape's colour is pulled toward the level's hue. */
         const val STAGE_TINT = 0.40f
+        /** How far a shape's colour is lifted by the time the run hits neon. */
+        const val SHAPE_LIFT = 0.30f
 
         const val LAST_CUT_HOLD = 1.1f
         /** Longest the ending waits for airborne shapes to clear. */

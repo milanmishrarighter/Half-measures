@@ -121,6 +121,9 @@ class PixelBackground(private val random: Random) {
         healthFraction: Float,
         stage: Int,
         warmth: Float,
+        /** The run's colour at the current score - see Theme.scoreEnergy. */
+        runColor: Int,
+        runGlow: Int,
         emberDensity: Float,
         emberBrightness: Float,
         emberSize: Float,
@@ -183,12 +186,13 @@ class PixelBackground(private val random: Random) {
     private fun easePaletteToward(stage: Int, healthFraction: Float, warmth: Float) {
         // Cycles rather than clamps: stages now run to a hundred and the field
         // should keep moving through hues rather than parking on the last one.
-        val palette = STAGE_PALETTES[((stage % STAGE_PALETTES.size) + STAGE_PALETTES.size) % STAGE_PALETTES.size]
+        // The field takes the run's own colour rather than a per-stage palette, so
+        // the embers climb the same spiral as the blade and the debris.
         // Below a third health the field bleeds red; at death's door it is fully alarmed.
         val alarm = (1f - healthFraction / 0.35f).coerceIn(0f, 1f)
 
-        var targetGlow = Theme.lerpColor(palette[1], DANGER_PALETTE[0], alarm)
-        var targetEmber = Theme.lerpColor(palette[2], DANGER_PALETTE[1], alarm)
+        var targetGlow = Theme.lerpColor(runGlow, DANGER_PALETTE[0], alarm)
+        var targetEmber = Theme.lerpColor(runColor, DANGER_PALETTE[1], alarm)
 
         // A hot streak warms the field toward gold, a cold one cools it toward grey.
         if (warmth > 0f) {
