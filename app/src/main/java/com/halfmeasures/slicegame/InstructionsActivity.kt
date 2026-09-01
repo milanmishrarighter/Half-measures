@@ -22,6 +22,7 @@ class InstructionsActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Sounds.arm(this, GameSettings.load(this))
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -81,7 +82,7 @@ class InstructionsActivity : AppCompatActivity() {
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply { topMargin = dp(20f) }
-            setOnClickListener { finish() }
+            setOnClickListener { Sounds.click(this@InstructionsActivity); finish() }
         })
 
         setContentView(ScrollView(this).apply {

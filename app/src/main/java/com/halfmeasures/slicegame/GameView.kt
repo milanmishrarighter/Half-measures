@@ -79,7 +79,7 @@ class GameView @JvmOverloads constructor(
     private val random = Random(System.currentTimeMillis())
     private val effects = EffectSystem(random)
     private val haptics = Haptics(context)
-    private val sounds = SoundEngine(context)
+    private val sounds = Sounds.of(context)
 
     private var gravity = GameShape.BASE_GRAVITY * settings.gravityScale
 
@@ -254,6 +254,7 @@ class GameView @JvmOverloads constructor(
     private val pauseButton = RectF()
     private val pauseCard = RectF()
     private val pauseResume = RectF()
+    private val pauseSettings = RectF()
     private val pauseMenu = RectF()
     /** The two ad overlays share a card shape and a two-button footer. */
     private val adCard = RectF()
@@ -279,7 +280,11 @@ class GameView @JvmOverloads constructor(
     /** The states that are a card with two buttons and nothing else running. */
     private fun isOverlayState(): Boolean =
         state == State.PAUSED || state == State.AD_GATE
-    private val tertiaryButton: RectF get() = if (state == State.GAME_OVER) overTertiary else readyTertiary
+    private val tertiaryButton: RectF get() = when (state) {
+        State.GAME_OVER -> overTertiary
+        State.PAUSED -> pauseSettings
+        else -> readyTertiary
+    }
     private var pressedButton = 0 // 0 none, 1 primary, 2 secondary, 3 tertiary, 4 quaternary
 
     // ---- Paints, all reused ----
@@ -634,17 +639,19 @@ class GameView @JvmOverloads constructor(
 
         val cx = w / 2f
         val cardWidth = min(w * 0.78f, 330f * density)
-        val cardHeight = 118f * density + buttonHeight * 2 + buttonGap + 20f * density
+        val cardHeight = 118f * density + buttonHeight * 3 + buttonGap * 2 + 20f * density
         val cardTop = (h - cardHeight) / 2f
         pauseCard.set(cx - cardWidth / 2f, cardTop, cx + cardWidth / 2f, cardTop + cardHeight)
 
         val innerWidth = min(buttonWidth, cardWidth - 36f * density)
         val firstTop = cardTop + 118f * density
         pauseResume.set(cx - innerWidth / 2f, firstTop, cx + innerWidth / 2f, firstTop + buttonHeight)
-        pauseMenu.set(
-            cx - innerWidth / 2f, firstTop + buttonHeight + buttonGap,
-            cx + innerWidth / 2f, firstTop + buttonHeight * 2 + buttonGap
-        )
+        // Settings are reachable mid-run now, not only from the title screen - the
+        // moment you want the music off is the moment it is playing.
+        val settingsTop = firstTop + buttonHeight + buttonGap
+        pauseSettings.set(cx - innerWidth / 2f, settingsTop, cx + innerWidth / 2f, settingsTop + buttonHeight)
+        val menuTop = settingsTop + buttonHeight + buttonGap
+        pauseMenu.set(cx - innerWidth / 2f, menuTop, cx + innerWidth / 2f, menuTop + buttonHeight)
     }
 
     /**
@@ -1264,9 +1271,12 @@ class GameView @JvmOverloads constructor(
      * Called when the activity loses focus. Leaving the app mid-run would otherwise
      * hand the player a dead run on their return, so it pauses itself.
      */
-    /** Frees the sound pool. Called from the activity's onDestroy. */
+    /**
+     * Drops the music stream on the way out. The sample pool is the process's, not
+     * this view's - the settings screen clicks through it too - so it stays.
+     */
     fun releaseSounds() {
-        sounds.release()
+        sounds.releaseMusic()
     }
 
     fun pauseIfPlaying() {
@@ -1413,6 +1423,8 @@ class GameView @JvmOverloads constructor(
                     pressedButton = when {
                         primaryButton.contains(event.x, event.y) -> 1
                         secondaryButton.contains(event.x, event.y) -> 2
+                        state == State.PAUSED &&
+                            pauseSettings.contains(event.x, event.y) -> 3
                         else -> 0
                     }
                     return true
@@ -1495,13 +1507,18 @@ class GameView @JvmOverloads constructor(
                     pressedButton = 0
                     val onPrimary = released == 1 && primaryButton.contains(event.x, event.y)
                     val onSecondary = released == 2 && secondaryButton.contains(event.x, event.y)
-                    if (onPrimary || onSecondary) {
+                    val onTertiary = released == 3 && state == State.PAUSED &&
+                        pauseSettings.contains(event.x, event.y)
+                    if (onPrimary || onSecondary || onTertiary) {
                         if (settings.vibrationEnabled) haptics.tick(settings.vibrationStrength)
                         sounds.play(Sfx.BUTTON)
                     }
                     when (state) {
                         State.PAUSED -> {
                             if (onPrimary) resumeGame()
+                            // Stays paused underneath, so closing settings drops the
+                            // player back on the card they opened it from.
+                            if (onTertiary) onOpenSettings?.invoke()
                             if (onSecondary) returnToMenu()
                         }
                         State.AD_GATE -> {
@@ -1754,7 +1771,9 @@ class GameView @JvmOverloads constructor(
                 sounds.play(SfxBank.PERFECT, spread = 3)
                 // The announcer lands just behind the flourish rather than on top
                 // of it, so the two are heard as a call and a response.
-                postDelayed({ sounds.play(SfxBank.VOICE, gain = 0.85f, spread = 3) }, 110L)
+                // spread 1 is no pitch shift at all: these are recordings of a
+                // person, and detuning one is instantly audible as a wobble.
+                postDelayed({ sounds.play(SfxBank.VOICE, gain = 1f, spread = 1) }, 110L)
                 // Each perfect in a row answers a step higher on top of that, so a
                 // streak audibly climbs.
                 if (perfectStreak > 1) {
@@ -2559,6 +2578,7 @@ class GameView @JvmOverloads constructor(
         canvas.drawText("SCORE", cx, pauseCard.top + 100f * density, uiPaint)
 
         drawButton(canvas, pauseResume, "RESUME", primary = true, pressed = pressedButton == 1)
+        drawButton(canvas, pauseSettings, "SETTINGS", primary = false, pressed = pressedButton == 3)
         drawButton(canvas, pauseMenu, "MAIN MENU", primary = false, pressed = pressedButton == 2)
     }
 

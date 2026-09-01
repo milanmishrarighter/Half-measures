@@ -34,13 +34,12 @@ enum class SfxBank { SWIPE, SLICE, GOOD, PERFECT, BAD, DANGER, VOICE }
 /**
  * All of the game's audio, synthesised on the device rather than shipped as files.
  *
- * Nothing here is a recording. Effects are square, triangle, saw, sine and
- * LFSR-noise voices with exponential pitch sweeps and hard envelopes, sample-and-
- * hold crushed so they sound like a sound chip. The announcer is a small formant
- * synthesiser - a glottal pulse train exciting three damped resonators - which is
- * why it sounds like an arcade cabinet rather than a person. Music is ten
- * generated tracks, streamed through an AudioTrack the engine feeds itself so the
- * loop is sample-exact.
+ * Effects are square, triangle, saw, sine and LFSR-noise voices with exponential
+ * pitch sweeps and hard envelopes, sample-and-hold crushed so they sound like a
+ * sound chip. Music is ten generated tracks, streamed through an AudioTrack the
+ * engine feeds itself so the loop is sample-exact. The one exception is the
+ * announcer, which is recorded takes loaded from the assets - a synthesised shout
+ * was only ever going to sound like an arcade cabinet, and these are voices.
  */
 class SoundEngine(context: Context) {
 
@@ -102,15 +101,25 @@ class SoundEngine(context: Context) {
                 }
 
                 for (bank in SfxBank.values()) {
-                    val size = if (bank == SfxBank.VOICE) VOICE_LINES.size else BANK_SIZE
-                    val ids = IntArray(size)
-                    for (i in 0 until size) {
+                    if (bank == SfxBank.VOICE) continue
+                    val ids = IntArray(BANK_SIZE)
+                    for (i in 0 until BANK_SIZE) {
                         val file = File(dir, "${bank.name.lowercase()}_$i.wav")
                         if (!file.exists()) writeWav(file, renderVariant(bank, i))
                         ids[i] = pool.load(file.absolutePath, 1)
                     }
                     banks[bank] = ids
                 }
+
+                // The announcer is recorded, not synthesised: real takes, straight
+                // out of the assets, so nothing is cached or rendered for them.
+                val voice = IntArray(VOICE_FILES.size)
+                for (i in VOICE_FILES.indices) {
+                    appContext.assets.openFd("voice/${VOICE_FILES[i]}").use { fd ->
+                        voice[i] = pool.load(fd, 1)
+                    }
+                }
+                banks[SfxBank.VOICE] = voice
 
                 loaded = true
                 if (musicWanted) startMusic()
@@ -223,13 +232,16 @@ class SoundEngine(context: Context) {
         music?.setSpeed(clamped)
     }
 
-    fun release() {
+    /**
+     * Drops the music stream. The sample pool stays: it belongs to the process
+     * rather than to any one screen, and the settings and instructions screens
+     * click through the same engine the game plays through.
+     */
+    fun releaseMusic() {
         stopMusic()
-        pool.release()
-        singles.clear()
-        banks.clear()
-        loaded = false
     }
+
+
 
     /**
      * A looping stream the engine feeds itself, one chunk at a time, wrapping at
@@ -429,7 +441,8 @@ class SoundEngine(context: Context) {
         SfxBank.PERFECT -> renderPerfect(index)
         SfxBank.BAD -> renderBad(index)
         SfxBank.DANGER -> renderDanger(index)
-        SfxBank.VOICE -> renderVoice(index)
+        // Recorded, not rendered - loaded straight from the assets in prepare.
+        SfxBank.VOICE -> ShortArray(0)
     }
 
     // -----------------------------------------------------------------
@@ -763,105 +776,6 @@ class SoundEngine(context: Context) {
     }
 
     // -----------------------------------------------------------------
-    // The announcer
-    // -----------------------------------------------------------------
-
-    /**
-     * A shouted line, built rather than recorded.
-     *
-     * Vowels are three damped sinusoids at the formant frequencies of the vowel,
-     * re-struck on every glottal pulse - a crude FOF synthesiser, which is enough
-     * for a vowel to be recognisable. Fricatives are noise ring-modulated toward
-     * their centre frequency, and plosives are a beat of silence followed by a
-     * burst. The pitch falls across the phrase, which is what makes it read as a
-     * shout rather than a word.
-     *
-     * It will sound like an arcade cabinet, not like a person. That is the point.
-     */
-    private fun renderVoice(index: Int): ShortArray {
-        val line = VOICE_LINES[index.coerceIn(0, VOICE_LINES.size - 1)]
-        val total = line.sumOf { it.ms } + 120
-        val buf = FloatArray(samplesFor(total))
-
-        var at = 0
-        val voiced = line.count { it.kind == VOWEL }
-        var vowelSeen = 0
-
-        for (phone in line) {
-            when (phone.kind) {
-                VOWEL -> {
-                    // Falling across the phrase, and a touch of sag inside each
-                    // vowel: both are what a raised voice does.
-                    val spot = if (voiced <= 1) 0f else vowelSeen.toFloat() / (voiced - 1)
-                    val f0 = VOICE_PITCH * (1f - 0.22f * spot)
-                    formant(buf, at, phone.ms, f0, f0 * 0.94f, phone.f1, phone.f2, phone.f3, phone.gain)
-                    vowelSeen++
-                }
-                FRIC -> tone(buf, at, phone.ms, phone.f1, phone.f1, NOISE, phone.gain * 0.5f, attackMs = 6, crush = 2)
-                else -> {
-                    // The silence before a plosive is what makes it a plosive.
-                    tone(buf, at + phone.ms / 2, phone.ms / 2, phone.f1, phone.f1 * 0.6f, NOISE, phone.gain * 0.7f, attackMs = 1)
-                }
-            }
-            at += phone.ms
-        }
-        return finish(buf, peak = 27000f)
-    }
-
-    private fun formant(
-        buf: FloatArray,
-        startMs: Int,
-        durationMs: Int,
-        fromF0: Float,
-        toF0: Float,
-        f1: Float,
-        f2: Float,
-        f3: Float,
-        gain: Float
-    ) {
-        val start = samplesFor(startMs)
-        val length = samplesFor(durationMs)
-        if (start >= buf.size || length <= 0) return
-
-        val attack = samplesFor(8).coerceAtLeast(1)
-        var sincePulse = 1e9f
-        var phase = 0f
-
-        for (i in 0 until length) {
-            val index = start + i
-            if (index >= buf.size) break
-
-            val progress = i.toFloat() / length
-            val f0 = fromF0 * (toF0 / fromF0).pow(progress)
-
-            // Advance the glottal cycle and re-strike the resonators on each pulse.
-            phase += f0 / RATE
-            if (phase >= 1f) {
-                phase -= 1f
-                sincePulse = 0f
-            }
-
-            val t = sincePulse / RATE
-            // Higher formants decay faster, which is what gives a vowel its colour
-            // rather than sounding like three flutes.
-            val v = (sin(2.0 * PI * f1 * t).toFloat() * exp(-t * 380f) * 1.0f +
-                sin(2.0 * PI * f2 * t).toFloat() * exp(-t * 620f) * 0.55f +
-                sin(2.0 * PI * f3 * t).toFloat() * exp(-t * 950f) * 0.28f)
-
-            val envelope = when {
-                i < attack -> i.toFloat() / attack
-                progress > 0.82f -> ((1f - progress) / 0.18f)
-                else -> 1f
-            }
-
-            // A little saturation: a shout is not a clean tone.
-            val driven = (v * 1.5f).coerceIn(-1f, 1f)
-            buf[index] += driven * envelope * gain
-            sincePulse += 1f
-        }
-    }
-
-    // -----------------------------------------------------------------
     // Music generation
     // -----------------------------------------------------------------
 
@@ -1061,7 +975,6 @@ class SoundEngine(context: Context) {
     }
 
     /** One sound of a spoken line. */
-    private class Phone(val kind: Int, val ms: Int, val f1: Float, val f2: Float = 0f, val f3: Float = 0f, val gain: Float = 0.5f)
 
     private class TrackSpec(
         val root: Float,
@@ -1096,50 +1009,22 @@ class SoundEngine(context: Context) {
         const val MAJOR_THIRD = 1.2599f
         const val FIFTH = 1.4983f
 
-        const val VOWEL = 0
-        const val FRIC = 1
-        const val PLOSIVE = 2
-
-        /** A shout sits low and falls. */
-        const val VOICE_PITCH = 138f
-
         val PITCH_STEPS = floatArrayOf(0.84f, 0.89f, 0.94f, 1.0f, 1.06f, 1.12f, 1.19f)
 
-        // Formant frequencies for the vowels the announcer needs.
-        val ER = floatArrayOf(490f, 1350f, 1690f)
-        val EH = floatArrayOf(550f, 1770f, 2490f)
-        val AH = floatArrayOf(730f, 1090f, 2440f)
-        val IH = floatArrayOf(400f, 1900f, 2570f)
-        val EE = floatArrayOf(280f, 2250f, 2990f)
-        val UH = floatArrayOf(640f, 1190f, 2390f)
-
-        private fun vowel(f: FloatArray, ms: Int, gain: Float = 0.5f) =
-            Phone(VOWEL, ms, f[0], f[1], f[2], gain)
-
-        private fun plosive(ms: Int, hz: Float, gain: Float = 0.5f) = Phone(PLOSIVE, ms, hz, gain = gain)
-        private fun fric(ms: Int, hz: Float, gain: Float = 0.4f) = Phone(FRIC, ms, hz, gain = gain)
-
-        /** PER-FECT, PER-FECT CUT, EX-CELL-ENT, NICE CUT. */
-        val VOICE_LINES: Array<Array<Phone>> = arrayOf(
-            arrayOf(
-                plosive(45, 1400f), vowel(ER, 150), fric(60, 2600f),
-                vowel(EH, 120), plosive(45, 2200f), plosive(55, 3000f)
-            ),
-            arrayOf(
-                plosive(45, 1400f), vowel(ER, 140), fric(55, 2600f),
-                vowel(EH, 110), plosive(40, 2200f), plosive(40, 3000f),
-                Phone(PLOSIVE, 90, 0f, gain = 0f),
-                plosive(45, 2400f), vowel(AH, 150), plosive(55, 3000f)
-            ),
-            arrayOf(
-                vowel(EH, 120), plosive(40, 2400f), fric(70, 3200f),
-                vowel(EH, 130), vowel(UH, 90, 0.4f), vowel(EH, 110),
-                plosive(50, 3000f)
-            ),
-            arrayOf(
-                vowel(IH, 60, 0.35f), vowel(AH, 130), vowel(EE, 110),
-                fric(80, 3400f), plosive(45, 2400f), vowel(AH, 140), plosive(55, 3000f)
-            )
+        /**
+         * The announcer, as recorded takes in the assets. The bank picks one at
+         * random and never the one it just used, so a run of perfect cuts is a run
+         * of different lines.
+         */
+        val VOICE_FILES = arrayOf(
+            "that_is_perfect.mp3",
+            "thats_perfect.mp3",
+            "splitacular.mp3",
+            "dead_center.mp3",
+            "wow.mp3",
+            "holy_moly.mp3",
+            "my_goodness.mp3",
+            "perfection.mp3"
         )
 
         /** Eighth-note bass figures. Zero is a rest. */
@@ -1175,5 +1060,40 @@ class SoundEngine(context: Context) {
             TrackSpec(41.20f, false, intArrayOf(0, 4, 7, 4, 0, 9, 7, 5), 3, 0, true),
             TrackSpec(69.30f, true, intArrayOf(0, 0, -2, -4, -5, -4, -2, 0), 1, 2, true)
         )
+    }
+}
+
+/**
+ * The one engine, shared by every screen.
+ *
+ * A settings screen that built its own would load a second copy of the whole
+ * sample set to play one click, and would not know the volume the game is running
+ * at. This hands all of them the same one.
+ */
+object Sounds {
+
+    @Volatile private var instance: SoundEngine? = null
+
+    fun of(context: Context): SoundEngine =
+        instance ?: synchronized(this) {
+            instance ?: SoundEngine(context).also { instance = it }
+        }
+
+    /**
+     * Readies the engine and matches it to the player's preferences. Called on the
+     * way into any screen with buttons, since loading is asynchronous and a first
+     * tap should not be the thing that starts it.
+     */
+    fun arm(context: Context, settings: GameSettings) {
+        of(context).apply {
+            enabled = settings.soundEnabled
+            volume = settings.soundVolume
+            prepare()
+        }
+    }
+
+    /** The click every button in the app makes. */
+    fun click(context: Context) {
+        of(context).play(Sfx.BUTTON)
     }
 }

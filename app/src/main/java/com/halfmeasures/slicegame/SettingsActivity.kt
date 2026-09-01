@@ -45,6 +45,9 @@ class SettingsActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         settings = GameSettings.load(this)
+        // Armed here rather than on the first tap: loading is asynchronous, and a
+        // button that is silent the first time reads as a button that is broken.
+        Sounds.arm(this, settings)
         setContentView(buildUi())
     }
 
@@ -102,7 +105,7 @@ class SettingsActivity : AppCompatActivity() {
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply { topMargin = dp(28f) }
-            setOnClickListener { finish() }
+            setOnClickListener { Sounds.click(this@SettingsActivity); finish() }
         })
 
         return ScrollView(this).apply {
@@ -163,7 +166,10 @@ class SettingsActivity : AppCompatActivity() {
 
         val switch = SwitchCompat(this).apply {
             isChecked = initial
-            setOnCheckedChangeListener { _, checked -> onChange(checked) }
+            setOnCheckedChangeListener { _, checked ->
+                Sounds.click(this@SettingsActivity)
+                onChange(checked)
+            }
         }
         row.addView(switch)
 
@@ -194,6 +200,7 @@ class SettingsActivity : AppCompatActivity() {
         }
 
         info.setOnClickListener {
+            Sounds.click(this)
             val now = System.currentTimeMillis()
             buildTaps = if (now - lastTapAt > TAP_WINDOW_MS) 1 else buildTaps + 1
             lastTapAt = now

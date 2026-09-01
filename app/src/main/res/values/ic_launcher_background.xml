@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The cream of the logo's own ring. An adaptive icon's background is drawn edge
+    to edge and then masked to whatever shape the launcher wants, so it has to be a
+    flat colour the mark can sit on at any crop.
+-->
+<resources>
+    <color name="ic_launcher_background">#FFF2EB</color>
+</resources>

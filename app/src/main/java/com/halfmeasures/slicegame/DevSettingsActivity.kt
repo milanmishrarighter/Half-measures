@@ -44,6 +44,7 @@ class DevSettingsActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         settings = GameSettings.load(this)
+        Sounds.arm(this, settings)
         setContentView(buildUi())
     }
 
@@ -625,6 +626,7 @@ class DevSettingsActivity : AppCompatActivity() {
             val box = AppCompatCheckBox(this).apply {
                 isChecked = kind.name !in settings.disabledShapes
                 setOnCheckedChangeListener { _, checked ->
+                    Sounds.click(this@DevSettingsActivity)
                     if (checked) settings.disabledShapes.remove(kind.name)
                     else settings.disabledShapes.add(kind.name)
                     save()
@@ -918,6 +920,6 @@ class DevSettingsActivity : AppCompatActivity() {
             }
             isClickable = true
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-            setOnClickListener { onClick() }
+            setOnClickListener { Sounds.click(this@DevSettingsActivity); onClick() }
         }
 }
