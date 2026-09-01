@@ -120,56 +120,39 @@ object Theme {
     }
 
     /**
-     * The lit-glass ramp for a shape body, top to bottom.
+     * The shape body, centre outward.
      *
-     * Near-black at the top, the shape's own colour at full chroma through the
-     * middle, a narrow hot band near the bottom where the light is, and colour
-     * again under it. Built in HSV rather than by lightening the flat colour
-     * toward white: lightening drags the saturation out with it, and the middle of
-     * the ramp went grey exactly where it needed to be richest.
+     * Concentric, so it turns with the shape and can never come apart from it -
+     * that was what killed the vertical ramp. The colours are the deep ones: a
+     * luminous but still saturated core falling away to a near-black rim of the
+     * same hue, on six eased stops so the fall is gradual rather than a disc of
+     * colour with a ring around it.
+     *
+     * Nothing in here goes to white. A pale rim reads as a halo painted onto the
+     * shape rather than as the shape being round, and the neon edge is already
+     * carrying the light at the outline.
      */
-    fun shapeRamp(score: Int, slot: Int): IntArray {
+    fun shapeOrbRamp(score: Int, slot: Int): IntArray {
         val hsv = energyHsv(score)
         val hue = (hsv[0] + SHAPE_HUE_OFFSETS[slot % SHAPE_HUE_OFFSETS.size] + 360f) % 360f
-        // How bright this point in the run gets to be at all.
         val top = 0.55f + 0.45f * energyLevel(score)
         fun at(sat: Float, value: Float) =
             Color.HSVToColor(floatArrayOf(hue, sat, (value * top).coerceIn(0f, 1f)))
         return intArrayOf(
-            at(0.96f, 0.14f),
-            at(0.94f, 0.50f),
-            at(0.88f, 1.00f),
-            Color.HSVToColor(floatArrayOf(hue, 0.22f, (0.42f + 0.58f * top).coerceIn(0f, 1f))),
-            at(0.80f, 0.62f)
+            at(0.70f, 1.00f),
+            at(0.78f, 0.86f),
+            at(0.85f, 0.66f),
+            at(0.90f, 0.46f),
+            at(0.94f, 0.30f),
+            at(0.97f, 0.18f)
         )
     }
 
     /**
-     * The soft-focus ramp, centre outward: the shape's colour at full chroma in
-     * the middle, opening out to a pale halo at the rim.
-     *
-     * Radial rather than vertical, which is the whole point of it - a highlight
-     * placed by the screen sits still while the shape tumbles through it, and
-     * that is what made the lit-glass look read as a hole rather than a surface.
-     * Anything centred on the shape turns with it and cannot come apart.
+     * Centre outward, bunched toward the middle. Even stops put the whole fall in
+     * the outer half and left a flat plate of colour in the centre.
      */
-    fun shapeHaloRamp(score: Int, slot: Int): IntArray {
-        val hsv = energyHsv(score)
-        val hue = (hsv[0] + SHAPE_HUE_OFFSETS[slot % SHAPE_HUE_OFFSETS.size] + 360f) % 360f
-        val top = 0.62f + 0.38f * energyLevel(score)
-        return intArrayOf(
-            Color.HSVToColor(floatArrayOf(hue, 0.95f, top)),
-            Color.HSVToColor(floatArrayOf(hue, 0.92f, top)),
-            Color.HSVToColor(floatArrayOf(hue, 0.42f, (0.55f + 0.45f * top).coerceAtMost(1f))),
-            Color.HSVToColor(floatArrayOf(hue, 0.14f, (0.72f + 0.28f * top).coerceAtMost(1f)))
-        )
-    }
-
-    /** Centre outward, for [shapeHaloRamp]. */
-    val SHAPE_HALO_STOPS = floatArrayOf(0f, 0.34f, 0.80f, 1f)
-
-    /** Where each of [shapeRamp]'s colours sits down the shape. */
-    val SHAPE_RAMP_STOPS = floatArrayOf(0f, 0.30f, 0.66f, 0.84f, 1f)
+    val SHAPE_ORB_STOPS = floatArrayOf(0f, 0.22f, 0.42f, 0.62f, 0.82f, 1f)
 
     fun shapeDeep(score: Int, slot: Int): Int {
         val hsv = energyHsv(score)

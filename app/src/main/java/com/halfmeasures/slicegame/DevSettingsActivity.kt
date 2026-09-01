@@ -359,22 +359,18 @@ class DevSettingsActivity : AppCompatActivity() {
                 { "${(it * 100).roundToInt()}%" }, { settings.musicVolume = it }
             )
             slider(
-                c.body, "Shape style",
-                "Classic is the old highlight. Lit glass is a vertical gradient. Soft focus is saturated in the middle opening out to a pale rim.",
-                0f, (GameSettings.STYLE_NAMES.size - 1).toFloat(), settings.shapeStyle.toFloat(),
-                { GameSettings.STYLE_NAMES[it.roundToInt().coerceIn(0, GameSettings.STYLE_NAMES.size - 1)] },
-                { settings.shapeStyle = it.roundToInt().coerceIn(0, GameSettings.STYLE_NAMES.size - 1) }
-            )
-            toggle(
                 c.body, "Film grain",
-                "A fine speckle over the shape bodies, whichever style is on.",
-                settings.shapeGrain
-            ) { settings.shapeGrain = it }
+                "How much speckle sits over the shape bodies.",
+                GameSettings.MIN_GRAIN_AMOUNT, GameSettings.MAX_GRAIN_AMOUNT, settings.grainAmount,
+                { if (it <= 0.004f) "Off" else "%.0f%%".format(it * 100f) },
+                { settings.grainAmount = it }
+            )
             slider(
-                c.body, "Shape glow",
-                "How hard the bloom behind each shape burns. 1 is what it always was.",
-                GameSettings.MIN_SHAPE_GLOW, GameSettings.MAX_SHAPE_GLOW, settings.shapeGlow,
-                { if (it <= 0.01f) "Off" else "%.1fx".format(it) }, { settings.shapeGlow = it }
+                c.body, "Diffuser glow",
+                "A soft filter over the whole scene - light bleeds out of everything bright and fogs the black around it.",
+                GameSettings.MIN_BLOOM_STRENGTH, GameSettings.MAX_BLOOM_STRENGTH, settings.bloomStrength,
+                { if (it <= 0.01f) "Off" else "%.1fx".format(it) },
+                { settings.bloomStrength = it }
             )
             slider(
                 c.body, "Neon glow",
@@ -886,9 +882,8 @@ class DevSettingsActivity : AppCompatActivity() {
             appendLine("  Announcer: ${onOff(settings.voiceEnabled)}")
             appendLine("  Music: ${onOff(settings.musicEnabled)}")
             appendLine("  Music volume: ${(settings.musicVolume * 100).roundToInt()}%")
-            appendLine("  Shape style: ${GameSettings.STYLE_NAMES.getOrElse(settings.shapeStyle) { "?" }}")
-            appendLine("  Film grain: ${if (settings.shapeGrain) "on" else "off"}")
-            appendLine("  Shape glow: %.1fx".format(settings.shapeGlow))
+            appendLine("  Film grain: %.0f%%".format(settings.grainAmount * 100f))
+            appendLine("  Diffuser glow: %.1fx".format(settings.bloomStrength))
             appendLine("  Neon glow: %.2fx".format(settings.neonGlow))
             appendLine()
             appendLine("SHAPES")
