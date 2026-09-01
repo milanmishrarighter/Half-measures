@@ -376,7 +376,15 @@ class GameView @JvmOverloads constructor(
     fun startLoop() {
         // Idempotent, so this is a safe place to make sure the effects are built.
         sounds.prepare()
-        if (state == State.PLAYING || state == State.READY) sounds.resumeMusic()
+        // On a cold launch the view is already READY without ever having gone
+        // through resetToTitle, so nothing had asked for music yet and there was
+        // nothing for resume to pick up. Asking outright is safe either way: the
+        // engine resumes a track it already has, and defers if it is still loading.
+        when (state) {
+            State.READY -> sounds.startMusic()
+            State.PLAYING -> sounds.resumeMusic()
+            else -> {}
+        }
         if (loopRunning) return
         loopRunning = true
         lastFrameTimeNanos = 0L
@@ -894,7 +902,11 @@ class GameView @JvmOverloads constructor(
         val previousAverage = averageScore
         averageMoved = runsFinished > 0
         val previousRank = Ranks.forScore(previousAverage).number
-        runsFinished++
+        // The first run is averaged against a zero it never played, so one lucky
+        // opening game is half an average rather than a whole one. Without it a
+        // single six-thousand-point first run walked straight into a rank that
+        // ought to take a while.
+        runsFinished += if (runsFinished == 0) 2 else 1
         scoreTotal += score
         averageDelta = averageScore - previousAverage
         // A rank is only a move if the player had one to move from.
@@ -2848,7 +2860,7 @@ class GameView @JvmOverloads constructor(
         // nothing about them.
         if (runsFinished > 0) {
             val y = height * 0.42f
-            drawScorePills(canvas, cx, y, 1f)
+            drawScorePills(canvas, cx, y, 1f, showDelta = false)
             drawRankPill(
                 canvas, cx, y + (PILL_HEIGHT + SUMMARY_GAP) * density,
                 Ranks.forScore(averageScore), 1f
@@ -3336,11 +3348,15 @@ class GameView @JvmOverloads constructor(
     }
 
     /** BEST and AVERAGE together, centred on [cx] as one block. */
-    private fun drawScorePills(canvas: Canvas, cx: Float, cy: Float, alpha: Float) {
+    private fun drawScorePills(
+        canvas: Canvas, cx: Float, cy: Float, alpha: Float, showDelta: Boolean = true
+    ) {
         val bestValue = formatScore(bestScore)
         val avgValue = formatScore(averageScore)
         val gap = PILL_ROW_GAP * density
-        val delta = if (averageMoved) averageDelta else 0
+        // The arrow says which way the run just moved the average, so it belongs to
+        // the card that reports that run and nowhere else.
+        val delta = if (showDelta && averageMoved) averageDelta else 0
         val bestW = pillWidth(BEST_LABEL, bestValue)
         val avgW = pillWidth(AVG_LABEL, avgValue) + deltaWidth(delta)
         var x = cx - (bestW + gap + avgW) / 2f
@@ -3622,10 +3638,10 @@ class GameView @JvmOverloads constructor(
         const val CARD_PAD = 28f
         /** Baseline above a rule to the rule, and the rule to the baseline below. */
         const val CARD_RULE_GAP = 30f
-        const val CARD_HEADER_HEIGHT = 322f
+        const val CARD_HEADER_HEIGHT = 332f
 
         /** The summary block: pills, rank pill, ladder, goal - one even rhythm. */
-        const val SUMMARY_PILLS_Y = 168f
+        const val SUMMARY_PILLS_Y = 162f
         /** The one clear space between every part of the summary block. */
         const val SUMMARY_GAP = 20f
         /** Ink height of the rank-change line, and how close it sits to its pill. */
