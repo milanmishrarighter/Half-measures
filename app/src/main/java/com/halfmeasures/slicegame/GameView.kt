@@ -649,8 +649,7 @@ class GameView @JvmOverloads constructor(
         val toHeading = CARD_RULE_GAP * 2
         val toFirstRow = CARD_RULE_GAP - CARD_BREAKDOWN_ROW_HEIGHT / 2f - CARD_ROW_TEXT_OFFSET
         val rows = CARD_BREAKDOWN_ROW_HEIGHT * (cutBuckets.size - 1)
-        return (CARD_HEADER_HEIGHT + rankFlashSpace() + toLastStat + toHeading +
-            toFirstRow + rows + CARD_PAD) * density
+        return (CARD_HEADER_HEIGHT + toLastStat + toHeading + toFirstRow + rows + CARD_PAD) * density
     }
 
     // ---------------------------------------------------------------------
@@ -2968,7 +2967,10 @@ class GameView @JvmOverloads constructor(
 
         // The all-time best sits with the score it is measured against rather than
         // buried in the table below, which is the only place a player looks first.
-        val pillsY = cardTop + SUMMARY_PILLS_Y * density
+        // The rank-change line's space is reserved either way and the block is
+        // centred in it, so a promotion cannot push the card - or the buttons under
+        // it - down the screen, and the spacing stays even when there is no line.
+        val pillsY = cardTop + (SUMMARY_PILLS_Y + if (rankMoved != 0) 0f else RESERVED_FLASH / 2f) * density
 
         drawScorePills(canvas, cx, pillsY, scoreAlpha)
 
@@ -2984,27 +2986,33 @@ class GameView @JvmOverloads constructor(
         val gap = SUMMARY_GAP * density
         val pillHeight = PILL_HEIGHT * density
 
-        // A promotion or a demotion gets its own line, in its own reserved space
-        // above the pill it is talking about. The card is measured with that space
-        // in it, so the line arrives in a gap rather than on top of something.
+        // A promotion or demotion gets a small line of its own, tucked close above
+        // the pill it is talking about - closer than the block's own rhythm, the
+        // way a caption sits with its subject.
         var below = pillsY + pillHeight / 2f
         if (rankMoved != 0) {
             val up = rankMoved > 0
+            // Only the colour pulses. Swelling the type as well moved the text's
+            // own box every frame, which is what made it look shoved in.
             val beat = 0.55f + 0.45f * cos(cardReveal * 8f)
             uiBoldPaint.textAlign = Paint.Align.CENTER
-            uiBoldPaint.textSize = RANK_FLASH_TEXT * density * (1f + 0.08f * beat)
-            uiBoldPaint.letterSpacing = 0.1f
+            uiBoldPaint.textSize = RANK_FLASH_TEXT * density
+            uiBoldPaint.letterSpacing = 0.16f
             uiBoldPaint.color = Theme.withAlpha(
                 Theme.lerpColor(
-                    if (up) rungColor(rank.number) else Theme.danger, Color.WHITE, beat * 0.6f
+                    if (up) rungColor(rank.number) else Theme.danger, Color.WHITE, beat * 0.55f
                 ),
                 rankAlpha
             )
-            val line = if (up) "YOU JUST RANKED UP!" else "YOU JUST RANKED DOWN"
-            uiBoldPaint.getTextBounds(line, 0, line.length, inkBounds)
-            canvas.drawText(line, cx, below + gap - inkBounds.top, uiBoldPaint)
+            val line = if (up) "YOU JUST RANKED UP" else "YOU JUST RANKED DOWN"
+            // Tracking adds a trailing space after the last letter, which a centred
+            // draw counts as ink; half of it back puts the line on the true centre.
+            canvas.drawText(
+                line, cx + RANK_FLASH_TEXT * 0.16f * density / 2f,
+                below + gap + RANK_FLASH_SPACE * density, uiBoldPaint
+            )
             uiBoldPaint.letterSpacing = 0f
-            below += RANK_FLASH_SPACE * density
+            below += RESERVED_FLASH * density
         }
 
         val rankY = below + gap + pillHeight / 2f
@@ -3023,7 +3031,7 @@ class GameView @JvmOverloads constructor(
 
         rimPaint.strokeWidth = 1.5f
         rimPaint.color = Theme.withAlpha(Theme.hairline, revealAlpha(CARD_ROWS_AT - 0.1f))
-        val dividerY = cardTop + (CARD_HEADER_HEIGHT + rankFlashSpace()) * density
+        val dividerY = cardTop + CARD_HEADER_HEIGHT * density
         canvas.drawLine(cardLeft + padX, dividerY, cardRight - padX, dividerY, rimPaint)
 
         val left = cardLeft + padX
@@ -3429,9 +3437,6 @@ class GameView @JvmOverloads constructor(
      * colour. Where you stand on the ladder is a shape best answered by a
      * picture, not by "1 of 13".
      */
-    /** The height the rank-change line claims, in dp; zero when nothing changed. */
-    private fun rankFlashSpace(): Float = if (rankMoved != 0) RANK_FLASH_SPACE else 0f
-
     /** How far the ladder reaches from its own line - the swollen pip's radius. */
     private fun ladderReach(): Float = PIP_RADIUS * PIP_CURRENT * density
 
@@ -3613,9 +3618,12 @@ class GameView @JvmOverloads constructor(
         const val SUMMARY_PILLS_Y = 168f
         /** The one clear space between every part of the summary block. */
         const val SUMMARY_GAP = 20f
-        /** Ink height reserved for the rank-change line, gap not included. */
-        const val RANK_FLASH_SPACE = 15f
-        const val RANK_FLASH_TEXT = 17f
+        /** Ink height of the rank-change line, and how close it sits to its pill. */
+        const val RANK_FLASH_SPACE = 9f
+        const val RANK_FLASH_GAP = 8f
+        const val RANK_FLASH_TEXT = 11f
+        /** Space the line claims whether or not it is showing, so nothing shifts. */
+        const val RESERVED_FLASH = RANK_FLASH_SPACE + RANK_FLASH_GAP
 
         const val BEST_LABEL = "BEST:"
         const val AVG_LABEL = "AVG:"

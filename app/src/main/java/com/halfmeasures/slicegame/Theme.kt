@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Color
 import android.graphics.Typeface
 import kotlin.math.pow
+import kotlin.math.roundToInt
 
 /**
  * One place for the game's colours and typefaces, so the play surface and the
@@ -179,14 +180,29 @@ object Theme {
             Color.red(color), Color.green(color), Color.blue(color)
         )
 
-    /** Straight RGB interpolation, [t] clamped to 0..1. */
+    /**
+     * Straight RGB interpolation, [t] clamped to 0..1.
+     *
+     * The step is rounded, and forced to move at least one level when there is
+     * anywhere left to go. Truncating instead is what kept the backdrop black:
+     * the per-frame ease is a small fraction, and on a 120Hz screen every channel
+     * moved less than a whole level per frame, truncated back to where it started,
+     * and sat there for the entire run no matter what the score did.
+     */
     fun lerpColor(from: Int, to: Int, t: Float): Int {
         val k = t.coerceIn(0f, 1f)
         return Color.rgb(
-            (Color.red(from) + (Color.red(to) - Color.red(from)) * k).toInt(),
-            (Color.green(from) + (Color.green(to) - Color.green(from)) * k).toInt(),
-            (Color.blue(from) + (Color.blue(to) - Color.blue(from)) * k).toInt()
+            stepChannel(Color.red(from), Color.red(to), k),
+            stepChannel(Color.green(from), Color.green(to), k),
+            stepChannel(Color.blue(from), Color.blue(to), k)
         )
+    }
+
+    private fun stepChannel(from: Int, to: Int, k: Float): Int {
+        if (from == to) return from
+        val moved = (from + (to - from) * k).roundToInt()
+        // Never stall: a rounded step of zero still has to close the gap eventually.
+        return if (moved == from) from + if (to > from) 1 else -1 else moved
     }
 
     fun lighten(color: Int, amount: Float): Int {
