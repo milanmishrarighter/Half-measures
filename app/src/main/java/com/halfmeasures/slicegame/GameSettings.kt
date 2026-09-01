@@ -140,6 +140,8 @@ data class GameSettings(
     /** How loud it is. */
     var soundVolume: Float = DEFAULT_SOUND_VOLUME,
     /** How hard the neon outline burns around each shape. 0 turns it off. */
+    /** The lit-glass material: a vertical ramp under film grain, or the old ball. */
+    var grainyShapes: Boolean = DEFAULT_GRAINY_SHAPES,
     var neonGlow: Float = DEFAULT_NEON_GLOW,
     /** Whether the announcer shouts on a perfect cut. */
     var voiceEnabled: Boolean = DEFAULT_VOICE_ENABLED,
@@ -214,6 +216,7 @@ data class GameSettings(
             .putString("shape_unlock_scores", encodeUnlockScores(shapeUnlockScores))
             .putBoolean("sound_enabled", soundEnabled)
             .putFloat("sound_volume", soundVolume)
+            .putBoolean("grainy_shapes", grainyShapes)
             .putFloat("neon_glow", neonGlow)
             .putBoolean("voice_enabled", voiceEnabled)
             .putBoolean("music_enabled", musicEnabled)
@@ -300,6 +303,7 @@ data class GameSettings(
         const val DEFAULT_LOW_HEALTH_AT = 20
         const val DEFAULT_SOUND_ENABLED = true
         const val DEFAULT_SOUND_VOLUME = 0.8f
+        const val DEFAULT_GRAINY_SHAPES = true
         const val DEFAULT_NEON_GLOW = 1.0f
         const val DEFAULT_VOICE_ENABLED = true
         const val DEFAULT_MUSIC_ENABLED = true
@@ -462,6 +466,7 @@ data class GameSettings(
                 shapeUnlockScores = decodeUnlockScores(p.getString("shape_unlock_scores", "")),
                 soundEnabled = p.getBoolean("sound_enabled", DEFAULT_SOUND_ENABLED),
                 soundVolume = p.getFloat("sound_volume", DEFAULT_SOUND_VOLUME),
+                grainyShapes = p.getBoolean("grainy_shapes", DEFAULT_GRAINY_SHAPES),
                 neonGlow = p.getFloat("neon_glow", DEFAULT_NEON_GLOW),
                 voiceEnabled = p.getBoolean("voice_enabled", DEFAULT_VOICE_ENABLED),
                 musicEnabled = p.getBoolean("music_enabled", DEFAULT_MUSIC_ENABLED),

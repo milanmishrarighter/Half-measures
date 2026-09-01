@@ -358,6 +358,11 @@ class DevSettingsActivity : AppCompatActivity() {
                 GameSettings.MIN_MUSIC_VOLUME, GameSettings.MAX_MUSIC_VOLUME, settings.musicVolume,
                 { "${(it * 100).roundToInt()}%" }, { settings.musicVolume = it }
             )
+            toggle(
+                c.body, "Grainy shapes",
+                "Shapes lit from below through a vertical gradient, with film grain over them. Off puts back the plain highlight.",
+                settings.grainyShapes
+            ) { settings.grainyShapes = it }
             slider(
                 c.body, "Neon glow",
                 "How hard the outline burns around each shape. 0 goes back to a plain edge.",
@@ -868,6 +873,7 @@ class DevSettingsActivity : AppCompatActivity() {
             appendLine("  Announcer: ${onOff(settings.voiceEnabled)}")
             appendLine("  Music: ${onOff(settings.musicEnabled)}")
             appendLine("  Music volume: ${(settings.musicVolume * 100).roundToInt()}%")
+            appendLine("  Grainy shapes: ${if (settings.grainyShapes) "on" else "off"}")
             appendLine("  Neon glow: %.2fx".format(settings.neonGlow))
             appendLine()
             appendLine("SHAPES")

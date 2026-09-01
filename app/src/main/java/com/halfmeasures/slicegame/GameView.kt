@@ -1,6 +1,8 @@
 package com.halfmeasures.slicegame
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapShader
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
@@ -224,10 +226,6 @@ class GameView @JvmOverloads constructor(
     private var lastTouchY = 0f
     private var hasLastTouch = false
     /** Where the blade last spoke, and when, so the swipe noise stays occasional. */
-    private var swipeSoundX = 0f
-    private var swipeSoundY = 0f
-    private var lastSwipeSoundMs = 0L
-    private val swipeSoundDistance: Float get() = 90f * density
     private val trailMaxAgeMs = 165L
 
     // ---- Buttons (laid out in onSizeChanged, hit-tested in onTouchEvent) ----
@@ -347,6 +345,17 @@ class GameView @JvmOverloads constructor(
     private val path = Path()
     private val shaderMatrix = Matrix()
     private val bodyShaders = HashMap<Int, RadialGradient>()
+    /**
+     * The material's shaders, keyed the same way. A vertical ramp per colour slot,
+     * and one tile of film grain shared by all of them.
+     */
+    private val materialShaders = HashMap<Int, LinearGradient>()
+    private val grainMatrix = Matrix()
+    private val grainPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val shapeBounds = RectF()
+    private val grainShader: BitmapShader by lazy {
+        BitmapShader(buildGrainTile(), Shader.TileMode.REPEAT, Shader.TileMode.REPEAT)
+    }
     private val roundRect = RectF()
     /** Scratch for measuring a line's real ink, so gaps are set from what shows. */
     private val inkBounds = Rect()
@@ -775,6 +784,7 @@ class GameView @JvmOverloads constructor(
         if (hueBucket != lastHueBucket) {
             lastHueBucket = hueBucket
             bodyShaders.clear()
+            materialShaders.clear()
         }
 
         // Creep toward the score's colours so the change is a slow shift in the
@@ -808,6 +818,7 @@ class GameView @JvmOverloads constructor(
         // The shape gradients are cached per palette entry and tinted by level,
         // so they have to be rebuilt when the level changes.
         bodyShaders.clear()
+        materialShaders.clear()
         if (settings.vibrationEnabled) haptics.tick(settings.vibrationStrength)
         sounds.play(Sfx.LEVEL_UP, gain = 0.9f)
     }
@@ -1346,6 +1357,7 @@ class GameView @JvmOverloads constructor(
         stage = 0
         pixels.reset()
         bodyShaders.clear()
+        materialShaders.clear()
         continuesUsed = 0
         // The menu gets a track too, at its written tempo. Only a run in progress
         // pushes it faster.
@@ -1391,6 +1403,7 @@ class GameView @JvmOverloads constructor(
         dangerArmed = true
         pixels.reset()
         bodyShaders.clear()
+        materialShaders.clear()
         lastHueBucket = score / 250
         backgroundColor = Theme.scoreBackground(score)
         accentColor = Theme.scoreAccent(score)
@@ -1454,8 +1467,6 @@ class GameView @JvmOverloads constructor(
                 lastTouchX = event.x
                 lastTouchY = event.y
                 hasLastTouch = true
-                swipeSoundX = event.x
-                swipeSoundY = event.y
                 trailPoints.add(TrailPoint(event.x, event.y, System.currentTimeMillis()))
                 pixels.burst(event.x, event.y, 1.0f)
             }
@@ -1642,20 +1653,10 @@ class GameView @JvmOverloads constructor(
      * gesture past a distance threshold, and rate-limited, so dragging a finger
      * around does not turn into a drone.
      */
-    private fun maybePlaySwipe(x: Float, y: Float) {
-        val dx = x - swipeSoundX
-        val dy = y - swipeSoundY
-        if (dx * dx + dy * dy < swipeSoundDistance * swipeSoundDistance) return
-        swipeSoundX = x
-        swipeSoundY = y
-        val now = System.currentTimeMillis()
-        if (now - lastSwipeSoundMs < SWIPE_SOUND_GAP_MS) return
-        lastSwipeSoundMs = now
-        sounds.play(SfxBank.SWIPE, gain = 0.5f)
-    }
-
     private fun handleSwipeSegment(x: Float, y: Float) {
-        maybePlaySwipe(x, y)
+        // No sound for the swipe itself. It fired on every drag, including one
+        // through empty air, so the loudest noise in the game was the one that
+        // meant nothing had happened.
         if (!hasLastTouch) {
             lastTouchX = x
             lastTouchY = y
@@ -1893,7 +1894,7 @@ class GameView @JvmOverloads constructor(
                 SlicedPiece(
                     left, shape.x, shape.y,
                     shape.vx + nx * kick, shape.vy + ny * kick,
-                    shape.angularVelocity * 1.6f, shape.paletteIndex
+                    shape.angularVelocity * 1.6f, shape.paletteIndex, shape.radius
                 )
             )
         }
@@ -1902,7 +1903,7 @@ class GameView @JvmOverloads constructor(
                 SlicedPiece(
                     right, shape.x, shape.y,
                     shape.vx - nx * kick, shape.vy - ny * kick,
-                    shape.angularVelocity * -1.6f, shape.paletteIndex
+                    shape.angularVelocity * -1.6f, shape.paletteIndex, shape.radius
                 )
             )
         }
@@ -2084,6 +2085,63 @@ class GameView @JvmOverloads constructor(
      */
     private fun tintedLight(paletteIndex: Int): Int = Theme.shapeLight(score, paletteIndex)
 
+    /**
+     * The lit-glass material: one vertical ramp for the body, one tile of grain
+     * over it.
+     *
+     * The ramp runs near-black at the top through the shape's own colour to a
+     * narrow hot band low down and back into colour at the bottom, which is what a
+     * translucent solid lit from below does. It is fixed to the screen's vertical
+     * rather than to the shape, so everything on screen agrees about where the
+     * light is instead of each shape carrying its own - the old radial highlight
+     * sat in the upper left of every shape however it was tumbling.
+     */
+    private fun materialShader(paletteIndex: Int): LinearGradient =
+        materialShaders.getOrPut(paletteIndex) {
+            LinearGradient(
+                0f, -1f, 0f, 1f,
+                Theme.shapeRamp(score, paletteIndex),
+                Theme.SHAPE_RAMP_STOPS,
+                Shader.TileMode.CLAMP
+            )
+        }
+
+    /**
+     * One tile of film grain: monochrome speckle at low alpha, repeated. Grain is
+     * the film rather than the subject, so the tile is a fixed size in pixels and
+     * never scales with the shape it lies over.
+     */
+    private fun buildGrainTile(): Bitmap {
+        val size = GRAIN_TILE
+        val pixels = IntArray(size * size)
+        val noise = java.util.Random(20260901L)
+        for (i in pixels.indices) {
+            // A narrow spread around mid grey. Wide noise reads as television
+            // static; this is only just visible, which is the point of grain.
+            val v = (128 + (noise.nextGaussian() * 46).toInt()).coerceIn(0, 255)
+            pixels[i] = Color.argb(255, v, v, v)
+        }
+        return Bitmap.createBitmap(pixels, size, size, Bitmap.Config.ARGB_8888)
+    }
+
+    /** Lays grain over whatever path was last built, clipped to it. */
+    private fun drawGrain(canvas: Canvas, seed: Float, alpha: Float) {
+        if (alpha <= 0.01f) return
+        path.computeBounds(shapeBounds, true)
+        canvas.save()
+        canvas.clipPath(path)
+        // Offset per shape, so two shapes side by side are not wearing the same
+        // speckle in the same place.
+        grainMatrix.setTranslate(seed % GRAIN_TILE, (seed * 1.7f) % GRAIN_TILE)
+        grainShader.setLocalMatrix(grainMatrix)
+        grainPaint.shader = grainShader
+        grainPaint.alpha = (alpha * 255f).toInt().coerceIn(0, 255)
+        canvas.drawRect(shapeBounds, grainPaint)
+        grainPaint.shader = null
+        grainPaint.alpha = 255
+        canvas.restore()
+    }
+
     private fun bodyShader(paletteIndex: Int): RadialGradient =
         bodyShaders.getOrPut(paletteIndex) {
             val light = tintedLight(paletteIndex)
@@ -2120,16 +2178,28 @@ class GameView @JvmOverloads constructor(
         canvas.drawPath(path, glowPaint)
         canvas.restore()
 
-        // Body, lit from the upper left.
         buildPath(verts)
-        val shader = bodyShader(shape.paletteIndex)
-        shaderMatrix.reset()
-        shaderMatrix.postScale(r * 1.55f, r * 1.55f)
-        shaderMatrix.postTranslate(shape.x - r * 0.38f, shape.y - r * 0.42f)
-        shader.setLocalMatrix(shaderMatrix)
-        fillPaint.shader = shader
-        canvas.drawPath(path, fillPaint)
-        fillPaint.shader = null
+        if (settings.grainyShapes) {
+            val shader = materialShader(shape.paletteIndex)
+            shaderMatrix.reset()
+            shaderMatrix.postScale(r, r * 1.04f)
+            shaderMatrix.postTranslate(shape.x, shape.y)
+            shader.setLocalMatrix(shaderMatrix)
+            fillPaint.shader = shader
+            canvas.drawPath(path, fillPaint)
+            fillPaint.shader = null
+            drawGrain(canvas, shape.spawnTimeMs.toFloat() % 997f, GRAIN_ALPHA)
+        } else {
+            // The original: a highlight in the upper left, no grain.
+            val shader = bodyShader(shape.paletteIndex)
+            shaderMatrix.reset()
+            shaderMatrix.postScale(r * 1.55f, r * 1.55f)
+            shaderMatrix.postTranslate(shape.x - r * 0.38f, shape.y - r * 0.42f)
+            shader.setLocalMatrix(shaderMatrix)
+            fillPaint.shader = shader
+            canvas.drawPath(path, fillPaint)
+            fillPaint.shader = null
+        }
 
         drawNeonEdge(canvas, tintedLight(shape.paletteIndex), r)
 
@@ -2228,8 +2298,24 @@ class GameView @JvmOverloads constructor(
         path.close()
 
         val tint = tintedLight(piece.paletteIndex)
-        fillPaint.color = Theme.withAlpha(tint, alpha * 0.95f)
-        canvas.drawPath(path, fillPaint)
+        if (settings.grainyShapes) {
+            // The halves keep the material, or a shape would change substance at
+            // the instant it came apart.
+            val shader = materialShader(piece.paletteIndex)
+            shaderMatrix.reset()
+            shaderMatrix.postScale(piece.radiusHint, piece.radiusHint * 1.04f)
+            shaderMatrix.postTranslate(piece.originX, piece.originY)
+            shader.setLocalMatrix(shaderMatrix)
+            fillPaint.shader = shader
+            fillPaint.alpha = (alpha * 242f).toInt().coerceIn(0, 255)
+            canvas.drawPath(path, fillPaint)
+            fillPaint.shader = null
+            fillPaint.alpha = 255
+            drawGrain(canvas, piece.originX, GRAIN_ALPHA * alpha)
+        } else {
+            fillPaint.color = Theme.withAlpha(tint, alpha * 0.95f)
+            canvas.drawPath(path, fillPaint)
+        }
 
         // The halves keep the neon while they fall, fading with the rest of them.
         val strength = settings.neonGlow
@@ -3612,6 +3698,10 @@ class GameView @JvmOverloads constructor(
         /** Side of the square pause target, in dp. */
         const val PAUSE_BUTTON_SIZE = 34f
 
+        /** Grain tile edge, in pixels, and how strongly it sits over the body. */
+        const val GRAIN_TILE = 128
+        const val GRAIN_ALPHA = 0.13f
+
         /** Shared pill metrics, in dp, so every capsule on a screen matches. */
         const val PILL_HEIGHT = 34f
         const val PILL_PAD = 16f
@@ -3622,7 +3712,6 @@ class GameView @JvmOverloads constructor(
         const val MAX_EMBER_GROWTH = 5f
 
         /** Shortest gap between two swipe noises, in real milliseconds. */
-        const val SWIPE_SOUND_GAP_MS = 190L
 
         /** The tempo the music is written at, which the score speeds up from. */
         const val MUSIC_BASE_BPM = 108f
@@ -3746,7 +3835,9 @@ class GameView @JvmOverloads constructor(
         var vx: Float,
         var vy: Float,
         private val angularVelocity: Float,
-        val paletteIndex: Int
+        val paletteIndex: Int,
+        /** The radius of the shape this came off, so its material matches. */
+        val radiusHint: Float
     ) {
         val originX = x
         val originY = y
