@@ -147,36 +147,6 @@ object Theme {
     /** Where each of [shapeRamp]'s colours sits down the shape. */
     val SHAPE_RAMP_STOPS = floatArrayOf(0f, 0.30f, 0.66f, 0.84f, 1f)
 
-    /**
-     * The lit-glass ramp for a shape body, top to bottom.
-     *
-     * Near-black at the top, the shape's own colour at full chroma through the
-     * middle, a narrow hot band near the bottom where the light is, and colour
-     * again under it. Built in HSV rather than by lightening the flat colour
-     * toward white: lightening drags the saturation out with it, and the middle of
-     * the ramp went grey exactly where it needed to be richest.
-     */
-    fun shapeRamp(score: Int, slot: Int): IntArray {
-        val hsv = energyHsv(score)
-        val hue = (hsv[0] + SHAPE_HUE_OFFSETS[slot % SHAPE_HUE_OFFSETS.size] + 360f) % 360f
-        // How bright this point in the run gets to be at all.
-        val top = 0.55f + 0.45f * energyLevel(score)
-        fun at(sat: Float, value: Float) =
-            Color.HSVToColor(floatArrayOf(hue, sat, (value * top).coerceIn(0f, 1f)))
-        return intArrayOf(
-            at(0.96f, 0.14f),
-            at(0.94f, 0.50f),
-            at(0.88f, 1.00f),
-            // The hot band keeps a little hue rather than going white, so a green
-            // shape stays green where the light hits it.
-            Color.HSVToColor(floatArrayOf(hue, 0.22f, (0.42f + 0.58f * top).coerceIn(0f, 1f))),
-            at(0.80f, 0.62f)
-        )
-    }
-
-    /** Where each of [shapeRamp]'s colours sits down the shape. */
-    val SHAPE_RAMP_STOPS = floatArrayOf(0f, 0.30f, 0.66f, 0.84f, 1f)
-
     fun shapeDeep(score: Int, slot: Int): Int {
         val hsv = energyHsv(score)
         val level = energyLevel(score)
@@ -295,12 +265,4 @@ object Theme {
         )
     }
 
-    fun darken(color: Int, amount: Float): Int {
-        val a = 1f - amount.coerceIn(0f, 1f)
-        return Color.rgb(
-            (Color.red(color) * a).toInt(),
-            (Color.green(color) * a).toInt(),
-            (Color.blue(color) * a).toInt()
-        )
-    }
 }
