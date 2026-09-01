@@ -13,7 +13,7 @@ import kotlin.random.Random
  * Deliberately restrained: a sparse drift of small unlit squares rising like
  * embers off a fire, plus a burst wherever the player touches or cuts. The only
  * other element is a soft glow along the bottom edge whose colour reports the
- * state of the run - it shifts with the difficulty stage, warms on a hot streak
+ * state of the run - it takes the score's own colour, warms on a hot streak
  * and bleeds red as health drains.
  */
 class PixelBackground(private val random: Random) {
@@ -56,8 +56,8 @@ class PixelBackground(private val random: Random) {
     private var pulse = 0f
 
     // Eased so stage changes and health swings glide rather than snap.
-    private var glowColor = STAGE_PALETTES[0][1]
-    private var emberColor = STAGE_PALETTES[0][2]
+    private var glowColor = Theme.scoreEnergyDim(0)
+    private var emberColor = Theme.scoreEnergy(0)
 
     // Player-tunable, refreshed from settings each frame.
     private var density = 1f
@@ -112,14 +112,12 @@ class PixelBackground(private val random: Random) {
     /**
      * @param energy excitement from the effect system; lifts brightness a little.
      * @param healthFraction 0..1, drains the glow toward red as it falls.
-     * @param stage difficulty stage, which picks the base palette.
      * @param warmth -1 on a cold streak, +1 on a hot one.
      */
     fun update(
         dt: Float,
         energy: Float,
         healthFraction: Float,
-        stage: Int,
         warmth: Float,
         /** The run's colour at the current score - see Theme.scoreEnergy. */
         runColor: Int,
@@ -137,7 +135,7 @@ class PixelBackground(private val random: Random) {
         time += dt
         pulse = (pulse - dt * 1.4f).coerceAtLeast(0f)
 
-        easePaletteToward(stage, healthFraction, warmth)
+        easePaletteToward(healthFraction, warmth, runColor, runGlow)
         topUpAmbient()
 
         var i = embers.size - 1
@@ -183,9 +181,12 @@ class PixelBackground(private val random: Random) {
         )
     }
 
-    private fun easePaletteToward(stage: Int, healthFraction: Float, warmth: Float) {
-        // Cycles rather than clamps: stages now run to a hundred and the field
-        // should keep moving through hues rather than parking on the last one.
+    private fun easePaletteToward(
+        healthFraction: Float,
+        warmth: Float,
+        runColor: Int,
+        runGlow: Int
+    ) {
         // The field takes the run's own colour rather than a per-stage palette, so
         // the embers climb the same spiral as the blade and the debris.
         // Below a third health the field bleeds red; at death's door it is fully alarmed.
@@ -237,19 +238,6 @@ class PixelBackground(private val random: Random) {
         private const val AMBIENT_BASE = 46
         private const val MAX_EMBERS = 260
 
-        /** Base palettes, one per difficulty stage, cycling once the list runs out. */
-        private val STAGE_PALETTES = arrayOf(
-            // Stage one is near-black to match the backdrop: the embers are the only
-            // colour on screen until the score starts pulling the scene toward a hue.
-            intArrayOf(Color.rgb(0, 0, 0), Color.rgb(20, 30, 62), Color.rgb(74, 112, 178)),
-            intArrayOf(Color.rgb(8, 12, 30), Color.rgb(34, 62, 130), Color.rgb(96, 150, 235)),
-            intArrayOf(Color.rgb(10, 8, 32), Color.rgb(70, 40, 132), Color.rgb(160, 116, 240)),
-            intArrayOf(Color.rgb(6, 20, 26), Color.rgb(24, 92, 96), Color.rgb(88, 210, 195)),
-            intArrayOf(Color.rgb(26, 10, 26), Color.rgb(118, 40, 100), Color.rgb(232, 124, 186)),
-            intArrayOf(Color.rgb(26, 18, 6), Color.rgb(122, 82, 26), Color.rgb(236, 180, 92)),
-            intArrayOf(Color.rgb(4, 24, 14), Color.rgb(26, 100, 62), Color.rgb(112, 220, 148))
-        )
-
         private val DANGER_PALETTE = intArrayOf(
             Color.rgb(112, 22, 38), Color.rgb(236, 86, 100)
         )
@@ -258,7 +246,5 @@ class PixelBackground(private val random: Random) {
         private val HOT_EMBER = Color.rgb(255, 186, 88)
         private val COLD_GLOW = Color.rgb(38, 44, 58)
         private val COLD_EMBER = Color.rgb(120, 134, 156)
-
-        fun paletteCount(): Int = STAGE_PALETTES.size
     }
 }

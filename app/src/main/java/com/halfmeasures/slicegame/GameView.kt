@@ -666,7 +666,6 @@ class GameView @JvmOverloads constructor(
             dt = dt,
             energy = effects.energy,
             healthFraction = if (maxHealth > 0) displayedHealth / maxHealth else 1f,
-            stage = stage,
             warmth = streakWarmth(),
             runColor = Theme.scoreEnergy(score),
             runGlow = Theme.scoreEnergyDim(score),
