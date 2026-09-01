@@ -187,12 +187,6 @@ class DevSettingsActivity : AppCompatActivity() {
                 { "%.1f pts".format(it) }, { settings.scoreMissWeight = it }
             )
             slider(
-                c.body, "Bonus for being neat", "Extra points for really tidy cuts. The tidier, the bigger the bonus.",
-                GameSettings.MIN_GREAT_BONUS_PERCENT, GameSettings.MAX_GREAT_BONUS_PERCENT,
-                settings.greatBonusPercent,
-                { "+${it.roundToInt()}%" }, { settings.greatBonusPercent = it }
-            )
-            slider(
                 c.body, "Health lost on a 60/40 cut", "How much health an okay-but-not-great cut costs you.",
                 GameSettings.MIN_HEALTH_LOSS_AT_SIXTY_FORTY, GameSettings.MAX_HEALTH_LOSS_AT_SIXTY_FORTY,
                 settings.healthLossAtSixtyForty,
@@ -224,19 +218,8 @@ class DevSettingsActivity : AppCompatActivity() {
         card("STREAKS").let { c ->
             root.addView(c.wrapper)
             slider(
-                c.body, "Good streak bonus", "Good cut after good cut (60/40 or better)? Each one adds this much extra score.",
-                GameSettings.MIN_COMBO_BONUS_PERCENT, GameSettings.MAX_COMBO_BONUS_PERCENT, settings.comboBonusPercent,
-                { "+${it.roundToInt()}%" }, { settings.comboBonusPercent = it }
-            )
-            slider(
-                c.body, "Perfect streak bonus",
-                "Dead centre cut after dead centre cut? Each one adds this much on top of the good streak bonus.",
-                GameSettings.MIN_PERFECT_STREAK_BONUS_PERCENT, GameSettings.MAX_PERFECT_STREAK_BONUS_PERCENT,
-                settings.perfectStreakBonusPercent,
-                { "+${it.roundToInt()}%" }, { settings.perfectStreakBonusPercent = it }
-            )
-            slider(
-                c.body, "Biggest hot streak bonus", "The most your streak bonus can ever grow to.",
+                c.body, "Longest perfect streak that pays",
+                "A perfect run multiplies your points - second in a row pays double, third triple. This is where that stops growing.",
                 GameSettings.MIN_MAX_COMBO_MULTIPLIER, GameSettings.MAX_MAX_COMBO_MULTIPLIER,
                 settings.maxComboMultiplier,
                 { "%.1fx".format(it) }, { settings.maxComboMultiplier = it }
@@ -844,7 +827,6 @@ class DevSettingsActivity : AppCompatActivity() {
             appendLine("  Counts as PERFECT: ±%.1f%%".format(settings.perfectThreshold))
             appendLine("  Counts as GREAT: ±%.0f%%".format(settings.greatThreshold))
             appendLine("  Points lost for being off: %.1f pts".format(settings.scoreMissWeight))
-            appendLine("  Bonus for being neat: ${settings.greatBonusPercent.roundToInt()}%")
             appendLine("  Health lost on a 60/40 cut: %.1f hp".format(settings.healthLossAtSixtyForty))
             appendLine("  Punish bad cuts extra: %.1f".format(settings.healthLossCurve))
             appendLine("  Perfect cuts heal you: ${onOff(settings.perfectRestoresHealth)}")
@@ -852,9 +834,7 @@ class DevSettingsActivity : AppCompatActivity() {
             appendLine("  Missing a shape ends the game: ${onOff(settings.missEndsRun)}")
             appendLine()
             appendLine("STREAKS")
-            appendLine("  Good streak bonus: ${settings.comboBonusPercent.roundToInt()}%")
-            appendLine("  Perfect streak bonus: ${settings.perfectStreakBonusPercent.roundToInt()}%")
-            appendLine("  Biggest hot streak bonus: %.1fx".format(settings.maxComboMultiplier))
+            appendLine("  Longest perfect streak that pays: %.0fx".format(settings.maxComboMultiplier))
             appendLine("  Cold streak punishment: ${settings.coldStreakPenaltyPercent.roundToInt()}%")
             appendLine()
             appendLine("SLOW MOTION")

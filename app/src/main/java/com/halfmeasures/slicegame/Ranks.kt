@@ -23,19 +23,19 @@ object Ranks {
      * one - "till 3k is rank one" reads the way it sounds.
      */
     val all: List<Rank> = listOf(
-        Rank(1, "Cookie Cutter", ShapeKind.CIRCLE, 3_000),
+        Rank(1, "Circle Cutter", ShapeKind.CIRCLE, 3_000),
         Rank(2, "Square Slicer", ShapeKind.SQUARE, 6_000),
         Rank(3, "Hexagon Halver", ShapeKind.HEXAGON, 10_000),
-        Rank(4, "Octagon Divider", ShapeKind.OCTAGON, 15_000),
+        Rank(4, "Octagon Obliterator", ShapeKind.OCTAGON, 15_000),
         Rank(5, "Trapezoid Trimmer", ShapeKind.TRAPEZOID, 20_000),
         Rank(6, "Diamond Dissector", ShapeKind.DIAMOND, 25_000),
-        Rank(7, "Triangle Splitter", ShapeKind.TRIANGLE, 30_000),
-        Rank(8, "Droplet Parter", ShapeKind.DROP, 35_000),
+        Rank(7, "Triangle Truncator", ShapeKind.TRIANGLE, 30_000),
+        Rank(8, "Droplet Decimator", ShapeKind.DROP, 35_000),
         Rank(9, "Cross Carver", ShapeKind.CROSS, 45_000),
         Rank(10, "Starfall Severer", ShapeKind.STAR6, 50_000),
         Rank(11, "Bolt Bisector", ShapeKind.BOLT, 60_000),
         Rank(12, "Crown Cleaver", ShapeKind.CROWN, 75_000),
-        Rank(13, "Crescent Surgeon", ShapeKind.MOON, Int.MAX_VALUE)
+        Rank(13, "Planet Parter", ShapeKind.MOON, Int.MAX_VALUE)
     )
 
     val count: Int get() = all.size

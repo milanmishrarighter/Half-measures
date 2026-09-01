@@ -50,10 +50,37 @@ object Theme {
 
     /** Score at which the backdrop reaches full red. */
     const val RED_AT = 100_000f
-    private const val BLUE_HUE = 232f
-    private const val RED_HUE = 360f
-    /** The backdrop never gets brighter than this; it sits behind lit shapes. */
-    private const val MAX_BACKDROP_VALUE = 0.34f
+
+    /**
+     * The backdrop never gets brighter than this; it sits behind lit shapes, so
+     * every stop below is a dark version of its hue rather than the hue itself.
+     */
+    private const val MAX_BACKDROP_VALUE = 0.44f
+
+    /**
+     * The sky the run is played under, as a list of stops: score, hue, and how far
+     * up the brightness range that stop sits.
+     *
+     * This was a single curve from blue to red before, which meant the whole
+     * middle of a run was one long violet and the first few thousand points were
+     * indistinguishable from black. Stops let the walk be stated outright: black
+     * off the line, a real dark blue by three thousand, violet by ten, green by
+     * fifteen, yellow by twenty, then down through amber to red at a hundred
+     * thousand. The hue doubles back once, between violet and green, which is
+     * seen as the sky cooling through blue and teal on its way over.
+     */
+    private val BACKDROP_STOPS = arrayOf(
+        floatArrayOf(0f, 230f, 0.00f),
+        floatArrayOf(1_000f, 230f, 0.34f),
+        floatArrayOf(3_000f, 226f, 0.60f),
+        floatArrayOf(6_000f, 256f, 0.73f),
+        floatArrayOf(10_000f, 288f, 0.83f),
+        floatArrayOf(15_000f, 145f, 0.89f),
+        floatArrayOf(20_000f, 52f, 0.94f),
+        floatArrayOf(30_000f, 32f, 0.97f),
+        floatArrayOf(50_000f, 16f, 1.00f),
+        floatArrayOf(RED_AT, 0f, 1.00f)
+    )
 
     private var display: Typeface? = null
     private var displayBold: Typeface? = null
@@ -111,29 +138,40 @@ object Theme {
     fun scoreProgress(score: Int): Float =
         (score.toFloat() / RED_AT).coerceIn(0f, 1f)
 
-    /**
-     * Both the hue and the brightness climb on steep early curves.
-     *
-     * A linear walk to 100,000 spends the first ten minutes indistinguishable
-     * from black, which is what the last attempt did. These exponents put a
-     * visible dark blue on the board by the first thousand points, a blue-violet
-     * by five thousand and a clear violet by ten - while still leaving the top of
-     * the range somewhere to go. Value tops out well short of full: this is a
-     * backdrop behind bright shapes, so every step is a dark version of its hue.
-     */
-    private fun hueFor(t: Float): Float =
-        (BLUE_HUE + (RED_HUE - BLUE_HUE) * t.pow(0.55f)) % 360f
-
-    fun scoreBackground(score: Int): Int {
-        val t = scoreProgress(score)
-        val value = MAX_BACKDROP_VALUE * t.pow(0.30f)
-        val saturation = 0.88f - 0.10f * t
-        return Color.HSVToColor(floatArrayOf(hueFor(t), saturation, value))
+    /** Where [score] sits between two stops, as hue and brightness fraction. */
+    private fun backdropAt(score: Int): FloatArray {
+        val s = score.toFloat().coerceIn(0f, RED_AT)
+        var i = 0
+        while (i < BACKDROP_STOPS.size - 2 && s > BACKDROP_STOPS[i + 1][0]) i++
+        val a = BACKDROP_STOPS[i]
+        val b = BACKDROP_STOPS[i + 1]
+        val span = (b[0] - a[0]).coerceAtLeast(1f)
+        val t = ((s - a[0]) / span).coerceIn(0f, 1f)
+        return floatArrayOf(a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t)
     }
 
-    /** The same hue, lit, for tinting shapes and the floor seam. */
+    fun scoreBackground(score: Int): Int {
+        val at = backdropAt(score)
+        val level = at[1]
+        // Saturation eases off as the sky brightens, or the top of the range reads
+        // as a flat poster colour rather than as light.
+        return Color.HSVToColor(
+            floatArrayOf(at[0], 0.88f - 0.14f * level, MAX_BACKDROP_VALUE * level)
+        )
+    }
+
+    /** The same hue, lit, for the floor seam and anything that echoes the sky. */
     fun scoreAccent(score: Int): Int =
-        Color.HSVToColor(floatArrayOf(hueFor(scoreProgress(score)), 0.62f, 0.92f))
+        Color.HSVToColor(floatArrayOf(backdropAt(score)[0], 0.62f, 0.92f))
+
+    /**
+     * What the shapes are tinted toward: the sky's complement rather than the sky
+     * itself, a third of the wheel away. Pulling them toward the backdrop's own
+     * hue made a violet shape on a violet sky - the whole point of tinting them is
+     * that they keep standing off it as it moves.
+     */
+    fun scoreShapeTint(score: Int): Int =
+        Color.HSVToColor(floatArrayOf((backdropAt(score)[0] + 165f) % 360f, 0.58f, 0.98f))
 
     fun withAlpha(color: Int, alpha: Float): Int =
         Color.argb(

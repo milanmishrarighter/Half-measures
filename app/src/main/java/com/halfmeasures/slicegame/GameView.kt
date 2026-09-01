@@ -121,6 +121,10 @@ class GameView @JvmOverloads constructor(
     /** How the average moved on the run just finished, and whether it had one to move from. */
     private var averageDelta = 0
     private var averageMoved = false
+    /** +1 if this run promoted the player, -1 if it demoted them, 0 if neither. */
+    private var rankMoved = 0
+    /** How many of the card's reveal cues have been played this time round. */
+    private var cardCue = 0
     private val averageScore: Int
         get() = if (runsFinished <= 0) 0 else (scoreTotal / runsFinished).toInt()
     private var bestCuts = scores.getInt("best_cuts", 0)
@@ -645,7 +649,8 @@ class GameView @JvmOverloads constructor(
         val toHeading = CARD_RULE_GAP * 2
         val toFirstRow = CARD_RULE_GAP - CARD_BREAKDOWN_ROW_HEIGHT / 2f - CARD_ROW_TEXT_OFFSET
         val rows = CARD_BREAKDOWN_ROW_HEIGHT * (cutBuckets.size - 1)
-        return (CARD_HEADER_HEIGHT + toLastStat + toHeading + toFirstRow + rows + CARD_PAD) * density
+        return (CARD_HEADER_HEIGHT + rankFlashSpace() + toLastStat + toHeading +
+            toFirstRow + rows + CARD_PAD) * density
     }
 
     // ---------------------------------------------------------------------
@@ -731,7 +736,10 @@ class GameView @JvmOverloads constructor(
             updateSettling(dt)
         }
 
-        if (state == State.GAME_OVER) cardReveal += dt
+        if (state == State.GAME_OVER) {
+            cardReveal += dt
+            playCardCues()
+        }
         lastCutAge += dt
 
         var i = pieces.size - 1
@@ -786,7 +794,6 @@ class GameView @JvmOverloads constructor(
         // so they have to be rebuilt when the level changes.
         bodyShaders.clear()
         if (settings.vibrationEnabled) haptics.tick(settings.vibrationStrength)
-        sounds.play(Sfx.LEVEL_UP, gain = 0.9f)
         sounds.play(Sfx.LEVEL_UP, gain = 0.9f)
     }
 
@@ -886,9 +893,14 @@ class GameView @JvmOverloads constructor(
         // Captured before this run lands, so the card can say which way it went.
         val previousAverage = averageScore
         averageMoved = runsFinished > 0
+        val previousRank = Ranks.forScore(previousAverage).number
         runsFinished++
         scoreTotal += score
         averageDelta = averageScore - previousAverage
+        // A rank is only a move if the player had one to move from.
+        rankMoved = if (!averageMoved) 0 else
+            Ranks.forScore(averageScore).number.compareTo(previousRank)
+        cardCue = 0
         scores.edit()
             .putInt("runs_finished", runsFinished)
             .putLong("score_total", scoreTotal)
@@ -1769,22 +1781,31 @@ class GameView @JvmOverloads constructor(
     }
 
     /**
-     * 100 points for a flawless halving, falling away with the miss, then bent by
-     * streaks: a run of great-or-better cuts compounds the payout, while a run of
-     * sloppy ones eats into it and can start costing points outright.
+     * A hundred points for a dead-centre cut, one point off for every percentage
+     * point of miss - so a 50/50 pays 100 and a 49/51 pays 99 - and then the
+     * perfect streak multiplies the lot: the second perfect in a row pays double,
+     * the third triple, and so on up to the ceiling.
+     *
+     * There is no bonus for precision on top of the base any more. That is what
+     * put 123 on the board for a flawless cut: a flat 100, a precision bonus, and
+     * a combo multiplier all stacked on one number nobody could work backwards
+     * from. The good streak pays nothing extra at all - it already earns its keep
+     * by not costing health.
      */
     private fun applyScore(deviation: Float, grade: Grade): Int {
         val sloppy = grade == Grade.POOR || grade == Grade.MISS
 
-        // The two streaks are mutually exclusive: a perfect ends any good run and
-        // starts a perfect run, and a merely-great cut does the reverse.
+        // The two streaks are counted separately and a perfect belongs to both.
+        // A perfect used to end a good run, which read as a punishment for the
+        // best cut in the game.
         when (grade) {
             Grade.PERFECT -> {
                 perfectCount++
                 perfectStreak++
-                hotStreak = 0
+                hotStreak++
                 coldStreak = 0
                 bestPerfectStreak = max(bestPerfectStreak, perfectStreak)
+                bestStreak = max(bestStreak, hotStreak)
             }
             Grade.GREAT -> {
                 hotStreak++
@@ -1800,14 +1821,7 @@ class GameView @JvmOverloads constructor(
         }
 
         val base = (100f - deviation * settings.scoreMissWeight).coerceAtLeast(0f)
-        // Ramps from nothing at the edge of the great window up to the full bonus at a perfect.
-        val precision = if (deviation <= settings.greatThreshold && settings.greatThreshold > 0f) {
-            1f + (settings.greatBonusPercent / 100f) * (1f - deviation / settings.greatThreshold)
-        } else {
-            1f
-        }
-
-        var gained = (base * precision * comboMultiplier()).roundToInt()
+        var gained = (base * comboMultiplier()).roundToInt()
 
         if (coldStreak > 0) {
             // Each sloppy cut in a row shaves more off the payout; past the second
@@ -1822,19 +1836,12 @@ class GameView @JvmOverloads constructor(
     }
 
     /**
-     * Good and perfect streaks pay separately and stack: every great-or-better cut
-     * in a row adds the good-streak bonus, and every *perfect* in a row adds its own
-     * larger bonus on top. Both are additive so the ceiling stays predictable.
+     * The perfect streak, straight: one perfect pays once, two in a row pay twice,
+     * three three times, up to the ceiling. Nothing else multiplies, so the number
+     * on screen is the number applied.
      */
-    private fun comboMultiplier(): Float {
-        // Only one streak can be live at a time, so whichever is running pays.
-        val bonus = if (perfectStreak > 0) {
-            (perfectStreak - 1).coerceAtLeast(0) * settings.perfectStreakBonusPercent / 100f
-        } else {
-            (hotStreak - 1).coerceAtLeast(0) * settings.comboBonusPercent / 100f
-        }
-        return (1f + bonus).coerceAtMost(settings.maxComboMultiplier)
-    }
+    private fun comboMultiplier(): Float =
+        perfectStreak.coerceAtLeast(1).toFloat().coerceAtMost(settings.maxComboMultiplier)
 
     private fun spawnPieces(
         shape: GameShape,
@@ -2036,13 +2043,13 @@ class GameView @JvmOverloads constructor(
 
     /** A shape's own colour, pulled a little toward the current level's hue. */
     private fun tintedLight(paletteIndex: Int): Int =
-        Theme.lerpColor(Theme.shapePalette[paletteIndex][0], Theme.scoreAccent(score), STAGE_TINT)
+        Theme.lerpColor(Theme.shapePalette[paletteIndex][0], Theme.scoreShapeTint(score), STAGE_TINT)
 
     private fun bodyShader(paletteIndex: Int): RadialGradient =
         bodyShaders.getOrPut(paletteIndex) {
             val pair = Theme.shapePalette[paletteIndex]
             val light = tintedLight(paletteIndex)
-            val deep = Theme.lerpColor(pair[1], Theme.scoreAccent(score), STAGE_TINT * 0.7f)
+            val deep = Theme.lerpColor(pair[1], Theme.scoreShapeTint(score), STAGE_TINT * 0.7f)
             RadialGradient(
                 0f, 0f, 1f,
                 intArrayOf(Theme.lighten(light, 0.22f), light, deep),
@@ -2402,7 +2409,7 @@ class GameView @JvmOverloads constructor(
             uiBoldPaint.textSize = 22f * density * beat
             uiBoldPaint.color = Theme.gold
             canvas.drawText(
-                "${perfectStreak}x PERFECT  ·  ${"%.1f".format(comboMultiplier())}x",
+                "${perfectStreak}x PERFECT  ·  ${"%.0f".format(comboMultiplier() * 100f)} PTS",
                 width / 2f, streakY, uiBoldPaint
             )
         } else if (hotStreak > 1) {
@@ -2411,7 +2418,7 @@ class GameView @JvmOverloads constructor(
             uiBoldPaint.textSize = 20f * density * beat
             uiBoldPaint.color = Theme.good
             canvas.drawText(
-                "${hotStreak}x STREAK  ·  ${"%.1f".format(comboMultiplier())}x",
+                "${hotStreak}x GOOD STREAK",
                 width / 2f, streakY, uiBoldPaint
             )
         } else if (coldStreak > 1) {
@@ -2845,6 +2852,33 @@ class GameView @JvmOverloads constructor(
         drawButton(canvas, tertiaryButton, "SETTINGS", primary = false, pressed = pressedButton == 3)
     }
 
+    /**
+     * The card's reveal, scored. Each element that slides in gets its own noise
+     * from the banks the game already carries: a swipe as the card arrives, a
+     * chime under the score, a rising tick per stat row, and a flourish if the
+     * run changed the player's rank. Fired once each, in order, off the same
+     * clock the drawing reads - so the sound cannot drift from the picture.
+     */
+    private fun playCardCues() {
+        while (cardCue < CARD_CUE_TIMES.size && cardReveal >= CARD_CUE_TIMES[cardCue]) {
+            when (val cue = cardCue) {
+                0 -> sounds.play(SfxBank.SWIPE, gain = 0.55f)
+                1 -> sounds.play(Sfx.HEAL, gain = 0.7f, rate = 0.92f)
+                2 -> {
+                    // The rank line lands with its own flourish, up or down.
+                    if (rankMoved > 0) sounds.play(Sfx.LEVEL_UP, gain = 0.95f)
+                    else if (rankMoved < 0) sounds.play(SfxBank.BAD, gain = 0.7f)
+                    else sounds.play(Sfx.BUTTON, gain = 0.45f, rate = 1.15f)
+                }
+                // One tick per stat row, each a step higher than the last.
+                else -> sounds.play(
+                    Sfx.BUTTON, gain = 0.32f, rate = 1f + (cue - 3) * 0.09f
+                )
+            }
+            cardCue++
+        }
+    }
+
     /** 0 until [at], then eases to 1 - the stagger behind the card's reveal. */
     private fun revealAlpha(at: Float, span: Float = 0.3f): Float {
         val t = ((cardReveal - at) / span).coerceIn(0f, 1f)
@@ -2949,7 +2983,31 @@ class GameView @JvmOverloads constructor(
         // the same height.
         val gap = SUMMARY_GAP * density
         val pillHeight = PILL_HEIGHT * density
-        val rankY = pillsY + pillHeight + gap
+
+        // A promotion or a demotion gets its own line, in its own reserved space
+        // above the pill it is talking about. The card is measured with that space
+        // in it, so the line arrives in a gap rather than on top of something.
+        var below = pillsY + pillHeight / 2f
+        if (rankMoved != 0) {
+            val up = rankMoved > 0
+            val beat = 0.55f + 0.45f * cos(cardReveal * 8f)
+            uiBoldPaint.textAlign = Paint.Align.CENTER
+            uiBoldPaint.textSize = RANK_FLASH_TEXT * density * (1f + 0.08f * beat)
+            uiBoldPaint.letterSpacing = 0.1f
+            uiBoldPaint.color = Theme.withAlpha(
+                Theme.lerpColor(
+                    if (up) rungColor(rank.number) else Theme.danger, Color.WHITE, beat * 0.6f
+                ),
+                rankAlpha
+            )
+            val line = if (up) "YOU JUST RANKED UP!" else "YOU JUST RANKED DOWN"
+            uiBoldPaint.getTextBounds(line, 0, line.length, inkBounds)
+            canvas.drawText(line, cx, below + gap - inkBounds.top, uiBoldPaint)
+            uiBoldPaint.letterSpacing = 0f
+            below += RANK_FLASH_SPACE * density
+        }
+
+        val rankY = below + gap + pillHeight / 2f
         drawRankPill(canvas, cx, rankY, rank, rankAlpha)
 
         val pipReach = ladderReach()
@@ -2965,7 +3023,7 @@ class GameView @JvmOverloads constructor(
 
         rimPaint.strokeWidth = 1.5f
         rimPaint.color = Theme.withAlpha(Theme.hairline, revealAlpha(CARD_ROWS_AT - 0.1f))
-        val dividerY = cardTop + CARD_HEADER_HEIGHT * density
+        val dividerY = cardTop + (CARD_HEADER_HEIGHT + rankFlashSpace()) * density
         canvas.drawLine(cardLeft + padX, dividerY, cardRight - padX, dividerY, rimPaint)
 
         val left = cardLeft + padX
@@ -3371,6 +3429,9 @@ class GameView @JvmOverloads constructor(
      * colour. Where you stand on the ladder is a shape best answered by a
      * picture, not by "1 of 13".
      */
+    /** The height the rank-change line claims, in dp; zero when nothing changed. */
+    private fun rankFlashSpace(): Float = if (rankMoved != 0) RANK_FLASH_SPACE else 0f
+
     /** How far the ladder reaches from its own line - the swollen pip's radius. */
     private fun ladderReach(): Float = PIP_RADIUS * PIP_CURRENT * density
 
@@ -3552,6 +3613,9 @@ class GameView @JvmOverloads constructor(
         const val SUMMARY_PILLS_Y = 168f
         /** The one clear space between every part of the summary block. */
         const val SUMMARY_GAP = 20f
+        /** Ink height reserved for the rank-change line, gap not included. */
+        const val RANK_FLASH_SPACE = 15f
+        const val RANK_FLASH_TEXT = 17f
 
         const val BEST_LABEL = "BEST:"
         const val AVG_LABEL = "AVG:"
@@ -3588,7 +3652,7 @@ class GameView @JvmOverloads constructor(
 
         /** Seconds the last-cut readout stays under the score. */
         /** How far a shape's colour is pulled toward the level's hue. */
-        const val STAGE_TINT = 0.32f
+        const val STAGE_TINT = 0.40f
 
         const val LAST_CUT_HOLD = 1.1f
         /** Longest the ending waits for airborne shapes to clear. */
@@ -3600,6 +3664,18 @@ class GameView @JvmOverloads constructor(
         const val CARD_ROWS_AT = 0.80f
         const val CARD_ROW_STAGGER = 0.11f
         const val CARD_BREAKDOWN_STAGGER = 0.09f
+
+        /**
+         * When each of the card's reveal noises fires, on the same clock the
+         * drawing reads: the card arriving, the score landing, the rank line, then
+         * one tick per stat row as they stagger in.
+         */
+        val CARD_CUE_TIMES = floatArrayOf(
+            0.02f, CARD_SCORE_AT, CARD_SCORE_AT + 0.12f,
+            CARD_ROWS_AT, CARD_ROWS_AT + CARD_ROW_STAGGER,
+            CARD_ROWS_AT + CARD_ROW_STAGGER * 2, CARD_ROWS_AT + CARD_ROW_STAGGER * 3,
+            CARD_ROWS_AT + CARD_ROW_STAGGER * 4
+        )
 
         /** Accuracy buckets shown on the game-over card, widest miss last. */
         /** One per [Grade], showing the worst split that still lands in that tier. */

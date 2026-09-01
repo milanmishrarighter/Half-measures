@@ -275,7 +275,7 @@ data class GameSettings(
         const val DEFAULT_PERFECT_HEAL_PER_STREAK = 10f
         const val DEFAULT_PERFECT_STREAK_BONUS_PERCENT = 30f
         const val DEFAULT_COMBO_BONUS_PERCENT = 15f
-        const val DEFAULT_MAX_COMBO_MULTIPLIER = 4f
+        const val DEFAULT_MAX_COMBO_MULTIPLIER = 10f
         const val DEFAULT_COLD_STREAK_PENALTY_PERCENT = 20f
         const val DEFAULT_MISS_ENDS_RUN = true
         const val DEFAULT_GUIDE_LINE_ENABLED = false
@@ -362,7 +362,7 @@ data class GameSettings(
         const val MIN_COMBO_BONUS_PERCENT = 0f
         const val MAX_COMBO_BONUS_PERCENT = 50f
         const val MIN_MAX_COMBO_MULTIPLIER = 1f
-        const val MAX_MAX_COMBO_MULTIPLIER = 6f
+        const val MAX_MAX_COMBO_MULTIPLIER = 20f
         const val MIN_COLD_STREAK_PENALTY_PERCENT = 0f
         const val MAX_COLD_STREAK_PENALTY_PERCENT = 60f
         const val MIN_GUIDE_LINE_OPACITY = 0.1f
