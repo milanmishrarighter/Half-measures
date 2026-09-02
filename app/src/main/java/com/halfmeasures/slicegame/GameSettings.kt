@@ -139,9 +139,9 @@ data class GameSettings(
     var soundEnabled: Boolean = DEFAULT_SOUND_ENABLED,
     /** How loud it is. */
     var soundVolume: Float = DEFAULT_SOUND_VOLUME,
-    /** How hard the neon outline burns around each shape. 0 turns it off. */
     /** How much film grain sits over the shape bodies. */
     var grainAmount: Float = DEFAULT_GRAIN_AMOUNT,
+    /** How hard the neon outline burns around each shape. 0 turns it off. */
     var neonGlow: Float = DEFAULT_NEON_GLOW,
     /** Whether the announcer shouts on a perfect cut. */
     var voiceEnabled: Boolean = DEFAULT_VOICE_ENABLED,
@@ -303,19 +303,14 @@ data class GameSettings(
         const val DEFAULT_LOW_HEALTH_AT = 20
         const val DEFAULT_SOUND_ENABLED = true
         const val DEFAULT_SOUND_VOLUME = 0.8f
-        const val DEFAULT_GRAIN_AMOUNT = 0.13f
+        const val DEFAULT_GRAIN_AMOUNT = 0.05f
         const val MIN_GRAIN_AMOUNT = 0f
         const val MAX_GRAIN_AMOUNT = 0.45f
 
-        /**
-         * Off. The four-stroke glow stack around an outline was not liked; what
-         * is left at zero is the single crisp edge the shapes always had, and the
-         * slider is still here for anyone who wants the tube back.
-         */
-        const val DEFAULT_NEON_GLOW = 0f
+        const val DEFAULT_NEON_GLOW = 2.5f
         const val DEFAULT_VOICE_ENABLED = true
         const val DEFAULT_MUSIC_ENABLED = true
-        const val DEFAULT_MUSIC_VOLUME = 0.30f
+        const val DEFAULT_MUSIC_VOLUME = 0.20f
         const val MIN_MUSIC_VOLUME = 0f
         const val MAX_MUSIC_VOLUME = 1f
         const val MIN_SOUND_VOLUME = 0f
@@ -326,7 +321,7 @@ data class GameSettings(
         const val DEFAULT_CONTINUES_ENABLED = true
 
         /** No cap: a run can be bought back on every death. */
-        const val DEFAULT_CONTINUES_PER_RUN = 0
+        const val DEFAULT_CONTINUES_PER_RUN = 1
         const val DEFAULT_AD_GATE_EVERY = 10
         const val DEFAULT_CONTINUE_HEALTH_FRACTION = 1.0f
 

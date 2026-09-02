@@ -315,8 +315,6 @@ class GameView @JvmOverloads constructor(
      * what produced the stepped banding; one solid value cannot band at any size.
      * It eases toward the current level's hue so the change reads as a slow drift.
      */
-    /** Which slice of the score ramp the cached shape gradients were built for. */
-    private var lastHueBucket = 0
     private var backgroundColor = Theme.scoreBackground(0)
     private var accentColor = Theme.scoreAccent(0)
     private val scrimPaint = Paint()
@@ -348,6 +346,9 @@ class GameView @JvmOverloads constructor(
     private val path = Path()
     private val shaderMatrix = Matrix()
     private val bodyShaders = HashMap<Int, Shader>()
+
+    /** Which slice of the score ramp the shape colours are currently built for. */
+    private fun colourSlice(): Int = (score / COLOUR_SLICE_SCORE) % COLOUR_SLICES
     private val grainMatrix = Matrix()
     private val grainPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val shapeBounds = RectF()
@@ -404,8 +405,9 @@ class GameView @JvmOverloads constructor(
     }
 
     fun stopLoop() {
-        // Whatever took the foreground from us should not have to play over this.
-        sounds.pauseMusic()
+        // The music is not this loop's business. Stopping it here silenced the
+        // title track the moment the player opened settings, which is not leaving
+        // the app - HalfMeasuresApp watches for that instead.
         if (!loopRunning) return
         loopRunning = false
         Choreographer.getInstance().removeFrameCallback(this)
@@ -775,14 +777,6 @@ class GameView @JvmOverloads constructor(
         if (state == State.GAME_OVER && beatBestScore && cardReveal > CARD_SCORE_AT) updateFireworks(dt)
 
         effects.update(dt, gravity)
-
-        // The shape gradients are cached per palette entry and tinted by the
-        // score's hue, so they have to be dropped as that hue moves.
-        val hueBucket = score / 250
-        if (hueBucket != lastHueBucket) {
-            lastHueBucket = hueBucket
-            bodyShaders.clear()
-        }
 
         // Creep toward the score's colours so the change is a slow shift in the
         // light rather than a hard cut.
@@ -1314,13 +1308,15 @@ class GameView @JvmOverloads constructor(
         hasLastTouch = false
         trailPoints.clear()
         if (settings.vibrationEnabled) haptics.tick(settings.vibrationStrength)
-        sounds.play(Sfx.BUTTON)
-        sounds.pauseMusic()
+        sounds.play(SfxBank.UI)
+        // Held rather than merely paused: a paused run stays silent even if the
+        // player walks off into settings and comes back.
+        sounds.holdMusic()
     }
 
     private fun resumeGame() {
         if (state != State.PAUSED) return
-        sounds.resumeMusic()
+        sounds.releaseMusicHold()
         state = State.PLAYING
         // The clock has been standing still, so drop the stale timestamp rather
         // than handing the next frame the whole paused duration as its delta.
@@ -1333,6 +1329,7 @@ class GameView @JvmOverloads constructor(
      * from without going through another one.
      */
     private fun returnToMenu() {
+        sounds.releaseMusicHold()
         shapes.clear()
         pieces.clear()
         trailPoints.clear()
@@ -1363,6 +1360,7 @@ class GameView @JvmOverloads constructor(
     }
 
     private fun startNewGame() {
+        sounds.releaseMusicHold()
         shapes.clear()
         pieces.clear()
         trailPoints.clear()
@@ -1398,7 +1396,6 @@ class GameView @JvmOverloads constructor(
         dangerArmed = true
         pixels.reset()
         bodyShaders.clear()
-        lastHueBucket = score / 250
         backgroundColor = Theme.scoreBackground(score)
         accentColor = Theme.scoreAccent(score)
         continuesUsed = 0
@@ -1495,7 +1492,7 @@ class GameView @JvmOverloads constructor(
                 if (state == State.AD_PENDING) {
                     val released = pressedButton
                     pressedButton = 0
-                    if (released != 0) sounds.play(Sfx.BUTTON)
+                    if (released != 0) sounds.play(SfxBank.UI)
                     if (confirmingAdExit) {
                         if (released == 1 && adConfirmLeave.contains(event.x, event.y)) {
                             cancelPendingAd("Reward skipped")
@@ -1516,7 +1513,7 @@ class GameView @JvmOverloads constructor(
                         pauseSettings.contains(event.x, event.y)
                     if (onPrimary || onSecondary || onTertiary) {
                         if (settings.vibrationEnabled) haptics.tick(settings.vibrationStrength)
-                        sounds.play(Sfx.BUTTON)
+                        sounds.play(SfxBank.UI)
                     }
                     when (state) {
                         State.PAUSED -> {
@@ -1547,27 +1544,27 @@ class GameView @JvmOverloads constructor(
                     when {
                         released == 1 && primaryButton.contains(event.x, event.y) -> {
                             if (settings.vibrationEnabled) haptics.tick(settings.vibrationStrength)
-                            sounds.play(Sfx.BUTTON)
+                            sounds.play(SfxBank.UI)
                             requestNewGame()
                         }
                         released == 2 && secondaryButton.contains(event.x, event.y) -> {
                             if (settings.vibrationEnabled) haptics.tick(settings.vibrationStrength)
-                            sounds.play(Sfx.BUTTON)
+                            sounds.play(SfxBank.UI)
                             onOpenInstructions?.invoke()
                         }
                         released == 3 && tertiaryButton.contains(event.x, event.y) -> {
                             if (settings.vibrationEnabled) haptics.tick(settings.vibrationStrength)
-                            sounds.play(Sfx.BUTTON)
+                            sounds.play(SfxBank.UI)
                             onOpenSettings?.invoke()
                         }
                         released == 4 && overQuaternary.contains(event.x, event.y) -> {
                             if (settings.vibrationEnabled) haptics.tick(settings.vibrationStrength)
-                            sounds.play(Sfx.BUTTON)
+                            sounds.play(SfxBank.UI)
                             returnToMenu()
                         }
                         released == 5 && overContinue.contains(event.x, event.y) -> {
                             if (settings.vibrationEnabled) haptics.great(settings.vibrationStrength)
-                            sounds.play(Sfx.BUTTON, rate = 1.2f)
+                            sounds.play(SfxBank.UI, gain = 1f)
                             requestAd(AdPurpose.CONTINUE)
                         }
                     }
@@ -2079,9 +2076,19 @@ class GameView @JvmOverloads constructor(
      */
     private fun tintedLight(paletteIndex: Int): Int = Theme.shapeLight(score, paletteIndex)
 
-    /** The shape body: a highlight in the upper left falling to the deep colour. */
-    private fun bodyShader(paletteIndex: Int): Shader =
-        bodyShaders.getOrPut(paletteIndex) {
+    /**
+     * The shape body: a highlight in the upper left falling to the deep colour.
+     *
+     * Keyed by the colour slot *and* the slice of the score the colours were built
+     * for. Keying on the slot alone meant an entry cached before something changed
+     * the colours - a settings change, a new run, the score crossing into the next
+     * slice - could still be handed to the next shape drawn, which is why one
+     * shape would wear the old shading while everything after it wore the new.
+     */
+    private fun bodyShader(paletteIndex: Int): Shader {
+        // A long run walks through slices and leaves the old ones behind it.
+        if (bodyShaders.size > MAX_CACHED_SHADERS) bodyShaders.clear()
+        return bodyShaders.getOrPut(paletteIndex * COLOUR_SLICES + colourSlice()) {
             val light = Theme.shapeLight(score, paletteIndex)
             val deep = Theme.shapeDeep(score, paletteIndex)
             RadialGradient(
@@ -2091,6 +2098,7 @@ class GameView @JvmOverloads constructor(
                 Shader.TileMode.CLAMP
             )
         }
+    }
 
     /** Places [bodyShader] on a shape of radius [r] centred at [cx],[cy]. */
     private fun placeBody(shader: Shader, cx: Float, cy: Float, r: Float) {
@@ -2953,9 +2961,11 @@ class GameView @JvmOverloads constructor(
                     // The rank line lands with its own flourish, up or down.
                     if (rankMoved > 0) sounds.play(Sfx.RANK_UP, gain = 1f)
                     else if (rankMoved < 0) sounds.play(Sfx.RANK_DOWN, gain = 0.9f)
-                    else sounds.play(Sfx.BUTTON, gain = 0.45f, rate = 1.15f)
+                    else sounds.play(SfxBank.UI, gain = 0.45f)
                 }
-                // One tick per stat row, each a step higher than the last.
+                // One tick per stat row, each a step higher than the last. This
+                // one stays a single sound on a rising pitch: it is a run of
+                // ticks, and a run built from ten different blips is a rattle.
                 else -> sounds.play(
                     Sfx.BUTTON, gain = 0.32f, rate = 1f + (cue - 3) * 0.09f
                 )
@@ -3657,6 +3667,15 @@ class GameView @JvmOverloads constructor(
         const val PAUSE_BUTTON_SIZE = 34f
 
         /** Grain tile edge, in pixels, and how strongly it sits over the body. */
+        /**
+         * How finely the score is sliced for shape colours, and how many slices
+         * are kept before the keys wrap. Coarse enough that the cache is a handful
+         * of entries, fine enough that the colour drift is not visible in steps.
+         */
+        const val COLOUR_SLICE_SCORE = 250
+        const val COLOUR_SLICES = 64
+        const val MAX_CACHED_SHADERS = 96
+
         const val GRAIN_TILE = 128
 
 

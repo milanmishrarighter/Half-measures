@@ -29,7 +29,7 @@ enum class Sfx { BUTTON, MISS, HEAL, LEVEL_UP, COUNTDOWN, GAME_OVER, BEST, RANK_
  * major chords; [BAD] and [DANGER] are minor, diminished and chromatic. A player
  * should be able to tell how a cut landed with their eyes shut.
  */
-enum class SfxBank { SWIPE, SLICE, GOOD, PERFECT, BAD, DANGER, VOICE }
+enum class SfxBank { SWIPE, SLICE, GOOD, PERFECT, BAD, DANGER, VOICE, UI }
 
 /**
  * All of the game's audio, synthesised on the device rather than shipped as files.
@@ -64,6 +64,7 @@ class SoundEngine(context: Context) {
     private val tracks = arrayOfNulls<ShortArray>(TRACK_COUNT)
     private var music: MusicStream? = null
     private var musicWanted = false
+    private var musicHeld = false
     private var currentTrack = -1
     private var musicSpeed = 1f
 
@@ -215,8 +216,25 @@ class SoundEngine(context: Context) {
         music?.pause()
     }
 
+    /**
+     * A hold the game puts on the music, distinct from the app losing the screen.
+     *
+     * Without it, coming back from settings would start the track under a paused
+     * run: the app-level watcher sees a screen come forward and resumes, and it
+     * has no idea the game behind it is sitting on its pause card.
+     */
+    fun holdMusic() {
+        musicHeld = true
+        music?.pause()
+    }
+
+    fun releaseMusicHold() {
+        musicHeld = false
+        resumeMusic()
+    }
+
     fun resumeMusic() {
-        if (!musicEnabled || !musicWanted) return
+        if (!musicEnabled || !musicWanted || musicHeld) return
         music?.resume()
     }
 
@@ -434,6 +452,52 @@ class SoundEngine(context: Context) {
         }
     }
 
+    /**
+     * Ten button blips.
+     *
+     * One click on every press was the most-heard sound in the app by a distance,
+     * and a sound heard that often has to have somewhere to go. These are short
+     * and quiet by design - a menu is not a place for a flourish - but no two are
+     * built the same way, and the bank pitches each shot on top of that.
+     */
+    private fun renderUi(i: Int): ShortArray = when (i) {
+        // A plain chip blip, up.
+        0 -> buffer(70) { b -> tone(b, 0, 55, 880f, 1180f, SQUARE, 0.44f, duty = 0.25f, crush = 3) }
+        // The same, down - a press and a release read differently.
+        1 -> buffer(70) { b -> tone(b, 0, 58, 1180f, 820f, SQUARE, 0.42f, duty = 0.25f, crush = 3) }
+        // Two-step, a fourth apart.
+        2 -> buffer(110) { b ->
+            tone(b, 0, 38, 784f, 784f, SQUARE, 0.36f, duty = 0.5f, crush = 3)
+            tone(b, 34, 55, 1046f, 1046f, SQUARE, 0.36f, duty = 0.25f, crush = 3)
+        }
+        // Soft triangle, no edge to it.
+        3 -> buffer(90) { b -> tone(b, 0, 78, 988f, 1245f, TRIANGLE, 0.40f, attackMs = 5) }
+        // A tick with a breath of noise on the front, like a key.
+        4 -> buffer(80) { b ->
+            tone(b, 0, 18, 0f, 0f, NOISE, 0.16f, attackMs = 1, crush = 4)
+            tone(b, 6, 52, 1046f, 1318f, SQUARE, 0.36f, duty = 0.125f, crush = 3)
+        }
+        // Narrow duty: thin and glassy.
+        5 -> buffer(75) { b -> tone(b, 0, 62, 1318f, 1568f, SQUARE, 0.30f, duty = 0.125f, crush = 2) }
+        // A fifth below, fatter.
+        6 -> buffer(95) { b ->
+            tone(b, 0, 70, 587f, 784f, SQUARE, 0.40f, duty = 0.375f, crush = 3)
+            tone(b, 0, 40, 1174f, 1568f, TRIANGLE, 0.14f, attackMs = 3)
+        }
+        // Two-step down, for anything that reads as backing out.
+        7 -> buffer(110) { b ->
+            tone(b, 0, 40, 1046f, 1046f, SQUARE, 0.34f, duty = 0.25f, crush = 3)
+            tone(b, 36, 60, 784f, 740f, SQUARE, 0.36f, duty = 0.25f, crush = 4)
+        }
+        // Saw, with a bite to the attack.
+        8 -> buffer(80) { b -> tone(b, 0, 66, 660f, 990f, SAW, 0.30f, attackMs = 2, crush = 4) }
+        // A sine pip under a square one: the roundest of the set.
+        else -> buffer(100) { b ->
+            tone(b, 0, 46, 1568f, 1568f, SQUARE, 0.26f, duty = 0.25f, crush = 2)
+            tone(b, 0, 88, 392f, 392f, SINE, 0.30f, attackMs = 6)
+        }
+    }
+
     private fun renderVariant(bank: SfxBank, index: Int): ShortArray = when (bank) {
         SfxBank.SWIPE -> renderSwipe(index)
         SfxBank.SLICE -> renderSlice(index)
@@ -441,6 +505,7 @@ class SoundEngine(context: Context) {
         SfxBank.PERFECT -> renderPerfect(index)
         SfxBank.BAD -> renderBad(index)
         SfxBank.DANGER -> renderDanger(index)
+        SfxBank.UI -> renderUi(index)
         // Recorded, not rendered - loaded straight from the assets in prepare.
         SfxBank.VOICE -> ShortArray(0)
     }
@@ -988,7 +1053,7 @@ class SoundEngine(context: Context) {
 
     private companion object {
         /** Bumped whenever the set is retuned, so the cache cannot serve stale waves. */
-        const val RENDER_VERSION = 4
+        const val RENDER_VERSION = 5
 
         const val BANK_SIZE = 10
         const val RATE = 22050
@@ -1092,8 +1157,8 @@ object Sounds {
         }
     }
 
-    /** The click every button in the app makes. */
+    /** The click every button in the app makes - one of ten, pitched. */
     fun click(context: Context) {
-        of(context).play(Sfx.BUTTON)
+        of(context).play(SfxBank.UI)
     }
 }
