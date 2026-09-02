@@ -2064,10 +2064,32 @@ class GameView @JvmOverloads constructor(
 
     private fun buildPath(vertices: List<PointF2>) {
         path.rewind()
+        path.fillType = Path.FillType.WINDING
         vertices.forEachIndexed { i, p ->
             if (i == 0) path.moveTo(p.x, p.y) else path.lineTo(p.x, p.y)
         }
         path.close()
+    }
+
+    /**
+     * Builds a shape's drawing path: its render contours if it has them, otherwise
+     * its cut outline. Even-odd fill, so a second contour inside the first is a
+     * hole rather than more of the same shape.
+     */
+    private fun buildShapePath(shape: GameShape, verts: List<PointF2>) {
+        val contours = shape.worldContours()
+        if (contours == null) {
+            buildPath(verts)
+            return
+        }
+        path.rewind()
+        path.fillType = Path.FillType.EVEN_ODD
+        for (loop in contours) {
+            loop.forEachIndexed { i, p ->
+                if (i == 0) path.moveTo(p.x, p.y) else path.lineTo(p.x, p.y)
+            }
+            path.close()
+        }
     }
 
     /**
@@ -2156,7 +2178,7 @@ class GameView @JvmOverloads constructor(
         canvas.translate(shape.x, shape.y)
         canvas.scale(1.14f, 1.14f)
         canvas.translate(-shape.x, -shape.y)
-        buildPath(verts)
+        buildShapePath(shape, verts)
         glowPaint.color = Theme.withAlpha(tintedLight(shape.paletteIndex), 0.10f)
         canvas.drawPath(path, glowPaint)
         canvas.restore()
@@ -2165,12 +2187,12 @@ class GameView @JvmOverloads constructor(
         canvas.translate(shape.x, shape.y)
         canvas.scale(1.06f, 1.06f)
         canvas.translate(-shape.x, -shape.y)
-        buildPath(verts)
+        buildShapePath(shape, verts)
         glowPaint.color = Theme.withAlpha(tintedLight(shape.paletteIndex), 0.16f)
         canvas.drawPath(path, glowPaint)
         canvas.restore()
 
-        buildPath(verts)
+        buildShapePath(shape, verts)
         val shader = bodyShader(shape.paletteIndex)
         placeBody(shader, shape.x, shape.y, r)
         fillPaint.shader = shader
@@ -2244,7 +2266,7 @@ class GameView @JvmOverloads constructor(
         val py = shape.y + c * offset
 
         canvas.save()
-        buildPath(verts)
+        buildShapePath(shape, verts)
         canvas.clipPath(path)
 
         val spacing = max(7f, r * 0.15f)
@@ -2273,6 +2295,9 @@ class GameView @JvmOverloads constructor(
         canvas.rotate(piece.spin, piece.originX, piece.originY)
 
         path.rewind()
+        // A ring drawn just before this leaves the path even-odd; a half is one
+        // loop and wants the ordinary rule back.
+        path.fillType = Path.FillType.WINDING
         piece.points.forEachIndexed { i, p ->
             if (i == 0) path.moveTo(p.x, p.y) else path.lineTo(p.x, p.y)
         }

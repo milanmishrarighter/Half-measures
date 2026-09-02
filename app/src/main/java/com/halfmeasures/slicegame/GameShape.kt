@@ -195,25 +195,14 @@ private fun rectangleOutline(): List<PointF2> = listOf(
     PointF2(-1f, -0.55f), PointF2(1f, -0.55f), PointF2(1f, 0.55f), PointF2(-1f, 0.55f)
 )
 
-/** A rhombus proper: equal sides, lying on its side, so it is not the diamond. */
-private fun rhombusOutline(): List<PointF2> = listOf(
-    PointF2(-1f, 0f), PointF2(0f, -0.55f), PointF2(1f, 0f), PointF2(0f, 0.55f)
+/** A rectangle pushed over: equal opposite sides, no right angles anywhere. */
+private fun parallelogramOutline(): List<PointF2> = listOf(
+    PointF2(-1f, -0.5f), PointF2(0.55f, -0.5f), PointF2(1f, 0.5f), PointF2(-0.55f, 0.5f)
 )
 
 private fun ellipseOutline(): List<PointF2> = (0 until 36).map { i ->
     val t = (2.0 * Math.PI * i / 36).toFloat()
     PointF2(cos(t), 0.60f * sin(t))
-}
-
-/** A superellipse: |x|^4 + |y|^4 = 1, the square that has had its corners eased. */
-private fun squircleOutline(): List<PointF2> = (0 until 40).map { i ->
-    val t = (2.0 * Math.PI * i / 40).toFloat()
-    val c = cos(t)
-    val s = sin(t)
-    PointF2(
-        sqrt(abs(c)) * (if (c < 0f) -1f else 1f),
-        sqrt(abs(s)) * (if (s < 0f) -1f else 1f)
-    )
 }
 
 /** Half a disc, flat edge down. Its halving line is nowhere near its centre. */
@@ -243,6 +232,19 @@ private fun flowerOutline(): List<PointF2> = (0 until 72).map { i ->
  * bottom. Everything downstream - the area, the halving line, the clipping -
  * then works on it like any other outline.
  */
+private const val TORUS_INNER = 0.58f
+
+/** The two circles the ring is drawn from - see [ShapeKind.renderContours]. */
+private fun torusContours(): List<List<PointF2>> = listOf(
+    (0 until 48).map {
+        val t = (2.0 * Math.PI * it / 48).toFloat(); PointF2(cos(t), sin(t))
+    },
+    (0 until 36).map {
+        val t = (2.0 * Math.PI * it / 36).toFloat()
+        PointF2(TORUS_INNER * cos(t), TORUS_INNER * sin(t))
+    }
+)
+
 private fun torusOutline(): List<PointF2> {
     val slit = Math.toRadians(2.0).toFloat()
     val start = (Math.PI / 2).toFloat() + slit
@@ -254,7 +256,7 @@ private fun torusOutline(): List<PointF2> {
     }
     for (i in 0..34) {
         val t = end + (start - end) * i / 34f
-        v.add(PointF2(0.58f * cos(t), 0.58f * sin(t)))
+        v.add(PointF2(TORUS_INNER * cos(t), TORUS_INNER * sin(t)))
     }
     return v
 }
@@ -349,8 +351,7 @@ enum class ShapeKind(
     MOON("Moon", 13000, { moonOutline() }),
     RECTANGLE("Rectangle", 500, { rectangleOutline() }),
     ELLIPSE("Ellipse", 1500, { ellipseOutline() }),
-    SQUIRCLE("Squircle", 2500, { squircleOutline() }),
-    RHOMBUS("Rhombus", 3500, { rhombusOutline() }),
+    PARALLELOGRAM("Parallelogram", 2500, { parallelogramOutline() }),
     SEMICIRCLE("Semicircle", 5500, { semicircleOutline() }),
     FLOWER("Flower", 14000, { flowerOutline() }),
     HALF_TORUS("Half Torus", 15000, { halfTorusOutline() }),
@@ -358,6 +359,20 @@ enum class ShapeKind(
 
     /** Outline in unit space, computed once per kind. */
     val unitVertices: List<PointF2> by lazy(LazyThreadSafetyMode.NONE) { builder() }
+
+    /**
+     * What to draw, when that is not the same as what to cut.
+     *
+     * The ring is the only shape where those differ. Cutting needs one closed loop
+     * with no holes, so [unitVertices] runs it as a keyhole - out along a radius,
+     * round the outside, back in, round the inside - which is correct for the area
+     * and the halving line but leaves a hairline slit for the outline to trace.
+     * Drawing takes these two separate circles instead, filled even-odd, so the
+     * ring is a ring and the seam is nowhere.
+     */
+    val renderContours: List<List<PointF2>>? by lazy(LazyThreadSafetyMode.NONE) {
+        if (this == TORUS) torusContours() else null
+    }
 
     /**
      * The same outline again, but sized and centred for a badge rather than for
@@ -508,6 +523,19 @@ class GameShape(
                 x + r * (p.x * c - p.y * s),
                 y + r * (p.x * s + p.y * c)
             )
+        }
+    }
+
+    /** [ShapeKind.renderContours] carried into world space, or null. */
+    fun worldContours(): List<List<PointF2>>? {
+        val contours = kind.renderContours ?: return null
+        val c = cos(rotation)
+        val s = sin(rotation)
+        val r = radius * spawnScale
+        return contours.map { loop ->
+            loop.map { p ->
+                PointF2(x + r * (p.x * c - p.y * s), y + r * (p.x * s + p.y * c))
+            }
         }
     }
 
