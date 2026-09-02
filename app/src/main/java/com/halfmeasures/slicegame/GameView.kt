@@ -2173,6 +2173,10 @@ class GameView @JvmOverloads constructor(
         val shader = bodyShader(shape.paletteIndex)
         placeBody(shader, shape.x, shape.y, r)
         fillPaint.shader = shader
+        // Stated, not inherited. The rank badge on the score card leaves this paint
+        // at a fifth opacity, and a shape drawn straight after it came out dim -
+        // until the first cut, whose falling halves set the alpha and put it back.
+        fillPaint.alpha = 255
         canvas.drawPath(path, fillPaint)
         fillPaint.shader = null
         drawGrain(canvas, shape.spawnTimeMs.toFloat() % 997f, 1f)
@@ -3419,6 +3423,7 @@ class GameView @JvmOverloads constructor(
         fillPaint.shader = null
         fillPaint.color = Theme.withAlpha(if (up) Theme.good else Theme.danger, alpha)
         canvas.drawPath(path, fillPaint)
+        fillPaint.alpha = 255
     }
 
     /** BEST and AVERAGE together, centred on [cx] as one block. */
@@ -3510,6 +3515,7 @@ class GameView @JvmOverloads constructor(
         fillPaint.shader = null
         fillPaint.color = Theme.withAlpha(tint, 0.22f * alpha)
         canvas.drawPath(path, fillPaint)
+        fillPaint.alpha = 255
         rimPaint.strokeWidth = 1.8f * density
         rimPaint.color = Theme.withAlpha(tint, 0.95f * alpha)
         canvas.drawPath(path, rimPaint)
