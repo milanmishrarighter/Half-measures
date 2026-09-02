@@ -513,8 +513,8 @@ class DevSettingsActivity : AppCompatActivity() {
         body.addView(TextView(this).apply {
             text = "Untick a shape to keep it out of the game. The number is the score it " +
                 "starts appearing at - type over it to move a shape earlier or later, or " +
-                "clear it to put it back where the game puts it. The list is in running " +
-                "order - use SORT to redo it after changing a score."
+                "clear it to put it back where the game puts it. The list keeps itself in " +
+                "running order: change a score and the row moves as soon as you leave it."
             typeface = Theme.ui(this@DevSettingsActivity)
             setTextColor(Theme.textFaint)
             textSize = 14f
@@ -523,7 +523,23 @@ class DevSettingsActivity : AppCompatActivity() {
 
         val boxes = ArrayList<AppCompatCheckBox>()
         val fields = ArrayList<EditText>()
-        val kinds = ShapeKind.ordered(settings)
+        var kinds = ShapeKind.ordered(settings)
+        // The rows live in their own container so the order can be redone without
+        // rebuilding the screen around them - recreating the activity would throw
+        // away the scroll position and drop you back at the top of a long list.
+        val rows = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+
+        // Assigned further down, but the buttons and the rows' own focus listeners
+        // all need to be able to ask for a rebuild, so the handle exists first.
+        var buildRows: (() -> Unit)? = null
+
+        /** Redoes the order, but only when a score has actually moved something. */
+        fun resort() {
+            val next = ShapeKind.ordered(settings)
+            if (next == kinds) return
+            kinds = next
+            buildRows?.invoke()
+        }
 
         body.addView(LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -540,16 +556,9 @@ class DevSettingsActivity : AppCompatActivity() {
             addView(pillButton("RESET SCORES", primary = false) {
                 settings.shapeUnlockScores.clear()
                 save()
-                fields.forEachIndexed { i, f ->
-                    f.setText(ShapeKind.unlockScore(kinds[i], settings).toString())
-                }
+                kinds = ShapeKind.ordered(settings)
+                buildRows?.invoke()
             }.also { (it.layoutParams as LinearLayout.LayoutParams).rightMargin = dp(8f) })
-            // Rebuilding as you type would take the keyboard with it, so the
-            // re-sort is a button rather than something that happens underneath.
-            addView(pillButton("SORT", primary = false) {
-                save()
-                recreate()
-            })
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply { bottomMargin = dp(10f) }
@@ -578,71 +587,81 @@ class DevSettingsActivity : AppCompatActivity() {
             setPadding(0, 0, 0, dp(6f))
         })
 
-        kinds.forEach { kind ->
-            val row = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding(0, dp(1f), 0, dp(1f))
-            }
-
-            row.addView(TextView(this@DevSettingsActivity).apply {
-                text = kind.displayName
-                typeface = Theme.uiBold(this@DevSettingsActivity)
-                setTextColor(Theme.textPrimary)
-                textSize = 16f
-                layoutParams = LinearLayout.LayoutParams(
-                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
-                )
-            })
-
-            val field = EditText(this).apply {
-                setText(ShapeKind.unlockScore(kind, settings).toString())
-                inputType = InputType.TYPE_CLASS_NUMBER
-                typeface = Theme.ui(this@DevSettingsActivity)
-                setTextColor(Theme.textPrimary)
-                setHintTextColor(Theme.textFaint)
-                textSize = 15f
-                gravity = Gravity.END
-                setPadding(dp(8f), dp(6f), dp(8f), dp(6f))
-                background = GradientDrawable().apply {
-                    shape = GradientDrawable.RECTANGLE
-                    cornerRadius = dp(8f).toFloat()
-                    setColor(Theme.withAlpha(Color.WHITE, 0.05f))
-                    setStroke(dp(1f), Theme.hairline)
+        buildRows = {
+            rows.removeAllViews()
+            boxes.clear()
+            fields.clear()
+            kinds.forEach { kind ->
+                val row = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(0, dp(1f), 0, dp(1f))
                 }
-                layoutParams = LinearLayout.LayoutParams(dp(84f), ViewGroup.LayoutParams.WRAP_CONTENT)
-                    .apply { rightMargin = dp(8f) }
-                addTextChangedListener(object : TextWatcher {
-                    override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
-                    override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
-                    override fun afterTextChanged(s: Editable?) {
-                        val typed = s?.toString()?.trim().orEmpty()
-                        // An empty box means "wherever difficulty puts it", which is
-                        // different from a zero and has to stay different.
-                        if (typed.isEmpty()) settings.shapeUnlockScores.remove(kind.name)
-                        else typed.toIntOrNull()?.let {
-                            settings.shapeUnlockScores[kind.name] = it.coerceAtLeast(0)
+
+                row.addView(TextView(this@DevSettingsActivity).apply {
+                    text = kind.displayName
+                    typeface = Theme.uiBold(this@DevSettingsActivity)
+                    setTextColor(Theme.textPrimary)
+                    textSize = 16f
+                    layoutParams = LinearLayout.LayoutParams(
+                        0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
+                    )
+                })
+
+                val field = EditText(this).apply {
+                    setText(ShapeKind.unlockScore(kind, settings).toString())
+                    inputType = InputType.TYPE_CLASS_NUMBER
+                    typeface = Theme.ui(this@DevSettingsActivity)
+                    setTextColor(Theme.textPrimary)
+                    setHintTextColor(Theme.textFaint)
+                    textSize = 15f
+                    gravity = Gravity.END
+                    setPadding(dp(8f), dp(6f), dp(8f), dp(6f))
+                    background = GradientDrawable().apply {
+                        shape = GradientDrawable.RECTANGLE
+                        cornerRadius = dp(8f).toFloat()
+                        setColor(Theme.withAlpha(Color.WHITE, 0.05f))
+                        setStroke(dp(1f), Theme.hairline)
+                    }
+                    layoutParams = LinearLayout.LayoutParams(dp(84f), ViewGroup.LayoutParams.WRAP_CONTENT)
+                        .apply { rightMargin = dp(8f) }
+                    addTextChangedListener(object : TextWatcher {
+                        override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
+                        override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
+                        override fun afterTextChanged(s: Editable?) {
+                            val typed = s?.toString()?.trim().orEmpty()
+                            // An empty box means "wherever difficulty puts it", which is
+                            // different from a zero and has to stay different.
+                            if (typed.isEmpty()) settings.shapeUnlockScores.remove(kind.name)
+                            else typed.toIntOrNull()?.let {
+                                settings.shapeUnlockScores[kind.name] = it.coerceAtLeast(0)
+                            }
+                            save()
                         }
+                    })
+                    // Left the box: if that score moved the shape, move the row.
+                    setOnFocusChangeListener { _, hasFocus -> if (!hasFocus) resort() }
+                }
+                fields.add(field)
+                row.addView(field)
+
+                val box = AppCompatCheckBox(this).apply {
+                    isChecked = kind.name !in settings.disabledShapes
+                    setOnCheckedChangeListener { _, checked ->
+                        Sounds.click(this@DevSettingsActivity)
+                        if (checked) settings.disabledShapes.remove(kind.name)
+                        else settings.disabledShapes.add(kind.name)
                         save()
                     }
-                })
-            }
-            fields.add(field)
-            row.addView(field)
-
-            val box = AppCompatCheckBox(this).apply {
-                isChecked = kind.name !in settings.disabledShapes
-                setOnCheckedChangeListener { _, checked ->
-                    Sounds.click(this@DevSettingsActivity)
-                    if (checked) settings.disabledShapes.remove(kind.name)
-                    else settings.disabledShapes.add(kind.name)
-                    save()
                 }
+                boxes.add(box)
+                row.addView(box)
+                rows.addView(row)
             }
-            boxes.add(box)
-            row.addView(box)
-            body.addView(row)
         }
+
+        buildRows?.invoke()
+        body.addView(rows)
     }
 
     private fun card(title: String): Card {

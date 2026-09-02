@@ -191,6 +191,90 @@ private fun arrowOutline() = outline(0.5f,0f, 1f,0.46f, 0.72f,0.46f, 0.72f,1f, 0
 
 private fun boltOutline() = outline(0.58f,0f, 0.14f,0.56f, 0.46f,0.56f, 0.34f,1f, 0.86f,0.42f, 0.54f,0.42f)
 
+private fun rectangleOutline(): List<PointF2> = listOf(
+    PointF2(-1f, -0.55f), PointF2(1f, -0.55f), PointF2(1f, 0.55f), PointF2(-1f, 0.55f)
+)
+
+/** A rhombus proper: equal sides, lying on its side, so it is not the diamond. */
+private fun rhombusOutline(): List<PointF2> = listOf(
+    PointF2(-1f, 0f), PointF2(0f, -0.55f), PointF2(1f, 0f), PointF2(0f, 0.55f)
+)
+
+private fun ellipseOutline(): List<PointF2> = (0 until 36).map { i ->
+    val t = (2.0 * Math.PI * i / 36).toFloat()
+    PointF2(cos(t), 0.60f * sin(t))
+}
+
+/** A superellipse: |x|^4 + |y|^4 = 1, the square that has had its corners eased. */
+private fun squircleOutline(): List<PointF2> = (0 until 40).map { i ->
+    val t = (2.0 * Math.PI * i / 40).toFloat()
+    val c = cos(t)
+    val s = sin(t)
+    PointF2(
+        sqrt(abs(c)) * (if (c < 0f) -1f else 1f),
+        sqrt(abs(s)) * (if (s < 0f) -1f else 1f)
+    )
+}
+
+/** Half a disc, flat edge down. Its halving line is nowhere near its centre. */
+private fun semicircleOutline(): List<PointF2> {
+    val v = ArrayList<PointF2>(28)
+    for (i in 0..26) {
+        val t = (Math.PI + Math.PI * i / 26).toFloat()
+        v.add(PointF2(cos(t), sin(t)))
+    }
+    return v
+}
+
+/** Six petals, as a polar rose sampled finely enough to keep them smooth. */
+private fun flowerOutline(): List<PointF2> = (0 until 72).map { i ->
+    val t = (2.0 * Math.PI * i / 72).toFloat()
+    val r = 0.58f + 0.42f * abs(cos(3f * t))
+    PointF2(r * cos(t), r * sin(t))
+}
+
+/**
+ * A ring, as far as a ring can be had here.
+ *
+ * The game cuts simple polygons - one closed loop, no holes - so a true annulus
+ * cannot be expressed: there is nowhere to put the inner boundary. This is the
+ * standard way round it, a keyhole: out along one radius, round the outside, back
+ * in, and round the inside the other way, leaving a two-degree slit at the
+ * bottom. Everything downstream - the area, the halving line, the clipping -
+ * then works on it like any other outline.
+ */
+private fun torusOutline(): List<PointF2> {
+    val slit = Math.toRadians(2.0).toFloat()
+    val start = (Math.PI / 2).toFloat() + slit
+    val end = (Math.PI / 2).toFloat() + (2.0 * Math.PI).toFloat() - slit
+    val v = ArrayList<PointF2>(84)
+    for (i in 0..46) {
+        val t = start + (end - start) * i / 46f
+        v.add(PointF2(cos(t), sin(t)))
+    }
+    for (i in 0..34) {
+        val t = end + (start - end) * i / 34f
+        v.add(PointF2(0.58f * cos(t), 0.58f * sin(t)))
+    }
+    return v
+}
+
+/** The same ring with a mouth cut out of it, which needs no keyhole at all. */
+private fun halfTorusOutline(): List<PointF2> {
+    val a0 = Math.toRadians(40.0).toFloat()
+    val a1 = Math.toRadians(320.0).toFloat()
+    val v = ArrayList<PointF2>(74)
+    for (i in 0..40) {
+        val t = a0 + (a1 - a0) * i / 40f
+        v.add(PointF2(cos(t), sin(t)))
+    }
+    for (i in 0..30) {
+        val t = a1 + (a0 - a1) * i / 30f
+        v.add(PointF2(0.55f * cos(t), 0.55f * sin(t)))
+    }
+    return v
+}
+
 /**
  * Two circle arcs meeting at their true intersection points, worked out rather
  * than guessed. The old one used round angles that did not actually meet, so the
@@ -262,7 +346,15 @@ enum class ShapeKind(
     CROWN("Crown", 10000, { crownOutline() }),
     TREE("Tree", 11000, { treeOutline() }),
     HEART("Heart", 12000, { heartOutline() }),
-    MOON("Moon", 13000, { moonOutline() });
+    MOON("Moon", 13000, { moonOutline() }),
+    RECTANGLE("Rectangle", 500, { rectangleOutline() }),
+    ELLIPSE("Ellipse", 1500, { ellipseOutline() }),
+    SQUIRCLE("Squircle", 2500, { squircleOutline() }),
+    RHOMBUS("Rhombus", 3500, { rhombusOutline() }),
+    SEMICIRCLE("Semicircle", 5500, { semicircleOutline() }),
+    FLOWER("Flower", 14000, { flowerOutline() }),
+    HALF_TORUS("Half Torus", 15000, { halfTorusOutline() }),
+    TORUS("Torus", 16000, { torusOutline() });
 
     /** Outline in unit space, computed once per kind. */
     val unitVertices: List<PointF2> by lazy(LazyThreadSafetyMode.NONE) { builder() }
