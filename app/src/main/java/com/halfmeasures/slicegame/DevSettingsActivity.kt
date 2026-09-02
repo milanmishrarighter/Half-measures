@@ -341,7 +341,7 @@ class DevSettingsActivity : AppCompatActivity() {
                 settings.soundEnabled
             ) { settings.soundEnabled = it }
             slider(
-                c.body, "How loud", "Volume of everything the game plays.",
+                c.body, "Effects volume", "Cuts, blips, jingles and buttons. The announcer and the music each have their own level under this one.",
                 GameSettings.MIN_SOUND_VOLUME, GameSettings.MAX_SOUND_VOLUME, settings.soundVolume,
                 { "${(it * 100).roundToInt()}%" }, { settings.soundVolume = it }
             )
@@ -349,6 +349,11 @@ class DevSettingsActivity : AppCompatActivity() {
                 c.body, "Announcer", "The shouted line on a perfect cut.",
                 settings.voiceEnabled
             ) { settings.voiceEnabled = it }
+            slider(
+                c.body, "Announcer volume", "The shout on its own, over the effects volume.",
+                GameSettings.MIN_VOICE_VOLUME, GameSettings.MAX_VOICE_VOLUME, settings.voiceVolume,
+                { "${(it * 100).roundToInt()}%" }, { settings.voiceVolume = it }
+            )
             toggle(
                 c.body, "Music", "The bass loop under a run.",
                 settings.musicEnabled
@@ -890,8 +895,9 @@ class DevSettingsActivity : AppCompatActivity() {
             appendLine()
             appendLine("SOUND & GLOW")
             appendLine("  Sound: ${onOff(settings.soundEnabled)}")
-            appendLine("  How loud: ${(settings.soundVolume * 100).roundToInt()}%")
+            appendLine("  Effects volume: ${(settings.soundVolume * 100).roundToInt()}%")
             appendLine("  Announcer: ${onOff(settings.voiceEnabled)}")
+            appendLine("  Announcer volume: ${(settings.voiceVolume * 100).roundToInt()}%")
             appendLine("  Music: ${onOff(settings.musicEnabled)}")
             appendLine("  Music volume: ${(settings.musicVolume * 100).roundToInt()}%")
             appendLine("  Film grain: %.0f%%".format(settings.grainAmount * 100f))

@@ -145,6 +145,8 @@ data class GameSettings(
     var neonGlow: Float = DEFAULT_NEON_GLOW,
     /** Whether the announcer shouts on a perfect cut. */
     var voiceEnabled: Boolean = DEFAULT_VOICE_ENABLED,
+    /** The announcer's own level, on top of the effects volume. */
+    var voiceVolume: Float = DEFAULT_VOICE_VOLUME,
     /** Whether the bass loop plays under a run. */
     var musicEnabled: Boolean = DEFAULT_MUSIC_ENABLED,
     /** How loud that loop is. Held well under the effects by default. */
@@ -219,6 +221,7 @@ data class GameSettings(
             .putFloat("grain_amount", grainAmount)
             .putFloat("neon_glow", neonGlow)
             .putBoolean("voice_enabled", voiceEnabled)
+            .putFloat("voice_volume", voiceVolume)
             .putBoolean("music_enabled", musicEnabled)
             .putFloat("music_volume", musicVolume)
             .putBoolean("continues_enabled", continuesEnabled)
@@ -309,6 +312,9 @@ data class GameSettings(
 
         const val DEFAULT_NEON_GLOW = 2.5f
         const val DEFAULT_VOICE_ENABLED = true
+        const val DEFAULT_VOICE_VOLUME = 1f
+        const val MIN_VOICE_VOLUME = 0f
+        const val MAX_VOICE_VOLUME = 1f
         const val DEFAULT_MUSIC_ENABLED = true
         const val DEFAULT_MUSIC_VOLUME = 0.20f
         const val MIN_MUSIC_VOLUME = 0f
@@ -472,6 +478,7 @@ data class GameSettings(
                 grainAmount = p.getFloat("grain_amount", DEFAULT_GRAIN_AMOUNT),
                 neonGlow = p.getFloat("neon_glow", DEFAULT_NEON_GLOW),
                 voiceEnabled = p.getBoolean("voice_enabled", DEFAULT_VOICE_ENABLED),
+                voiceVolume = p.getFloat("voice_volume", DEFAULT_VOICE_VOLUME),
                 musicEnabled = p.getBoolean("music_enabled", DEFAULT_MUSIC_ENABLED),
                 musicVolume = p.getFloat("music_volume", DEFAULT_MUSIC_VOLUME),
                 continuesEnabled = p.getBoolean("continues_enabled", DEFAULT_CONTINUES_ENABLED),

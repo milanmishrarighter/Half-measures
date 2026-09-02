@@ -94,6 +94,7 @@ class GameView @JvmOverloads constructor(
         sounds.enabled = settings.soundEnabled
         sounds.volume = settings.soundVolume
         sounds.voiceEnabled = settings.voiceEnabled
+        sounds.voiceVolume = settings.voiceVolume
         sounds.musicEnabled = settings.musicEnabled
         sounds.musicVolume = settings.musicVolume
         // Only the title screen picks up a new starting-health setting. Every

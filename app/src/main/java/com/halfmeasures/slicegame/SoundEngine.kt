@@ -74,6 +74,8 @@ class SoundEngine(context: Context) {
     var enabled = true
     var volume = 1f
     var voiceEnabled = true
+    /** Scales the announcer alone, on top of [volume]. */
+    var voiceVolume = 1f
     var musicEnabled = true
         set(value) {
             field = value
@@ -158,7 +160,8 @@ class SoundEngine(context: Context) {
 
         val range = spread.coerceIn(1, PITCH_STEPS.size)
         val offset = (PITCH_STEPS.size - range) / 2
-        shoot(ids[index], gain, PITCH_STEPS[offset + random.nextInt(range)])
+        val level = if (bank == SfxBank.VOICE) gain * voiceVolume else gain
+        shoot(ids[index], level, PITCH_STEPS[offset + random.nextInt(range)])
     }
 
     private fun shoot(id: Int, gain: Float, rate: Float) {
@@ -1153,6 +1156,9 @@ object Sounds {
         of(context).apply {
             enabled = settings.soundEnabled
             volume = settings.soundVolume
+            voiceEnabled = settings.voiceEnabled
+            voiceVolume = settings.voiceVolume
+            musicVolume = settings.musicVolume
             prepare()
         }
     }
