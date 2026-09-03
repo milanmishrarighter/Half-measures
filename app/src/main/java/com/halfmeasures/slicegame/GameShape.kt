@@ -261,6 +261,38 @@ private fun torusOutline(): List<PointF2> {
     return v
 }
 
+private fun dropOutline() = built { v ->
+    v.add(0.5f); v.add(0f)
+    arcInto(v, 0.5f, 0.62f, 0.4f, 0.38f, -50f, 230f, 18)
+}
+
+private fun crownOutline() = outline(0f,1f, 0.08f,0.16f, 0.3f,0.56f, 0.5f,0.04f, 0.7f,0.56f, 0.92f,0.16f, 1f,1f)
+
+/**
+ * Two circle arcs meeting at their true intersection points, worked out rather
+ * than guessed. The old one used round angles that did not actually meet, so the
+ * tips crossed and left a wedge.
+ */
+private fun moonOutline() = built { v ->
+    val x1 = 0.5f; val y1 = 0.5f; val r1 = 0.5f
+    val x2 = 0.64f; val y2 = 0.5f; val r2 = 0.44f
+
+    val d = sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1))
+    val a = (r1 * r1 - r2 * r2 + d * d) / (2f * d)
+    val h = sqrt(max(r1 * r1 - a * a, 0f))
+    val px = x1 + a * (x2 - x1) / d
+    val py = y1 + a * (y2 - y1) / d
+    val ux = -(y2 - y1) / d
+    val uy = (x2 - x1) / d
+
+    val ax = px + h * ux; val ay = py + h * uy
+    val bx = px - h * ux; val by = py - h * uy
+
+    // The long way round the outside, then back along the bite.
+    sweepInto(v, x1, y1, r1, atan2(ay - y1, ax - x1), atan2(by - y1, bx - x1), 26, true)
+    sweepInto(v, x2, y2, r2, atan2(by - y2, bx - x2), atan2(ay - y2, ax - x2), 20, false)
+}
+
 /**
  * A slice of pizza: two straight sides from the point, closed by the arc of the
  * crust. A seventy-degree wedge, which is wide enough to have a crust worth
