@@ -294,19 +294,32 @@ private fun moonOutline() = built { v ->
 }
 
 /**
- * A slice of pizza: two straight sides from the point, closed by the arc of the
- * crust. A seventy-degree wedge, which is wide enough to have a crust worth
- * cutting and narrow enough still to read as a slice.
+ * A slice of pizza, stood on its point.
+ *
+ * The crust is a circular arc across the top, the sides run straight down from
+ * its ends, and they meet at a tip rounded just enough not to be a needle. Half
+ * again as tall as it is wide, because a slice that is as wide as it is long is
+ * a wedge of cheese.
  */
 private fun pizzaOutline(): List<PointF2> {
-    val half = Math.toRadians(35.0).toFloat()
-    val v = ArrayList<PointF2>(20)
-    v.add(PointF2(0f, 0f))
-    for (i in 0..16) {
-        val t = (-Math.PI / 2).toFloat() - half + 2f * half * i / 16f
-        v.add(PointF2(cos(t), sin(t)))
+    // The circle through the crust's two ends and its high point.
+    val cy = -0.4575f
+    val r = 0.4625f
+    val from = Math.toRadians(-162.1).toFloat()
+    val to = Math.toRadians(-17.9).toFloat()
+    val v = ArrayList<PointF2>(28)
+    for (i in 0..18) {
+        val t = from + (to - from) * i / 18f
+        v.add(PointF2(r * cos(t), cy + r * sin(t)))
     }
-    return outline(*v.flatMap { listOf(it.x, it.y) }.toFloatArray())
+    // The tip: a small arc, so the point is joined rather than pinched.
+    val tipY = 0.90f
+    val tipR = 0.07f
+    for (i in 0..6) {
+        val t = Math.toRadians(60.0 + 60.0 * i / 6.0).toFloat()
+        v.add(PointF2(tipR * cos(t), tipY + tipR * sin(t)))
+    }
+    return v
 }
 
 /**
@@ -336,26 +349,26 @@ enum class ShapeKind(
     PENTAGON("Pentagon", 0, { regularOutline(5, (-Math.PI / 2).toFloat()) }),
     SQUARE("Square", 0, { regularOutline(4, (Math.PI / 4).toFloat()) }),
     CAPSULE("Capsule", 0, { capsuleOutline() }),
-    TRAPEZOID("Trapezoid", 1000, { trapezoidOutline() }),
-    DIAMOND("Diamond", 2000, { diamondOutline() }),
-    TRIANGLE("Triangle", 3000, { regularOutline(3, (-Math.PI / 2).toFloat()) }),
-    DROP("Drop", 4000, { dropOutline() }),
-    CROSS("Cross", 5000, { crossOutline() }),
-    STAR6("Six-Point Star", 6000, { starOutline(6, 0.58f) }),
-    STAR5("Star", 7000, { starOutline(5, 0.42f) }),
-    ARROW("Arrow", 8000, { arrowOutline() }),
+    TRAPEZOID("Trapezoid", 500, { trapezoidOutline() }),
+    DIAMOND("Diamond", 4000, { diamondOutline() }),
+    TRIANGLE("Triangle", 3500, { regularOutline(3, (-Math.PI / 2).toFloat()) }),
+    DROP("Drop", 5000, { dropOutline() }),
+    CROSS("Cross", 5500, { crossOutline() }),
+    STAR6("Six-Point Star", 3000, { starOutline(6, 0.58f) }),
+    STAR5("Star", 4500, { starOutline(5, 0.42f) }),
+    ARROW("Arrow", 9500, { arrowOutline() }),
     BOLT("Bolt", 9000, { boltOutline() }),
-    CROWN("Crown", 10000, { crownOutline() }),
-    TREE("Tree", 11000, { treeOutline() }),
-    HEART("Heart", 12000, { heartOutline() }),
-    MOON("Moon", 13000, { moonOutline() }),
-    RECTANGLE("Rectangle", 500, { rectangleOutline() }),
+    CROWN("Crown", 6500, { crownOutline() }),
+    TREE("Tree", 10000, { treeOutline() }),
+    HEART("Heart", 8000, { heartOutline() }),
+    MOON("Moon", 6000, { moonOutline() }),
+    RECTANGLE("Rectangle", 1000, { rectangleOutline() }),
     ELLIPSE("Ellipse", 1500, { ellipseOutline() }),
-    PARALLELOGRAM("Parallelogram", 2500, { parallelogramOutline() }),
-    SEMICIRCLE("Semicircle", 5500, { semicircleOutline() }),
-    FLOWER("Flower", 14000, { flowerOutline() }),
-    PIZZA("Pizza Slice", 15000, { pizzaOutline() }),
-    TORUS("Torus", 16000, { torusOutline() });
+    PARALLELOGRAM("Parallelogram", 2000, { parallelogramOutline() }),
+    SEMICIRCLE("Semicircle", 2500, { semicircleOutline() }),
+    FLOWER("Flower", 7500, { flowerOutline() }),
+    PIZZA("Pizza Slice", 8500, { pizzaOutline() }),
+    TORUS("Torus", 7000, { torusOutline() });
 
     /** Outline in unit space, computed once per kind. */
     val unitVertices: List<PointF2> by lazy(LazyThreadSafetyMode.NONE) { builder() }

@@ -415,8 +415,21 @@ data class GameSettings(
 
         private const val PREFS_NAME = "half_measures_settings"
 
+        /** Raised whenever the catalogue's running order changes. */
+        private const val SHAPE_ORDER_VERSION = 2
+
         fun load(context: Context): GameSettings {
             val p = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            // A stored override beats the catalogue, which is the point of it - but
+            // it also means a device that has ever renumbered the shapes would never
+            // see a new running order. Bumping the version drops those overrides
+            // once, and only once.
+            if (p.getInt("shape_order_version", 0) < SHAPE_ORDER_VERSION) {
+                p.edit()
+                    .remove("shape_unlock_scores")
+                    .putInt("shape_order_version", SHAPE_ORDER_VERSION)
+                    .apply()
+            }
             return GameSettings(
                 sizeScale = p.getFloat("size_scale", DEFAULT_SIZE_SCALE),
                 flightHeight = p.getFloat("flight_height", DEFAULT_FLIGHT_HEIGHT),
