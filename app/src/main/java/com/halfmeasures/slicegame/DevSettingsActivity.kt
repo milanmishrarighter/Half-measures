@@ -11,6 +11,7 @@ import android.text.Editable
 import android.text.InputType
 import android.text.TextWatcher
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.EditText
@@ -37,6 +38,10 @@ class DevSettingsActivity : AppCompatActivity() {
 
     private lateinit var settings: GameSettings
     private val sliderSteps = 1000
+
+    /** Where a drag started, and whether it ever moved a row. */
+    private var dragFromY = 0f
+    private var dragMoved = false
 
     private val density: Float get() = resources.displayMetrics.density
     private fun dp(value: Float): Int = (value * density).roundToInt()
@@ -516,60 +521,83 @@ class DevSettingsActivity : AppCompatActivity() {
      */
     private fun shapePicker(body: LinearLayout) {
         body.addView(TextView(this).apply {
-            text = "Untick a shape to keep it out of the game. The number is the score it " +
-                "starts appearing at - type over it to move a shape earlier or later, or " +
-                "clear it to put it back where the game puts it. The list keeps itself in " +
-                "running order: change a score and the row moves as soon as you leave it."
+            text = "Drag a row by its handle to move a shape earlier or later - the scores " +
+                "renumber themselves as you drop it. Type in a box to set one exactly, " +
+                "and the row finds its own place when you leave it. Untick a shape to " +
+                "keep it out of the game."
             typeface = Theme.ui(this@DevSettingsActivity)
             setTextColor(Theme.textFaint)
             textSize = 14f
             setPadding(0, dp(8f), 0, dp(12f))
         })
 
-        val boxes = ArrayList<AppCompatCheckBox>()
-        val fields = ArrayList<EditText>()
-        var kinds = ShapeKind.ordered(settings)
-        // The rows live in their own container so the order can be redone without
-        // rebuilding the screen around them - recreating the activity would throw
-        // away the scroll position and drop you back at the top of a long list.
+        val order = ShapeKind.ordered(settings).toMutableList()
         val rows = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
-        // Assigned further down, but the buttons and the rows' own focus listeners
-        // all need to be able to ask for a rebuild, so the handle exists first.
-        var buildRows: (() -> Unit)? = null
+        // Set while the rows are being torn down and rebuilt. Listeners fire during
+        // that - a field loses focus the moment its view leaves the tree - and one
+        // of them asking for another rebuild from inside the first is what took the
+        // whole screen down.
+        var rebuilding = false
+        var rebuild: (() -> Unit)? = null
 
-        /** Redoes the order, but only when a score has actually moved something. */
-        fun resort() {
-            val next = ShapeKind.ordered(settings)
-            if (next == kinds) return
-            kinds = next
-            buildRows?.invoke()
+        /**
+         * The score a shape gets from where it sits: the opening set is free, and
+         * everything after it is another five hundred points along.
+         */
+        fun ladderScore(index: Int): Int =
+            if (index < FREE_SHAPES) 0 else (index - FREE_SHAPES + 1) * SCORE_STEP
+
+        fun renumber() {
+            order.forEachIndexed { i, kind -> settings.shapeUnlockScores[kind.name] = ladderScore(i) }
+            save()
+        }
+
+        /**
+         * Puts the list back in score order after a score was typed. Posted rather
+         * than run where it is asked for: it is called from a focus change, and
+         * pulling views out of the tree during focus dispatch is what crashed.
+         */
+        fun resortLater() {
+            if (rebuilding) return
+            rows.post {
+                if (rebuilding) return@post
+                val next = ShapeKind.ordered(settings)
+                if (next == order) return@post
+                order.clear()
+                order.addAll(next)
+                rebuild?.invoke()
+            }
         }
 
         body.addView(LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             addView(pillButton("ALL ON", primary = false) {
                 settings.disabledShapes.clear()
-                boxes.forEach { it.isChecked = true }
                 save()
+                rebuild?.invoke()
             }.also { (it.layoutParams as LinearLayout.LayoutParams).rightMargin = dp(8f) })
             addView(pillButton("ALL OFF", primary = false) {
-                settings.disabledShapes.addAll(kinds.map { k -> k.name })
-                boxes.forEach { it.isChecked = false }
+                settings.disabledShapes.addAll(order.map { k -> k.name })
                 save()
+                rebuild?.invoke()
             }.also { (it.layoutParams as LinearLayout.LayoutParams).rightMargin = dp(8f) })
-            addView(pillButton("RESET SCORES", primary = false) {
+            addView(pillButton("RENUMBER", primary = false) {
+                renumber()
+                rebuild?.invoke()
+            }.also { (it.layoutParams as LinearLayout.LayoutParams).rightMargin = dp(8f) })
+            addView(pillButton("RESET", primary = false) {
                 settings.shapeUnlockScores.clear()
                 save()
-                kinds = ShapeKind.ordered(settings)
-                buildRows?.invoke()
-            }.also { (it.layoutParams as LinearLayout.LayoutParams).rightMargin = dp(8f) })
+                order.clear()
+                order.addAll(ShapeKind.ordered(settings))
+                rebuild?.invoke()
+            })
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply { bottomMargin = dp(10f) }
         })
 
-        // Column headings, so the number in each row is not a mystery.
         body.addView(LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -579,6 +607,7 @@ class DevSettingsActivity : AppCompatActivity() {
                 setTextColor(Theme.textFaint)
                 textSize = 11f
                 letterSpacing = 0.14f
+                setPadding(dp(34f), 0, 0, 0)
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             })
             addView(TextView(this@DevSettingsActivity).apply {
@@ -592,16 +621,26 @@ class DevSettingsActivity : AppCompatActivity() {
             setPadding(0, 0, 0, dp(6f))
         })
 
-        buildRows = {
+        rebuild = {
+            rebuilding = true
             rows.removeAllViews()
-            boxes.clear()
-            fields.clear()
-            kinds.forEach { kind ->
+            order.forEach { kind ->
                 val row = LinearLayout(this).apply {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER_VERTICAL
-                    setPadding(0, dp(1f), 0, dp(1f))
+                    setPadding(0, dp(3f), 0, dp(3f))
                 }
+
+                // The grip. Dragging anywhere else would fight the scroll view.
+                row.addView(TextView(this).apply {
+                    text = "\u2261"
+                    typeface = Theme.uiBold(this@DevSettingsActivity)
+                    setTextColor(Theme.textFaint)
+                    textSize = 20f
+                    gravity = Gravity.CENTER
+                    layoutParams = LinearLayout.LayoutParams(dp(34f), ViewGroup.LayoutParams.MATCH_PARENT)
+                    setOnTouchListener(dragHandle(rows, row, order) { renumber(); rebuild?.invoke() })
+                })
 
                 row.addView(TextView(this@DevSettingsActivity).apply {
                     text = kind.displayName
@@ -613,7 +652,7 @@ class DevSettingsActivity : AppCompatActivity() {
                     )
                 })
 
-                val field = EditText(this).apply {
+                row.addView(EditText(this).apply {
                     setText(ShapeKind.unlockScore(kind, settings).toString())
                     inputType = InputType.TYPE_CLASS_NUMBER
                     typeface = Theme.ui(this@DevSettingsActivity)
@@ -634,9 +673,10 @@ class DevSettingsActivity : AppCompatActivity() {
                         override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
                         override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
                         override fun afterTextChanged(s: Editable?) {
+                            if (rebuilding) return
                             val typed = s?.toString()?.trim().orEmpty()
-                            // An empty box means "wherever difficulty puts it", which is
-                            // different from a zero and has to stay different.
+                            // An empty box means "wherever the catalogue puts it",
+                            // which is not the same as a zero.
                             if (typed.isEmpty()) settings.shapeUnlockScores.remove(kind.name)
                             else typed.toIntOrNull()?.let {
                                 settings.shapeUnlockScores[kind.name] = it.coerceAtLeast(0)
@@ -644,29 +684,74 @@ class DevSettingsActivity : AppCompatActivity() {
                             save()
                         }
                     })
-                    // Left the box: if that score moved the shape, move the row.
-                    setOnFocusChangeListener { _, hasFocus -> if (!hasFocus) resort() }
-                }
-                fields.add(field)
-                row.addView(field)
+                    setOnFocusChangeListener { _, hasFocus -> if (!hasFocus) resortLater() }
+                })
 
-                val box = AppCompatCheckBox(this).apply {
+                row.addView(AppCompatCheckBox(this).apply {
                     isChecked = kind.name !in settings.disabledShapes
                     setOnCheckedChangeListener { _, checked ->
+                        if (rebuilding) return@setOnCheckedChangeListener
                         Sounds.click(this@DevSettingsActivity)
                         if (checked) settings.disabledShapes.remove(kind.name)
                         else settings.disabledShapes.add(kind.name)
                         save()
                     }
-                }
-                boxes.add(box)
-                row.addView(box)
+                })
                 rows.addView(row)
             }
+            rebuilding = false
         }
 
-        buildRows?.invoke()
+        rebuild?.invoke()
         body.addView(rows)
+    }
+
+    /**
+     * Drag-to-reorder on a row's grip.
+     *
+     * Rows are all the same height, so where a finger has got to is a whole number
+     * of rows from where it started. Each time that number changes the row is
+     * pulled out and put back at its new index and the model follows, which keeps
+     * the two in step without any animation machinery. Dropping renumbers.
+     */
+    private fun dragHandle(
+        rows: LinearLayout,
+        row: View,
+        order: MutableList<ShapeKind>,
+        onDrop: () -> Unit
+    ) = View.OnTouchListener { handle, event ->
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                handle.parent?.parent?.requestDisallowInterceptTouchEvent(true)
+                dragFromY = event.rawY
+                dragMoved = false
+                row.alpha = 0.55f
+                true
+            }
+            MotionEvent.ACTION_MOVE -> {
+                val height = row.height.takeIf { it > 0 } ?: return@OnTouchListener true
+                val steps = ((event.rawY - dragFromY) / height).roundToInt()
+                if (steps != 0) {
+                    val from = rows.indexOfChild(row)
+                    val to = (from + steps).coerceIn(0, rows.childCount - 1)
+                    if (to != from) {
+                        rows.removeView(row)
+                        rows.addView(row, to)
+                        order.add(to, order.removeAt(from))
+                        dragFromY += (to - from) * height
+                        dragMoved = true
+                    }
+                }
+                true
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                row.alpha = 1f
+                handle.parent?.parent?.requestDisallowInterceptTouchEvent(false)
+                if (dragMoved) onDrop()
+                true
+            }
+            else -> false
+        }
     }
 
     private fun card(title: String): Card {
@@ -955,4 +1040,12 @@ class DevSettingsActivity : AppCompatActivity() {
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             setOnClickListener { Sounds.click(this@DevSettingsActivity); onClick() }
         }
+
+    private companion object {
+        /** How many shapes are in play from the first cut, before the ladder starts. */
+        const val FREE_SHAPES = 6
+        /** What each rung of the ladder is worth after that. */
+        const val SCORE_STEP = 500
+    }
+
 }

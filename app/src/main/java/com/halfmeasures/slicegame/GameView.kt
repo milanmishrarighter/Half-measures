@@ -85,18 +85,30 @@ class GameView @JvmOverloads constructor(
 
     private var gravity = GameShape.BASE_GRAVITY * settings.gravityScale
 
-    fun refreshSettings() {
-        settings = GameSettings.load(context)
-        // The body shaders are built for whichever style was on when they were
-        // cached, so a style change has to drop them.
-        bodyShaders.clear()
-        gravity = GameShape.BASE_GRAVITY * settings.gravityScale
+    /**
+     * Pushes every level into the engine.
+     *
+     * Called from this view's init as well as on every resume, because the loop -
+     * and with it the title music - can start before the activity's onResume ever
+     * runs. It did, which is why the menu played at the engine's own default while
+     * every screen after it played at the player's setting.
+     */
+    private fun applyAudioSettings() {
         sounds.enabled = settings.soundEnabled
         sounds.volume = settings.soundVolume
         sounds.voiceEnabled = settings.voiceEnabled
         sounds.voiceVolume = settings.voiceVolume
         sounds.musicEnabled = settings.musicEnabled
         sounds.musicVolume = settings.musicVolume
+    }
+
+    fun refreshSettings() {
+        settings = GameSettings.load(context)
+        // The body shaders are built for whichever style was on when they were
+        // cached, so a style change has to drop them.
+        bodyShaders.clear()
+        gravity = GameShape.BASE_GRAVITY * settings.gravityScale
+        applyAudioSettings()
         // Only the title screen picks up a new starting-health setting. Every
         // other state is mid-run - including the moments either side of an ad -
         // and refilling the bar there would hand out a free heal.
@@ -365,6 +377,7 @@ class GameView @JvmOverloads constructor(
     init {
         isFocusable = true
         density = resources.displayMetrics.density
+        applyAudioSettings()
     }
 
     // ---------------------------------------------------------------------

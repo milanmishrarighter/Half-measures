@@ -81,7 +81,8 @@ class SoundEngine(context: Context) {
             field = value
             if (!value) stopMusic() else if (musicWanted) startMusic()
         }
-    var musicVolume = 0.45f
+    /** Starts where the settings say, so nothing plays at a level nobody chose. */
+    var musicVolume = GameSettings.DEFAULT_MUSIC_VOLUME
         set(value) {
             field = value
             music?.setVolume(value)
