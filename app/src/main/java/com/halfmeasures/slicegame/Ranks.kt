@@ -20,21 +20,23 @@ object Ranks {
     /**
      * Thirteen rungs. The score attached to each is the top of its band, so a
      * player sitting on exactly that score holds that rank rather than the next
-     * one - "till 3k is rank one" reads the way it sounds.
+     * one - "till 3k is rank one" reads the way it sounds. The bands widen by two
+     * and three thousand alternately, so the ladder stays climbable rather than
+     * running away from the player at the top.
      */
     val all: List<Rank> = listOf(
         Rank(1, "Circle Cutter", ShapeKind.CIRCLE, 3_000),
-        Rank(2, "Square Slicer", ShapeKind.SQUARE, 6_000),
-        Rank(3, "Hexagon Halver", ShapeKind.HEXAGON, 10_000),
-        Rank(4, "Octagon Obliterator", ShapeKind.OCTAGON, 15_000),
-        Rank(5, "Trapezoid Trimmer", ShapeKind.TRAPEZOID, 20_000),
-        Rank(6, "Diamond Dissector", ShapeKind.DIAMOND, 25_000),
-        Rank(7, "Triangle Truncator", ShapeKind.TRIANGLE, 30_000),
-        Rank(8, "Droplet Decimator", ShapeKind.DROP, 35_000),
-        Rank(9, "Cross Carver", ShapeKind.CROSS, 45_000),
-        Rank(10, "Starfall Severer", ShapeKind.STAR6, 50_000),
-        Rank(11, "Bolt Bisector", ShapeKind.BOLT, 60_000),
-        Rank(12, "Crown Cleaver", ShapeKind.CROWN, 75_000),
+        Rank(2, "Square Slicer", ShapeKind.SQUARE, 5_000),
+        Rank(3, "Hexagon Halver", ShapeKind.HEXAGON, 7_000),
+        Rank(4, "Octagon Obliterator", ShapeKind.OCTAGON, 10_000),
+        Rank(5, "Trapezoid Trimmer", ShapeKind.TRAPEZOID, 12_000),
+        Rank(6, "Diamond Dissector", ShapeKind.DIAMOND, 15_000),
+        Rank(7, "Triangle Truncator", ShapeKind.TRIANGLE, 17_000),
+        Rank(8, "Droplet Decimator", ShapeKind.DROP, 20_000),
+        Rank(9, "Cross Carver", ShapeKind.CROSS, 22_000),
+        Rank(10, "Starfall Severer", ShapeKind.STAR6, 25_000),
+        Rank(11, "Bolt Bisector", ShapeKind.BOLT, 27_000),
+        Rank(12, "Crown Cleaver", ShapeKind.CROWN, 30_000),
         Rank(13, "Planet Parter", ShapeKind.MOON, Int.MAX_VALUE)
     )
 

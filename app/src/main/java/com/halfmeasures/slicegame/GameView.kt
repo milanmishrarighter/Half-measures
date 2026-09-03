@@ -141,6 +141,8 @@ class GameView @JvmOverloads constructor(
     private var averageMoved = false
     /** +1 if this run promoted the player, -1 if it demoted them, 0 if neither. */
     private var rankMoved = 0
+    /** Set when a run begins from a cut button, so its halves outlive the start. */
+    private var carryDebris = false
     /** How many of the card's reveal cues have been played this time round. */
     private var cardCue = 0
     private val averageScore: Int
@@ -931,9 +933,10 @@ class GameView @JvmOverloads constructor(
         runsFinished += if (runsFinished == 0) 2 else 1
         scoreTotal += score
         averageDelta = averageScore - previousAverage
-        // A rank is only a move if the player had one to move from.
-        rankMoved = if (!averageMoved) 0 else
-            Ranks.forScore(averageScore).number.compareTo(previousRank)
+        // Counted on the first run as well. A record needs something to beat, so
+        // the best-score fireworks stay quiet the first time round, but a rank is
+        // climbed from rank one whether or not anything came before it.
+        rankMoved = Ranks.forScore(averageScore).number.compareTo(previousRank)
         cardCue = 0
         scores.edit()
             .putInt("runs_finished", runsFinished)
@@ -1376,7 +1379,9 @@ class GameView @JvmOverloads constructor(
     private fun startNewGame() {
         sounds.releaseMusicHold()
         shapes.clear()
-        pieces.clear()
+        // The halves of a cut start button are already falling; clearing them here
+        // would wipe them the same frame they appeared.
+        if (carryDebris) carryDebris = false else pieces.clear()
         trailPoints.clear()
         effects.clear()
         maxHealth = settings.startHealth
@@ -1626,11 +1631,62 @@ class GameView @JvmOverloads constructor(
         sliceStartButton(ax, ay, x, y)
     }
 
-    /** Bursts the start button apart along the swipe, then begins the run. */
+
+    /**
+     * The start button as a polygon: a capsule, the same construction the shape
+     * catalogue uses, so the blade can halve it exactly the way it halves a shape.
+     */
+    private fun startButtonOutline(): List<PointF2> {
+        val r = readyPrimary.height() / 2f
+        val left = readyPrimary.left + r
+        val right = readyPrimary.right - r
+        val cy = readyPrimary.centerY()
+        val steps = 14
+        val v = ArrayList<PointF2>(steps * 2 + 2)
+        for (i in 0..steps) {
+            val t = (-Math.PI / 2 + Math.PI * i / steps).toFloat()
+            v.add(PointF2(right + r * cos(t), cy + r * sin(t)))
+        }
+        for (i in 0..steps) {
+            val t = (Math.PI / 2 + Math.PI * i / steps).toFloat()
+            v.add(PointF2(left + r * cos(t), cy + r * sin(t)))
+        }
+        return v
+    }
+
+    /** Halves the start button along the swipe, then begins the run. */
     private fun sliceStartButton(ax: Float, ay: Float, bx: Float, by: Float) {
         val cx = readyPrimary.centerX()
         val cy = readyPrimary.centerY()
         val len = sqrt((bx - ax) * (bx - ax) + (by - ay) * (by - ay)).coerceAtLeast(0.001f)
+        val dirX = (bx - ax) / len
+        val dirY = (by - ay) / len
+
+        // Actually cut in two, rather than puffed into confetti: the button is the
+        // first thing a player ever swipes at, and it should behave like the shapes
+        // the swipe is teaching them to cut.
+        val (leftHalf, rightHalf) = SliceMath.splitPolygon(startButtonOutline(), ax, ay, bx, by)
+        carryDebris = true
+        val kick = 150f
+        val nx = -dirY
+        val ny = dirX
+        val radiusHint = max(readyPrimary.width(), readyPrimary.height()) / 2f
+        if (leftHalf.size >= 3) {
+            pieces.add(
+                SlicedPiece(
+                    leftHalf, cx, cy, nx * kick, ny * kick - 120f,
+                    1.4f, BUTTON_PALETTE, radiusHint
+                )
+            )
+        }
+        if (rightHalf.size >= 3) {
+            pieces.add(
+                SlicedPiece(
+                    rightHalf, cx, cy, -nx * kick, -ny * kick - 120f,
+                    -1.4f, BUTTON_PALETTE, radiusHint
+                )
+            )
+        }
 
         if (settings.particlesEnabled) {
             effects.burst(
@@ -3720,6 +3776,9 @@ class GameView @JvmOverloads constructor(
         const val COLOUR_SLICE_SCORE = 250
         const val COLOUR_SLICES = 64
         const val MAX_CACHED_SHADERS = 96
+
+        /** The colour slot the halved start button falls in. */
+        const val BUTTON_PALETTE = 2
 
         const val GRAIN_TILE = 128
 

@@ -261,52 +261,20 @@ private fun torusOutline(): List<PointF2> {
     return v
 }
 
-/** The same ring with a mouth cut out of it, which needs no keyhole at all. */
-private fun halfTorusOutline(): List<PointF2> {
-    val a0 = Math.toRadians(40.0).toFloat()
-    val a1 = Math.toRadians(320.0).toFloat()
-    val v = ArrayList<PointF2>(74)
-    for (i in 0..40) {
-        val t = a0 + (a1 - a0) * i / 40f
+/**
+ * A slice of pizza: two straight sides from the point, closed by the arc of the
+ * crust. A seventy-degree wedge, which is wide enough to have a crust worth
+ * cutting and narrow enough still to read as a slice.
+ */
+private fun pizzaOutline(): List<PointF2> {
+    val half = Math.toRadians(35.0).toFloat()
+    val v = ArrayList<PointF2>(20)
+    v.add(PointF2(0f, 0f))
+    for (i in 0..16) {
+        val t = (-Math.PI / 2).toFloat() - half + 2f * half * i / 16f
         v.add(PointF2(cos(t), sin(t)))
     }
-    for (i in 0..30) {
-        val t = a1 + (a0 - a1) * i / 30f
-        v.add(PointF2(0.55f * cos(t), 0.55f * sin(t)))
-    }
-    return v
-}
-
-/**
- * Two circle arcs meeting at their true intersection points, worked out rather
- * than guessed. The old one used round angles that did not actually meet, so the
- * tips crossed and left a wedge.
- */
-private fun moonOutline() = built { v ->
-    val x1 = 0.5f; val y1 = 0.5f; val r1 = 0.5f
-    val x2 = 0.64f; val y2 = 0.5f; val r2 = 0.44f
-
-    val d = sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1))
-    val a = (r1 * r1 - r2 * r2 + d * d) / (2f * d)
-    val h = sqrt(max(r1 * r1 - a * a, 0f))
-    val px = x1 + a * (x2 - x1) / d
-    val py = y1 + a * (y2 - y1) / d
-    val ux = -(y2 - y1) / d
-    val uy = (x2 - x1) / d
-
-    val ax = px + h * ux; val ay = py + h * uy
-    val bx = px - h * ux; val by = py - h * uy
-
-    // The long way round the outside, then back along the bite.
-    sweepInto(v, x1, y1, r1, atan2(ay - y1, ax - x1), atan2(by - y1, bx - x1), 26, true)
-    sweepInto(v, x2, y2, r2, atan2(by - y2, bx - x2), atan2(ay - y2, ax - x2), 20, false)
-}
-
-private fun crownOutline() = outline(0f,1f, 0.08f,0.16f, 0.3f,0.56f, 0.5f,0.04f, 0.7f,0.56f, 0.92f,0.16f, 1f,1f)
-
-private fun dropOutline() = built { v ->
-    v.add(0.5f); v.add(0f)
-    arcInto(v, 0.5f, 0.62f, 0.4f, 0.38f, -50f, 230f, 18)
+    return outline(*v.flatMap { listOf(it.x, it.y) }.toFloatArray())
 }
 
 /**
@@ -354,7 +322,7 @@ enum class ShapeKind(
     PARALLELOGRAM("Parallelogram", 2500, { parallelogramOutline() }),
     SEMICIRCLE("Semicircle", 5500, { semicircleOutline() }),
     FLOWER("Flower", 14000, { flowerOutline() }),
-    HALF_TORUS("Half Torus", 15000, { halfTorusOutline() }),
+    PIZZA("Pizza Slice", 15000, { pizzaOutline() }),
     TORUS("Torus", 16000, { torusOutline() });
 
     /** Outline in unit space, computed once per kind. */
