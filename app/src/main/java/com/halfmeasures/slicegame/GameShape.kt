@@ -297,16 +297,16 @@ private fun moonOutline() = built { v ->
  * A slice of pizza, stood on its point.
  *
  * The crust is a circular arc across the top, the sides run straight down from
- * its ends, and they meet at a tip rounded just enough not to be a needle. Half
- * again as tall as it is wide, because a slice that is as wide as it is long is
- * a wedge of cheese.
+ * its ends, and they meet at a tip rounded just enough not to be a needle. Two
+ * thirds as wide as it is tall: any narrower and it stops being a slice and
+ * starts being a traffic cone.
  */
 private fun pizzaOutline(): List<PointF2> {
     // The circle through the crust's two ends and its high point.
-    val cy = -0.4575f
-    val r = 0.4625f
-    val from = Math.toRadians(-162.1).toFloat()
-    val to = Math.toRadians(-17.9).toFloat()
+    val cy = -0.1395f
+    val r = 0.7105f
+    val from = Math.toRadians(-147.6).toFloat()
+    val to = Math.toRadians(-32.4).toFloat()
     val v = ArrayList<PointF2>(28)
     for (i in 0..18) {
         val t = from + (to - from) * i / 18f
@@ -314,7 +314,7 @@ private fun pizzaOutline(): List<PointF2> {
     }
     // The tip: a small arc, so the point is joined rather than pinched.
     val tipY = 0.90f
-    val tipR = 0.07f
+    val tipR = 0.08f
     for (i in 0..6) {
         val t = Math.toRadians(60.0 + 60.0 * i / 6.0).toFloat()
         v.add(PointF2(tipR * cos(t), tipY + tipR * sin(t)))
