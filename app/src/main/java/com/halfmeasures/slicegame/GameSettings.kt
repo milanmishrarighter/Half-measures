@@ -315,7 +315,7 @@ data class GameSettings(
         const val DEFAULT_VOICE_VOLUME = 1f
         const val MIN_VOICE_VOLUME = 0f
         const val MAX_VOICE_VOLUME = 1f
-        const val DEFAULT_MUSIC_ENABLED = false
+        const val DEFAULT_MUSIC_ENABLED = true
         const val DEFAULT_MUSIC_VOLUME = 0.15f
         const val MIN_MUSIC_VOLUME = 0f
         const val MAX_MUSIC_VOLUME = 1f

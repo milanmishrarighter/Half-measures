@@ -30,6 +30,14 @@ class InstructionsActivity : AppCompatActivity() {
             setPadding(dp(24f), dp(36f), dp(24f), dp(32f))
         }
 
+        root.addView(TextView(this).apply {
+            text = "HOW TO PLAY"
+            typeface = Theme.display(this@InstructionsActivity)
+            setTextColor(Theme.textPrimary)
+            textSize = 24f
+            setPadding(0, 0, 0, dp(20f))
+        })
+
         section(
             root, "MAIN OBJECTIVE",
             "All you have to do is cut all popping shapes into half, and make the " +

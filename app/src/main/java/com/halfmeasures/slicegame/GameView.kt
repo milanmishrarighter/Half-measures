@@ -3846,7 +3846,7 @@ class GameView @JvmOverloads constructor(
         /** Side of the square pause target, in dp. */
         const val PAUSE_BUTTON_SIZE = 34f
         /** The title screen's corner icons. */
-        const val CORNER_ICON_SIZE = 30f
+        const val CORNER_ICON_SIZE = 22.5f
 
         /** Grain tile edge, in pixels, and how strongly it sits over the body. */
         /**

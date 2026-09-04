@@ -278,6 +278,18 @@ class SoundEngine(context: Context) {
         @Volatile private var running = false
         @Volatile private var paused = false
 
+        /**
+         * Held here as well as on the track.
+         *
+         * A track only exists once [start] has run, and both of these are set
+         * before that - so the AudioTrack was coming up at its own full gain and
+         * only dropping to the player's level the first time some other screen
+         * happened to set the volume again. That is the whole of "loud on the
+         * menu, quiet in settings".
+         */
+        private var volume = 1f
+        private var speed = 1f
+
         fun start() {
             val minBuffer = AudioTrack.getMinBufferSize(
                 RATE, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT
@@ -300,6 +312,8 @@ class SoundEngine(context: Context) {
                 .setTransferMode(AudioTrack.MODE_STREAM)
                 .build()
             track = t
+            t.setVolume(volume.coerceIn(0f, 1f))
+            applySpeed(t, speed)
             t.play()
 
             running = true
@@ -357,13 +371,19 @@ class SoundEngine(context: Context) {
         }
 
         fun setVolume(v: Float) {
+            volume = v
             track?.setVolume(v.coerceIn(0f, 1f))
         }
 
-        fun setSpeed(speed: Float) {
+        fun setSpeed(rate: Float) {
+            speed = rate
             val t = track ?: return
+            applySpeed(t, rate)
+        }
+
+        private fun applySpeed(t: AudioTrack, rate: Float) {
             try {
-                t.playbackParams = PlaybackParams().setSpeed(speed).setPitch(1f)
+                t.playbackParams = PlaybackParams().setSpeed(rate).setPitch(1f)
             } catch (e: Exception) {
                 // A device that will not time-stretch just plays at tempo.
             }
