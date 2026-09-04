@@ -61,6 +61,7 @@ class GameView @JvmOverloads constructor(
     var onOpenSettings: (() -> Unit)? = null
     /** Opens the how-to-play screen; wired up by the hosting activity. */
     var onOpenInstructions: (() -> Unit)? = null
+    var onOpenStats: (() -> Unit)? = null
     /**
      * Plays a rewarded ad. The first callback fires only once the reward is
      * genuinely earned; the second fires on every other outcome, with a reason and
@@ -82,6 +83,7 @@ class GameView @JvmOverloads constructor(
     private val effects = EffectSystem(random)
     private val haptics = Haptics(context)
     private val sounds = Sounds.of(context)
+    private var lifetime = LifetimeStats.load(context)
 
     private var gravity = GameShape.BASE_GRAVITY * settings.gravityScale
 
@@ -268,6 +270,9 @@ class GameView @JvmOverloads constructor(
     private val gameOverCardVisual = RectF()
     /** The pause target in the top-right corner, live only during play. */
     private val pauseButton = RectF()
+    /** The title screen's two corner icons: how to play, and settings. */
+    private val readyInfo = RectF()
+    private val readyCog = RectF()
     private val pauseCard = RectF()
     private val pauseResume = RectF()
     private val pauseSettings = RectF()
@@ -550,6 +555,14 @@ class GameView @JvmOverloads constructor(
             cx - buttonWidth / 2f, readyTop + (buttonHeight + buttonGap) * 2,
             cx + buttonWidth / 2f, readyTop + buttonHeight * 3 + buttonGap * 2
         )
+
+        // The two things nobody opens twice live in the corners as icons, which
+        // leaves the stack for the three a player actually presses.
+        val iconPad = 22f * density
+        val iconSize = CORNER_ICON_SIZE * density
+        val iconTop = iconPad - 2f * density
+        readyInfo.set(iconPad, iconTop, iconPad + iconSize, iconTop + iconSize)
+        readyCog.set(w - iconPad - iconSize, iconTop, w - iconPad, iconTop + iconSize)
 
         layoutGameOverBlock()
 
@@ -943,6 +956,10 @@ class GameView @JvmOverloads constructor(
             .putLong("score_total", scoreTotal)
             .apply()
         commitPersonalBests()
+        // Written once at the end of a run rather than on every cut: at speed a cut
+        // lands two or three times a second, and a disk write on each is a stutter
+        // for a number nobody reads until the card is up.
+        lifetime.save(context)
         effects.addShake(0.7f * settings.cameraShakeStrength)
         if (settings.vibrationEnabled) haptics.gameOver(settings.vibrationStrength)
         if (!beatBestScore) sounds.play(Sfx.GAME_OVER)
@@ -1464,6 +1481,8 @@ class GameView @JvmOverloads constructor(
                         state == State.GAME_OVER && overQuaternary.contains(event.x, event.y) -> 4
                         state == State.GAME_OVER && continueOffered &&
                             overContinue.contains(event.x, event.y) -> 5
+                        state == State.READY && readyInfo.contains(event.x, event.y) -> 6
+                        state == State.READY && readyCog.contains(event.x, event.y) -> 7
                         else -> 0
                     }
                     // The title screen also lets the player swipe the start button
@@ -1569,9 +1588,19 @@ class GameView @JvmOverloads constructor(
                         released == 2 && secondaryButton.contains(event.x, event.y) -> {
                             if (settings.vibrationEnabled) haptics.tick(settings.vibrationStrength)
                             sounds.play(SfxBank.UI)
-                            onOpenInstructions?.invoke()
+                            onOpenStats?.invoke()
                         }
                         released == 3 && tertiaryButton.contains(event.x, event.y) -> {
+                            if (settings.vibrationEnabled) haptics.tick(settings.vibrationStrength)
+                            sounds.play(SfxBank.UI)
+                            onExitApp?.invoke()
+                        }
+                        released == 6 && readyInfo.contains(event.x, event.y) -> {
+                            if (settings.vibrationEnabled) haptics.tick(settings.vibrationStrength)
+                            sounds.play(SfxBank.UI)
+                            onOpenInstructions?.invoke()
+                        }
+                        released == 7 && readyCog.contains(event.x, event.y) -> {
                             if (settings.vibrationEnabled) haptics.tick(settings.vibrationStrength)
                             sounds.play(SfxBank.UI)
                             onOpenSettings?.invoke()
@@ -1791,6 +1820,7 @@ class GameView @JvmOverloads constructor(
         val bigger = (max(areaA, areaB) / (areaA + areaB) * 100f).roundToInt()
         val split = "$bigger/${100 - bigger}"
         recordCutBucket(grade)
+        lifetime.record(shape.kind, grade.ordinal)
 
         // Over the shape, keep it to the bare verdict so the action stays readable.
         val popupY = (shape.y - shape.radius - 22f * density).coerceAtLeast(height * 0.12f)
@@ -3040,8 +3070,57 @@ class GameView @JvmOverloads constructor(
 
         drawAdNotice(canvas, primaryButton.top - 14f * density)
         drawButton(canvas, primaryButton, "PLAY", primary = true, pressed = pressedButton == 1)
-        drawButton(canvas, secondaryButton, "HOW TO PLAY", primary = false, pressed = pressedButton == 2)
-        drawButton(canvas, tertiaryButton, "SETTINGS", primary = false, pressed = pressedButton == 3)
+        drawButton(canvas, secondaryButton, "STATS", primary = false, pressed = pressedButton == 2)
+        drawButton(canvas, tertiaryButton, "EXIT", primary = false, pressed = pressedButton == 3)
+
+        drawInfoIcon(canvas, readyInfo, pressedButton == 6)
+        drawCogIcon(canvas, readyCog, pressedButton == 7)
+    }
+
+    /** A ringed lower-case i, top left: how to play. */
+    private fun drawInfoIcon(canvas: Canvas, rect: RectF, pressed: Boolean) {
+        val alpha = if (pressed) 1f else 0.62f
+        val cx = rect.centerX()
+        val cy = rect.centerY()
+        val r = rect.width() / 2f
+        rimPaint.strokeWidth = 2f * density
+        rimPaint.color = Theme.withAlpha(Theme.textSecondary, alpha)
+        canvas.drawCircle(cx, cy, r, rimPaint)
+
+        fillPaint.shader = null
+        fillPaint.alpha = 255
+        fillPaint.color = Theme.withAlpha(Theme.textSecondary, alpha)
+        canvas.drawCircle(cx, cy - r * 0.42f, 1.9f * density, fillPaint)
+        roundRect.set(cx - 1.6f * density, cy - r * 0.14f, cx + 1.6f * density, cy + r * 0.52f)
+        canvas.drawRoundRect(roundRect, 1.6f * density, 1.6f * density, fillPaint)
+    }
+
+    /** A cog, top right: settings. Eight teeth on a ring, with a hole in it. */
+    private fun drawCogIcon(canvas: Canvas, rect: RectF, pressed: Boolean) {
+        val alpha = if (pressed) 1f else 0.62f
+        val cx = rect.centerX()
+        val cy = rect.centerY()
+        val r = rect.width() / 2f
+        fillPaint.shader = null
+        fillPaint.alpha = 255
+        fillPaint.color = Theme.withAlpha(Theme.textSecondary, alpha)
+
+        val toothLength = r * 0.30f
+        val toothWidth = r * 0.24f
+        for (i in 0 until 8) {
+            val a = (Math.PI / 4 * i).toFloat()
+            canvas.save()
+            canvas.rotate(Math.toDegrees(a.toDouble()).toFloat(), cx, cy)
+            roundRect.set(
+                cx - toothWidth / 2f, cy - r,
+                cx + toothWidth / 2f, cy - r + toothLength * 2f
+            )
+            canvas.drawRoundRect(roundRect, toothWidth / 2f, toothWidth / 2f, fillPaint)
+            canvas.restore()
+        }
+        rimPaint.strokeWidth = r * 0.30f
+        rimPaint.color = Theme.withAlpha(Theme.textSecondary, alpha)
+        canvas.drawCircle(cx, cy, r * 0.52f, rimPaint)
     }
 
     /**
@@ -3766,6 +3845,8 @@ class GameView @JvmOverloads constructor(
         /** Game-over card metrics, in dp - shared by the measure pass and the draw. */
         /** Side of the square pause target, in dp. */
         const val PAUSE_BUTTON_SIZE = 34f
+        /** The title screen's corner icons. */
+        const val CORNER_ICON_SIZE = 30f
 
         /** Grain tile edge, in pixels, and how strongly it sits over the body. */
         /**

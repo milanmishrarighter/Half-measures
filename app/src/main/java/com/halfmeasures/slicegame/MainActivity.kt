@@ -57,6 +57,7 @@ class MainActivity : AppCompatActivity() {
             // Closes the whole task, not just this activity, so the next launch is
             // a cold start at the title screen rather than a resume.
             onExitApp = { finishAndRemoveTask() }
+            onOpenStats = { startActivity(Intent(this@MainActivity, StatsActivity::class.java)) }
             onCancelPendingAd = {
                 endAdPresentation()
                 ads.abandonPending()
