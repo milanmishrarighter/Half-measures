@@ -56,13 +56,32 @@ class LifetimeStats private constructor(
         }
         .filter { it.total >= MIN_SAMPLE }
 
-    fun best(limit: Int = 5): List<ShapeRecord> =
-        ranked().sortedWith(compareByDescending<ShapeRecord> { it.perfectRate }
-            .thenByDescending { it.perfect }).take(limit)
+    /**
+     * The shapes halved best. A shape with no perfect cut at all has not earned a
+     * place here however tidy the rest of its cuts were - "best" with a zero
+     * beside it reads as a mistake, and it was one.
+     */
+    fun best(limit: Int = 5): List<ShapeRecord> = ranked()
+        .filter { it.perfect > 0 }
+        .sortedWith(compareByDescending<ShapeRecord> { it.perfectRate }
+            .thenByDescending { it.perfect })
+        .take(limit)
 
-    fun worst(limit: Int = 5): List<ShapeRecord> =
-        ranked().sortedWith(compareByDescending<ShapeRecord> { it.badRate }
-            .thenByDescending { it.bad }).take(limit)
+    /**
+     * The shapes that cost the most, never one already listed as a best.
+     *
+     * A shape can genuinely lead on both rates - plenty of perfects and plenty of
+     * disasters - but a table that names the same shape as the player's best and
+     * their worst is not telling them anything they can act on.
+     */
+    fun worst(limit: Int = 5, excluding: List<ShapeRecord> = emptyList()): List<ShapeRecord> {
+        val skip = excluding.map { it.kind }.toSet()
+        return ranked()
+            .filter { it.bad > 0 && it.kind !in skip }
+            .sortedWith(compareByDescending<ShapeRecord> { it.badRate }
+                .thenByDescending { it.bad })
+            .take(limit)
+    }
 
     fun save(context: Context) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()

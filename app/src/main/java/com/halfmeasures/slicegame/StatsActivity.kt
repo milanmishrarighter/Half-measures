@@ -58,15 +58,8 @@ class StatsActivity : AppCompatActivity() {
             setPadding(dp(GUTTER), dp(GUTTER), dp(GUTTER), dp(GUTTER))
         }
 
-        if (runs == 0) {
-            root.addView(heading("STATS"))
-            root.addView(TextView(this).apply {
-                text = "Nothing to show yet. Play a run."
-                typeface = Theme.ui(this@StatsActivity)
-                setTextColor(Theme.textFaint)
-                textSize = 15f
-                setPadding(0, dp(GAP), 0, 0)
-            })
+        if (runs < MIN_RUNS) {
+            root.addView(locked(runs))
             root.addView(doneButton())
             return scroll(root)
         }
@@ -127,12 +120,15 @@ class StatsActivity : AppCompatActivity() {
                 setPadding(0, 0, 0, dp(GAP))
             })
         } else {
-            root.addView(sectionLabel("SHARPEST ON  ·  BY PERFECT CUT RATE"))
+            root.addView(sectionLabel("YOUR BEST SHAPES", Theme.gold))
+            root.addView(sectionNote("Ranked by how often you halve them perfectly."))
             bestShapes.forEachIndexed { i, r -> root.addView(shapeCard(i + 1, r, best = true)) }
 
-            val worstShapes = stats.worst()
+            // A shape cannot be both, so the bests are held out of the worsts.
+            val worstShapes = stats.worst(excluding = bestShapes)
             if (worstShapes.isNotEmpty()) {
-                root.addView(sectionLabel("COSTS YOU MOST  ·  BY BAD CUT RATE"))
+                root.addView(sectionLabel("YOUR WORST SHAPES", Theme.danger))
+                root.addView(sectionNote("Ranked by how often you butcher them."))
                 worstShapes.forEachIndexed { i, r -> root.addView(shapeCard(i + 1, r, best = false)) }
             }
         }
@@ -170,6 +166,10 @@ class StatsActivity : AppCompatActivity() {
                 setTextColor(Theme.textFaint)
                 textSize = 11f
                 letterSpacing = 0.20f
+                gravity = Gravity.CENTER
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                )
             })
             addView(GlyphView(this@StatsActivity, rank.shape, tint).apply {
                 layoutParams = LinearLayout.LayoutParams(dp(84f), dp(84f))
@@ -181,6 +181,10 @@ class StatsActivity : AppCompatActivity() {
                 setTextColor(tint)
                 textSize = 19f
                 letterSpacing = 0.04f
+                gravity = Gravity.CENTER
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                )
             })
             addView(LadderView(this@StatsActivity, rank.number).apply {
                 layoutParams = LinearLayout.LayoutParams(
@@ -196,21 +200,27 @@ class StatsActivity : AppCompatActivity() {
                 textSize = 13f
                 gravity = Gravity.CENTER
                 setPadding(0, dp(10f), 0, 0)
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                )
             })
         }
     }
 
     /**
-     * Precision as one stacked bar rather than six rows: the split is the story,
-     * and six bars each scaled to the biggest one hid it. The headline is the
-     * share of cuts that landed 45/55 or better, which is the number that decides
-     * whether a run survives.
+     * Precision, left aligned all the way down: the bar first, then the number
+     * it produces, then the four groups spelled out in words. The headline used
+     * to sit right of the title where it lined up with nothing; under the bar it
+     * has the bar's own left edge to sit against.
      */
     private fun precisionPanel(): View {
         val cuts = stats.totalCuts
-        val clean = if (cuts == 0) 0f else (stats.bands[0] + stats.bands[1]).toFloat() / cuts
+        val groups = groupedBands()
+        fun pct(v: Int): Int = if (cuts == 0) 0 else (v * 100f / cuts).roundToInt()
+        val clean = pct(groups[0] + groups[1])
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
+            gravity = Gravity.START
             background = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
                 cornerRadius = dp(18f).toFloat()
@@ -220,70 +230,143 @@ class StatsActivity : AppCompatActivity() {
             setPadding(dp(GUTTER), dp(GAP), dp(GUTTER), dp(GAP))
             layoutParams = rowParams()
 
-            addView(LinearLayout(this@StatsActivity).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                addView(TextView(this@StatsActivity).apply {
-                    text = "PRECISION  ·  ALL TIME"
-                    typeface = Theme.uiBold(this@StatsActivity)
-                    setTextColor(Theme.accent)
-                    textSize = 12f
-                    letterSpacing = 0.16f
-                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                })
-                addView(TextView(this@StatsActivity).apply {
-                    text = "${(clean * 100).roundToInt()}%"
-                    typeface = Theme.display(this@StatsActivity)
-                    setTextColor(Theme.good)
-                    textSize = 22f
-                })
+            addView(TextView(this@StatsActivity).apply {
+                text = "PRECISION  ·  ALL TIME"
+                typeface = Theme.uiBold(this@StatsActivity)
+                setTextColor(Theme.accent)
+                textSize = 12f
+                letterSpacing = 0.16f
+            })
+            addView(StackView(this@StatsActivity, groups).apply {
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(16f)
+                ).apply { topMargin = dp(12f); bottomMargin = dp(12f) }
+            })
+            addView(TextView(this@StatsActivity).apply {
+                text = "$clean%"
+                typeface = Theme.display(this@StatsActivity)
+                setTextColor(Theme.good)
+                textSize = 30f
             })
             addView(TextView(this@StatsActivity).apply {
                 text = "of your cuts land 45/55 or better"
                 typeface = Theme.ui(this@StatsActivity)
                 setTextColor(Theme.textFaint)
                 textSize = 12f
-                gravity = Gravity.END
+                setPadding(0, dp(2f), 0, dp(12f))
             })
-            addView(StackView(this@StatsActivity, stats.bands).apply {
-                layoutParams = LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, dp(16f)
-                ).apply { topMargin = dp(12f); bottomMargin = dp(10f) }
-            })
-            // The legend, two rows of three, so a colour in the bar has a name.
-            for (row in 0 until 2) {
-                addView(LinearLayout(this@StatsActivity).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    setPadding(0, dp(3f), 0, dp(3f))
-                    for (col in 0 until 3) {
-                        val i = row * 3 + col
-                        addView(legendChip(BAND_LABELS[i], stats.bands[i], bandColour(i)))
-                    }
-                })
+            for (i in groups.indices) {
+                addView(breakdownRow(GROUP_LABELS[i], GROUP_RANGES[i], pct(groups[i]), groups[i], groupColour(i)))
             }
         }
     }
 
-    private fun legendChip(label: String, count: Int, colour: Int) =
+    /**
+     * The six recorded bands folded into the four the player thinks in. The bar
+     * and the lines below it read off the same four numbers, so a colour in the
+     * bar always has a sentence to go with it.
+     */
+    private fun groupedBands(): IntArray {
+        val b = stats.bands
+        return intArrayOf(b[0], b[1], b[2] + b[3], b[4] + b[5])
+    }
+
+    /** "33% are good cuts - 45/55 or better - 412 of them". */
+    private fun breakdownRow(label: String, range: String, percent: Int, count: Int, colour: Int) =
         LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            setPadding(0, dp(4f), 0, dp(4f))
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            )
             addView(View(this@StatsActivity).apply {
                 background = GradientDrawable().apply {
                     shape = GradientDrawable.OVAL
                     setColor(colour)
                 }
-                layoutParams = LinearLayout.LayoutParams(dp(8f), dp(8f))
-                    .apply { rightMargin = dp(6f) }
+                layoutParams = LinearLayout.LayoutParams(dp(9f), dp(9f))
+                    .apply { rightMargin = dp(10f) }
             })
             addView(TextView(this@StatsActivity).apply {
-                text = "$label $count"
+                text = "$percent%"
+                typeface = Theme.display(this@StatsActivity)
+                setTextColor(colour)
+                textSize = 15f
+                layoutParams = LinearLayout.LayoutParams(dp(46f), ViewGroup.LayoutParams.WRAP_CONTENT)
+            })
+            addView(TextView(this@StatsActivity).apply {
+                text = "$label  ·  $range"
                 typeface = Theme.ui(this@StatsActivity)
                 setTextColor(Theme.textSecondary)
-                textSize = 12f
+                textSize = 13f
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            })
+            addView(TextView(this@StatsActivity).apply {
+                text = format(count)
+                typeface = Theme.ui(this@StatsActivity)
+                setTextColor(Theme.textFaint)
+                textSize = 13f
+                gravity = Gravity.END
             })
         }
+
+    /**
+     * What the screen shows before it has anything worth showing. Ten runs is the
+     * point where a rate stops being one lucky cut and starts being a habit.
+     */
+    private fun locked(runs: Int): View = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        gravity = Gravity.CENTER_HORIZONTAL
+        background = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = dp(22f).toFloat()
+            setColor(Theme.card)
+            setStroke(dp(1f), Theme.hairline)
+        }
+        setPadding(dp(GUTTER), dp(30f), dp(GUTTER), dp(30f))
+        layoutParams = rowParams()
+
+        addView(TextView(this@StatsActivity).apply {
+            text = "STATS LOCKED"
+            typeface = Theme.uiBold(this@StatsActivity)
+            setTextColor(Theme.textFaint)
+            textSize = 11f
+            letterSpacing = 0.20f
+            gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        })
+        addView(TextView(this@StatsActivity).apply {
+            text = "$runs / $MIN_RUNS"
+            typeface = Theme.display(this@StatsActivity)
+            setTextColor(Theme.accent)
+            textSize = 46f
+            gravity = Gravity.CENTER
+            setPadding(0, dp(10f), 0, dp(6f))
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        })
+        addView(TextView(this@StatsActivity).apply {
+            val left = MIN_RUNS - runs
+            text = if (left == 1) "Play 1 more game and your stats appear."
+                else "Play $MIN_RUNS games first and your stats appear. $left to go."
+            typeface = Theme.ui(this@StatsActivity)
+            setTextColor(Theme.textSecondary)
+            textSize = 14f
+            gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        })
+        addView(ProgressPips(this@StatsActivity, runs).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(16f)
+            ).apply { topMargin = dp(18f) }
+        })
+    }
 
     /**
      * One shape's card: its outline drawn large in its medal colour, its name,
@@ -364,21 +447,22 @@ class StatsActivity : AppCompatActivity() {
         layoutParams = LinearLayout.LayoutParams(dp(10f), 1)
     }
 
-    private fun heading(text: String) = TextView(this).apply {
-        this.text = text
-        typeface = Theme.display(this@StatsActivity)
-        setTextColor(Theme.textPrimary)
-        textSize = 24f
-        setPadding(0, 0, 0, dp(GAP))
-    }
-
-    private fun sectionLabel(text: String) = TextView(this).apply {
+    private fun sectionLabel(text: String, colour: Int = Theme.textFaint) = TextView(this).apply {
         this.text = text
         typeface = Theme.uiBold(this@StatsActivity)
-        setTextColor(Theme.textFaint)
-        textSize = 11f
+        setTextColor(colour)
+        textSize = if (colour == Theme.textFaint) 11f else 13f
         letterSpacing = 0.18f
-        setPadding(dp(4f), dp(4f), 0, dp(10f))
+        setPadding(dp(4f), dp(4f), 0, if (colour == Theme.textFaint) dp(10f) else dp(3f))
+    }
+
+    /** One line under a section heading saying what it is sorted on. */
+    private fun sectionNote(text: String) = TextView(this).apply {
+        this.text = text
+        typeface = Theme.ui(this@StatsActivity)
+        setTextColor(Theme.textFaint)
+        textSize = 12f
+        setPadding(dp(4f), 0, 0, dp(10f))
     }
 
     /** A big number under a caption that says exactly what it is. */
@@ -465,12 +549,11 @@ class StatsActivity : AppCompatActivity() {
         else -> Theme.accent
     }
 
-    private fun bandColour(index: Int): Int = when (index) {
+    /** Perfect, good, mid range, bad - in the bar and in the lines below it. */
+    private fun groupColour(index: Int): Int = when (index) {
         0 -> Theme.gold
         1 -> Theme.good
-        2 -> Theme.accent
-        3 -> Color.rgb(255, 190, 90)
-        4 -> Color.rgb(255, 140, 80)
+        2 -> Color.rgb(255, 176, 84)
         else -> Theme.danger
     }
 
@@ -507,11 +590,31 @@ class StatsActivity : AppCompatActivity() {
         private val path = Path()
 
         override fun onDraw(canvas: Canvas) {
-            val r = min(width, height) / 2f * 0.94f
+            val verts = kind.glyphVertices
+            if (verts.isEmpty() || width == 0 || height == 0) return
+
+            // Fit from the outline's own reach, never from a guessed fraction of
+            // the view. A glyph can extend past the unit circle - the capsule
+            // does - and a fixed 0.94 clipped it. Half the stroke is taken off
+            // first because a stroke straddles the path it follows.
+            var reachX = 0f
+            var reachY = 0f
+            for (p in verts) {
+                if (kotlin.math.abs(p.x) > reachX) reachX = kotlin.math.abs(p.x)
+                if (kotlin.math.abs(p.y) > reachY) reachY = kotlin.math.abs(p.y)
+            }
+            if (reachX <= 0f || reachY <= 0f) return
+
+            val box = min(width, height) / 2f
+            val weight = kotlin.math.max(2f, box * 0.09f)
+            val room = box - weight / 2f - 1f
+            if (room <= 0f) return
+            val r = min(room / reachX, room / reachY)
+
             val cx = width / 2f
             val cy = height / 2f
             path.rewind()
-            kind.glyphVertices.forEachIndexed { i, p ->
+            verts.forEachIndexed { i, p ->
                 val x = cx + p.x * r
                 val y = cy + p.y * r
                 if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
@@ -519,9 +622,32 @@ class StatsActivity : AppCompatActivity() {
             path.close()
             fill.color = Theme.withAlpha(tint, 0.20f)
             canvas.drawPath(path, fill)
-            stroke.strokeWidth = kotlin.math.max(2f, r * 0.10f)
+            stroke.strokeWidth = weight
             stroke.color = Theme.withAlpha(tint, 0.95f)
             canvas.drawPath(path, stroke)
+        }
+    }
+
+    /** Ten pips, filled as the required runs are played. */
+    private class ProgressPips(context: Context, private val done: Int) : View(context) {
+
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+
+        override fun onMeasure(widthSpec: Int, heightSpec: Int) {
+            val gap = 16f * resources.displayMetrics.density
+            setMeasuredDimension((gap * MIN_RUNS).toInt(), resolveSize(0, heightSpec))
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            val gap = 16f * resources.displayMetrics.density
+            val pip = 4.5f * resources.displayMetrics.density
+            var x = gap / 2f
+            val cy = height / 2f
+            for (i in 1..MIN_RUNS) {
+                paint.color = if (i <= done) Theme.accent else Theme.withAlpha(Color.WHITE, 0.14f)
+                canvas.drawCircle(x, cy, pip, paint)
+                x += gap
+            }
         }
     }
 
@@ -559,7 +685,7 @@ class StatsActivity : AppCompatActivity() {
     }
 
     /**
-     * The six bands as one bar, each segment as wide as its share. Rounded at the
+     * The four groups as one bar, each segment as wide as its share. Rounded at the
      * two ends only, so it reads as a single bar that has been divided rather than
      * six bars pushed together.
      */
@@ -571,9 +697,7 @@ class StatsActivity : AppCompatActivity() {
         private fun colourOf(index: Int): Int = when (index) {
             0 -> Theme.gold
             1 -> Theme.good
-            2 -> Theme.accent
-            3 -> Color.rgb(255, 190, 90)
-            4 -> Color.rgb(255, 140, 80)
+            2 -> Color.rgb(255, 176, 84)
             else -> Theme.danger
         }
 
@@ -609,6 +733,10 @@ class StatsActivity : AppCompatActivity() {
         const val GAP = 14f
         const val GUTTER = 20f
 
-        val BAND_LABELS = arrayOf("PERFECT", "45/55", "60/40", "70/30", "80/20", "90/10")
+        /** Below this many finished runs the screen has nothing honest to say. */
+        const val MIN_RUNS = 10
+
+        val GROUP_LABELS = arrayOf("perfect cuts", "good cuts", "mid range cuts", "bad cuts")
+        val GROUP_RANGES = arrayOf("a dead 50/50", "45/55 or better", "60/40 to 70/30", "80/20 or worse")
     }
 }
