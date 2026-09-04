@@ -18,6 +18,7 @@ import android.view.Choreographer
 import android.view.MotionEvent
 import android.view.View
 
+import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.max
@@ -161,6 +162,15 @@ class GameView @JvmOverloads constructor(
     private var settleTimer = 0f
     /** Countdowns driving the idle demo that plays behind the title screen. */
     private var menuSpawnTimer = 0f
+
+    /**
+     * The colour wash that marks the run turning a new colour: seconds left of it,
+     * and the colour it is washing in. The shapes shift hue continuously, which
+     * means nothing ever visibly *happens* - this is the moment that says it did.
+     */
+    private var colourShift = 0f
+    private var colourShiftTint = 0
+    private var colourMilestone = 0
     private var menuCutTimer = 0f
     /** Seconds since the game-over card began revealing itself. */
     private var cardReveal = 0f
@@ -712,6 +722,19 @@ class GameView @JvmOverloads constructor(
     private fun update(dt: Float) {
         elapsed += dt
         val nowMs = System.currentTimeMillis()
+
+        colourShift = (colourShift - dt).coerceAtLeast(0f)
+        if (state == State.PLAYING) {
+            val reached = Theme.colourMilestone(score)
+            if (reached > colourMilestone) {
+                colourMilestone = reached
+                colourShiftTint = Theme.scoreEnergy(score)
+                colourShift = COLOUR_SHIFT_SECONDS
+                // The rank chime, lifted and softened: nothing else plays it
+                // during a run, so it reads as its own event rather than a cut.
+                sounds.play(Sfx.RANK_UP, gain = 0.7f, rate = 1.14f)
+            }
+        }
 
         trailPoints.removeAll { nowMs - it.timeMs > trailMaxAgeMs }
 
@@ -1425,6 +1448,10 @@ class GameView @JvmOverloads constructor(
         bestStreak = 0
         bestPerfectStreak = 0
         stage = score / max(1, settings.stageScoreInterval)
+        // Armed at whatever the starting score is worth, so a run begun part way
+        // up the ladder does not open with a wash for colours it started on.
+        colourMilestone = Theme.colourMilestone(score)
+        colourShift = 0f
         timeScale = 1f
         perfectSlowMo = 0f
         dangerRecovery = 0f
@@ -2126,6 +2153,7 @@ class GameView @JvmOverloads constructor(
         if (shaken) canvas.restore()
 
         drawFlash(canvas)
+        drawColourShift(canvas)
         drawCriticalWarning(canvas)
         drawPopups(canvas)
         // The HUD stays up through the settling beat so the final score is visible
@@ -2188,6 +2216,24 @@ class GameView @JvmOverloads constructor(
                 if (i == 0) path.moveTo(p.x, p.y) else path.lineTo(p.x, p.y)
             }
             path.close()
+        }
+    }
+
+    /**
+     * A falling piece's outline, as the open polylines that are really its edge.
+     * One run that starts where it ends is closed, so the joint is mitred rather
+     * than left as two flat caps.
+     */
+    private fun buildOutlinePath(piece: SlicedPiece) {
+        path.rewind()
+        path.fillType = Path.FillType.WINDING
+        for (run in piece.outline) {
+            run.forEachIndexed { i, p ->
+                if (i == 0) path.moveTo(p.x, p.y) else path.lineTo(p.x, p.y)
+            }
+            val a = run.first()
+            val b = run.last()
+            if (abs(a.x - b.x) < 0.01f && abs(a.y - b.y) < 0.01f) path.close()
         }
     }
 
@@ -2413,6 +2459,10 @@ class GameView @JvmOverloads constructor(
         drawGrain(canvas, piece.originX, alpha)
 
         // The halves keep the neon while they fall, fading with the rest of them.
+        // Stroked from the piece's real boundary rather than its ring: cutting a
+        // crescent or a ring can leave the outline doubling back along the blade,
+        // and stroking that drew a thin line across the gap where nothing is.
+        buildOutlinePath(piece)
         val strength = settings.neonGlow
         if (strength > 0.01f) {
             rimPaint.strokeWidth = 9f
@@ -2472,6 +2522,22 @@ class GameView @JvmOverloads constructor(
         val amount = effects.flash
         if (amount <= 0.005f) return
         flashPaint.color = Theme.withAlpha(effects.flashColor, (amount * 0.4f).coerceAtMost(0.5f))
+        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), flashPaint)
+    }
+
+    /**
+     * The wash that says the run has changed colour: up fast, then a slow fall
+     * over about a second. Held well under half opacity - the point is to be
+     * noticed, not to hide the shape the player is lining a cut up on.
+     */
+    private fun drawColourShift(canvas: Canvas) {
+        if (colourShift <= 0.001f) return
+        val t = colourShift / COLOUR_SHIFT_SECONDS
+        // The first fifth of the wash is the rise; the rest of it is the fall.
+        val amount = if (t > 0.8f) (1f - t) / 0.2f else (t / 0.8f).pow(1.4f)
+        val alpha = amount * 0.32f * settings.screenFlashStrength
+        if (alpha <= 0.004f) return
+        flashPaint.color = Theme.withAlpha(colourShiftTint, alpha)
         canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), flashPaint)
     }
 
@@ -3863,6 +3929,9 @@ class GameView @JvmOverloads constructor(
 
         const val GRAIN_TILE = 128
 
+        /** How long the colour-change wash lasts, in seconds. */
+        const val COLOUR_SHIFT_SECONDS = 1.05f
+
 
         /** Shared pill metrics, in dp, so every capsule on a screen matches. */
         const val PILL_HEIGHT = 34f
@@ -4003,6 +4072,11 @@ class GameView @JvmOverloads constructor(
     ) {
         val originX = x
         val originY = y
+        /**
+         * What to stroke: the ring minus anything that doubles back over itself.
+         * Worked out once here rather than every frame the piece falls.
+         */
+        val outline: List<List<PointF2>> = SliceMath.openBoundary(points)
         var spin = 0f
             private set
         private var age = 0f

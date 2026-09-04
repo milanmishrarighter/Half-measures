@@ -1,6 +1,8 @@
 package com.halfmeasures.slicegame
 
 import kotlin.math.abs
+import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.sqrt
 
 /**
@@ -9,9 +11,10 @@ import kotlin.math.sqrt
  * Everything here works for concave outlines (stars, crosses) as well as convex
  * ones. Clipping uses Sutherland-Hodgman against a half-plane: for a concave
  * subject the result can be a single ring joined by degenerate edges that lie
- * *along* the cut line, but because those edges are collinear they contribute
- * nothing to the shoelace sum - so the measured area is exact, and the rendered
- * piece is visually correct since the seam has zero width.
+ * *along* the cut line. Those edges are collinear, so they contribute nothing to
+ * the shoelace sum and every area here is exact - but they are still edges, and
+ * stroking the ring draws them as a line across empty space. [openBoundary] is
+ * what to stroke.
  */
 object SliceMath {
 
@@ -168,6 +171,105 @@ object SliceMath {
         }
         return false
     }
+
+    /**
+     * The parts of a ring's boundary that are real edge, as open polylines.
+     *
+     * Clipping a *concave* outline against a half plane cannot always answer with
+     * one simple loop. A crescent cut through both horns is two separate lobes,
+     * and the clipper returns them as one ring joined by a segment that runs out
+     * along the cut and straight back again. The join encloses nothing, so the
+     * fill comes out right either way - but stroke that ring and the retraced
+     * segment draws as a thin line hanging in the gap between the lobes. The ring
+     * a torus is cut from carries the same thing permanently: the slit reaching in
+     * to its hole is one segment walked twice.
+     *
+     * So an edge cancels against any other edge of the same ring that is collinear
+     * with it, runs the opposite way and overlaps it, and only the uncancelled
+     * remainder is boundary worth drawing. On the halved crescent that leaves
+     * exactly the two lobe faces; on a torus half it drops the slit and keeps the
+     * hole's arc; on any ordinary shape - where nothing doubles back over anything
+     * - it hands back the whole outline unchanged.
+     */
+    fun openBoundary(pts: List<PointF2>): List<List<PointF2>> {
+        val n = pts.size
+        if (n < 3) return emptyList()
+
+        // Every stretch of edge that survives, in the order the ring walks them.
+        val kept = ArrayList<PointF2>(n * 2)
+        for (i in 0 until n) {
+            val a = pts[i]
+            val b = pts[(i + 1) % n]
+            val dx = b.x - a.x
+            val dy = b.y - a.y
+            val len2 = dx * dx + dy * dy
+            if (len2 < 1e-8f) continue
+            val len = sqrt(len2)
+
+            val blocked = ArrayList<FloatArray>(2)
+            for (j in 0 until n) {
+                if (j == i) continue
+                val c = pts[j]
+                val d = pts[(j + 1) % n]
+                val ex = d.x - c.x
+                val ey = d.y - c.y
+                if (dx * ex + dy * ey >= 0f) continue                       // same way
+                if (abs(dx * ey - dy * ex) > COLLINEAR_CROSS * len) continue  // not parallel
+                if (abs(dx * (c.y - a.y) - dy * (c.x - a.x)) > COLLINEAR_CROSS * len) continue
+                val t0 = ((c.x - a.x) * dx + (c.y - a.y) * dy) / len2
+                val t1 = ((d.x - a.x) * dx + (d.y - a.y) * dy) / len2
+                val lo = max(min(t0, t1), 0f)
+                val hi = min(max(t0, t1), 1f)
+                if (hi - lo > 1e-4f) blocked.add(floatArrayOf(lo, hi))
+            }
+
+            blocked.sortBy { it[0] }
+            var cursor = 0f
+            for (span in blocked) {
+                if (span[0] > cursor) addSpan(kept, a, dx, dy, cursor, span[0])
+                cursor = max(cursor, span[1])
+            }
+            if (cursor < 1f) addSpan(kept, a, dx, dy, cursor, 1f)
+        }
+
+        // Stitch the surviving stretches back together: consecutive ones that meet
+        // are one polyline, a gap between them starts another.
+        val runs = ArrayList<MutableList<PointF2>>()
+        var k = 0
+        while (k < kept.size) {
+            val from = kept[k]
+            val to = kept[k + 1]
+            val last = runs.lastOrNull()
+            if (last != null && meets(last[last.size - 1], from)) last.add(to)
+            else runs.add(mutableListOf(from, to))
+            k += 2
+        }
+        // The walk started mid-stretch if the ring's first edge survived whole, so
+        // the last run may be the head of the first one.
+        if (runs.size > 1) {
+            val tail = runs[runs.size - 1]
+            val head = runs[0]
+            if (meets(tail[tail.size - 1], head[0])) {
+                head.addAll(0, tail.subList(0, tail.size - 1))
+                runs.removeAt(runs.size - 1)
+            }
+        }
+        return runs
+    }
+
+    private fun addSpan(
+        into: ArrayList<PointF2>, a: PointF2, dx: Float, dy: Float, from: Float, to: Float
+    ) {
+        if (to - from < 1e-5f) return
+        into.add(PointF2(a.x + dx * from, a.y + dy * from))
+        into.add(PointF2(a.x + dx * to, a.y + dy * to))
+    }
+
+    private fun meets(a: PointF2, b: PointF2): Boolean =
+        abs(a.x - b.x) < 1e-3f && abs(a.y - b.y) < 1e-3f
+
+    /** How far off a line a point may sit and still count as on it, in pixels. */
+    private const val COLLINEAR_CROSS = 0.35f
 
     fun deviationPercent(areaA: Float, areaB: Float): Float {
         val total = areaA + areaB

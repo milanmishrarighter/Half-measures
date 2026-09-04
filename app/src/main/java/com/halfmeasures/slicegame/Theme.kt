@@ -87,6 +87,23 @@ object Theme {
         return floatArrayOf(hue, 0.94f - 0.16f * value, value)
     }
 
+    /**
+     * Which colour the run is wearing, counted in steps rather than measured.
+     *
+     * The hue turns continuously with the score, which is right to look at and
+     * useless to react to - there is no moment where anything changes. This cuts
+     * the climb into sixths of a turn, one per family: the number it returns only
+     * ever goes up, and each time it does the shapes are a colour the player has
+     * not seen this run.
+     */
+    fun colourMilestone(score: Int): Int {
+        val s = score.toFloat().coerceAtLeast(0f)
+        if (s < ENERGY_INTRO_END) return 0
+        return 1 + ((s - ENERGY_INTRO_END) / (ENERGY_LAP / MILESTONES_PER_LAP)).toInt()
+    }
+
+    private const val MILESTONES_PER_LAP = 6f
+
     /** How far along the brightness climb [score] sits, 0 dull to 1 neon. */
     fun energyLevel(score: Int): Float {
         val v = energyHsv(score)[2]
