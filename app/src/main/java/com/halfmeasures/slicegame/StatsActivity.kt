@@ -76,21 +76,7 @@ class StatsActivity : AppCompatActivity() {
             layoutParams = rowParams()
         })
 
-        // ---- three counts, all lifetime ----
-        root.addView(LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            addView(smallTile("GAMES\nPLAYED", runs.toString()))
-            addView(spacer())
-            addView(smallTile("CUTS MADE\n(ALL TIME)", format(stats.totalCuts)))
-            addView(spacer())
-            addView(smallTile("PERFECT CUTS\n(ALL TIME)", format(stats.bands[0])))
-            layoutParams = rowParams()
-        })
-
-        // ---- precision, as one bar with a headline ----
-        root.addView(precisionPanel())
-
-        // ---- bests, clearly per-game ----
+        // ---- records, all per-game, right under the two scores they belong with ----
         root.addView(sectionLabel("BEST IN A SINGLE GAME"))
         root.addView(LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -106,6 +92,20 @@ class StatsActivity : AppCompatActivity() {
             addView(smallTile("LONGEST GOOD\nSTREAK", "${scores.getInt("best_good_streak", 0)}x"))
             layoutParams = rowParams()
         })
+
+        // ---- and now everything counted over every run there has ever been ----
+        val groups = groupedBands()
+        root.addView(sectionLabel("ALL TIME"))
+        root.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            addView(smallTile("PERFECT\nCUTS", format(groups[0])))
+            addView(spacer())
+            addView(smallTile("GOOD\nCUTS", format(groups[1])))
+            addView(spacer())
+            addView(smallTile("GAMES\nPLAYED", format(runs)))
+            layoutParams = rowParams()
+        })
+        root.addView(precisionPanel())
 
         // ---- the shapes ----
         val bestShapes = stats.best()
@@ -208,16 +208,15 @@ class StatsActivity : AppCompatActivity() {
     }
 
     /**
-     * Precision, left aligned all the way down: the bar first, then the number
-     * it produces, then the four groups spelled out in words. The headline used
-     * to sit right of the title where it lined up with nothing; under the bar it
-     * has the bar's own left edge to sit against.
+     * Precision, left aligned all the way down: the bar, then the perfect rate
+     * as the headline, then one plain sentence per group with the split it means
+     * out on the right. The counts used to sit there, which made every line read
+     * as a tally when what it is is a rate.
      */
     private fun precisionPanel(): View {
         val cuts = stats.totalCuts
         val groups = groupedBands()
         fun pct(v: Int): Int = if (cuts == 0) 0 else (v * 100f / cuts).roundToInt()
-        val clean = pct(groups[0] + groups[1])
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.START
@@ -231,7 +230,7 @@ class StatsActivity : AppCompatActivity() {
             layoutParams = rowParams()
 
             addView(TextView(this@StatsActivity).apply {
-                text = "PRECISION  ·  ALL TIME"
+                text = "PRECISION  \u00b7  ALL TIME"
                 typeface = Theme.uiBold(this@StatsActivity)
                 setTextColor(Theme.accent)
                 textSize = 12f
@@ -243,23 +242,56 @@ class StatsActivity : AppCompatActivity() {
                 ).apply { topMargin = dp(12f); bottomMargin = dp(12f) }
             })
             addView(TextView(this@StatsActivity).apply {
-                text = "$clean%"
+                text = "${pct(groups[0])}%"
                 typeface = Theme.display(this@StatsActivity)
-                setTextColor(Theme.good)
+                setTextColor(Theme.gold)
                 textSize = 30f
             })
             addView(TextView(this@StatsActivity).apply {
-                text = "of your cuts land 45/55 or better"
+                text = "of every cut you have made was perfect"
                 typeface = Theme.ui(this@StatsActivity)
                 setTextColor(Theme.textFaint)
                 textSize = 12f
                 setPadding(0, dp(2f), 0, dp(12f))
             })
             for (i in groups.indices) {
-                addView(breakdownRow(GROUP_LABELS[i], GROUP_RANGES[i], pct(groups[i]), groups[i], groupColour(i)))
+                addView(breakdownRow(pct(groups[i]), GROUP_LABELS[i], GROUP_RANGES[i], groupColour(i)))
             }
         }
     }
+
+    /** "33% of your cuts are perfect." with the split it means on the right. */
+    private fun breakdownRow(percent: Int, label: String, range: String, colour: Int) =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(5f), 0, dp(5f))
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            addView(View(this@StatsActivity).apply {
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(colour)
+                }
+                layoutParams = LinearLayout.LayoutParams(dp(9f), dp(9f))
+                    .apply { rightMargin = dp(10f) }
+            })
+            addView(TextView(this@StatsActivity).apply {
+                text = "$percent% of your cuts are $label."
+                typeface = Theme.ui(this@StatsActivity)
+                setTextColor(Theme.textSecondary)
+                textSize = 13.5f
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            })
+            addView(TextView(this@StatsActivity).apply {
+                text = range
+                typeface = Theme.uiBold(this@StatsActivity)
+                setTextColor(colour)
+                textSize = 12f
+                gravity = Gravity.END
+            })
+        }
 
     /**
      * The six recorded bands folded into the four the player thinks in. The bar
@@ -268,7 +300,7 @@ class StatsActivity : AppCompatActivity() {
      */
     private fun groupedBands(): IntArray {
         val b = stats.bands
-        return intArrayOf(b[0], b[1], b[2] + b[3], b[4] + b[5])
+        return intArrayOf(b[0], b[1] + b[2], b[3], b[4] + b[5])
     }
 
     /** "33% are good cuts - 45/55 or better - 412 of them". */
@@ -412,11 +444,13 @@ class StatsActivity : AppCompatActivity() {
                     letterSpacing = 0.04f
                 })
                 addView(TextView(this@StatsActivity).apply {
-                    text = "${r.perfect} perfect · ${r.good} good · ${r.bad} bad  of ${r.total}"
+                    val hits = if (best) r.perfect else r.bad
+                    val word = if (best) "perfect" else "bad"
+                    text = "$hits of your ${r.total} cuts were $word."
                     typeface = Theme.ui(this@StatsActivity)
                     setTextColor(Theme.textFaint)
-                    textSize = 12f
-                    setPadding(0, dp(2f), 0, 0)
+                    textSize = 12.5f
+                    setPadding(0, dp(3f), 0, 0)
                 })
             })
             addView(TextView(this@StatsActivity).apply {
@@ -736,7 +770,7 @@ class StatsActivity : AppCompatActivity() {
         /** Below this many finished runs the screen has nothing honest to say. */
         const val MIN_RUNS = 10
 
-        val GROUP_LABELS = arrayOf("perfect cuts", "good cuts", "mid range cuts", "bad cuts")
-        val GROUP_RANGES = arrayOf("a dead 50/50", "45/55 or better", "60/40 to 70/30", "80/20 or worse")
+        val GROUP_LABELS = arrayOf("perfect", "good", "mid range", "bad")
+        val GROUP_RANGES = arrayOf("= 50/50", "45/55 \u2013 60/40", "70/30", "80/20 or worse")
     }
 }

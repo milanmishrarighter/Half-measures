@@ -25,10 +25,16 @@ class LifetimeStats private constructor(
     /** One shape's history, with the arithmetic the stats screen wants. */
     class ShapeRecord(val kind: ShapeKind, val counts: IntArray) {
         val perfect: Int get() = counts[0]
-        /** Great and good together: the cuts that kept a run alive. */
+        /** Great and good together: 45/55 down to 60/40. */
         val good: Int get() = counts[1] + counts[2]
-        /** Everything from a 70/30 down, which is what actually costs health. */
-        val bad: Int get() = counts[3] + counts[4] + counts[5]
+        /** The 70/30s: neither a cut to be proud of nor one that ruins a run. */
+        val mid: Int get() = counts[3]
+        /**
+         * An 80/20 or worse. Held to the same line the precision panel draws so
+         * a shape card and the breakdown above it cannot disagree about what the
+         * word "bad" means on the same screen.
+         */
+        val bad: Int get() = counts[4] + counts[5]
         val total: Int get() = counts.sum()
         val perfectRate: Float get() = if (total == 0) 0f else perfect.toFloat() / total
         val badRate: Float get() = if (total == 0) 0f else bad.toFloat() / total
