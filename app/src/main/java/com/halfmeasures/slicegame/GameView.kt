@@ -861,7 +861,11 @@ class GameView @JvmOverloads constructor(
         // The shape gradients are cached per palette entry and tinted by level,
         // so they have to be rebuilt when the level changes.
         bodyShaders.clear()
-        if (settings.vibrationEnabled) haptics.tick(settings.vibrationStrength)
+        // No buzz here. A stage is only ever crossed *by* a cut, so this fired one
+        // frame after that cut's own haptic and replaced it - every thousand
+        // points, which at eighty to a hundred a cut is every ten to thirteen of
+        // them, the buzz for the cut came out as a ten millisecond tap. The level
+        // sound already marks the moment.
         sounds.play(Sfx.LEVEL_UP, gain = 0.9f)
     }
 
@@ -3143,22 +3147,36 @@ class GameView @JvmOverloads constructor(
         drawCogIcon(canvas, readyCog, pressedButton == 7)
     }
 
+    /**
+     * The radius the ink reaches in either corner icon.
+     *
+     * A stroked circle straddles the radius it is drawn on, so drawing the i's
+     * ring at the box's half width put half a stroke *outside* the box while the
+     * cog's teeth stopped exactly on it. The boxes always matched; the marks in
+     * them did not. Both are built off this now, so laid one over the other they
+     * are the same circle.
+     */
+    private fun iconReach(rect: RectF): Float = rect.width() / 2f - ICON_STROKE * density / 2f
+
     /** A ringed lower-case i, top left: how to play. */
     private fun drawInfoIcon(canvas: Canvas, rect: RectF, pressed: Boolean) {
         val alpha = if (pressed) 1f else 0.62f
         val cx = rect.centerX()
         val cy = rect.centerY()
-        val r = rect.width() / 2f
-        rimPaint.strokeWidth = 2f * density
+        val r = iconReach(rect)
+        rimPaint.strokeWidth = ICON_STROKE * density
         rimPaint.color = Theme.withAlpha(Theme.textSecondary, alpha)
         canvas.drawCircle(cx, cy, r, rimPaint)
 
         fillPaint.shader = null
         fillPaint.alpha = 255
         fillPaint.color = Theme.withAlpha(Theme.textSecondary, alpha)
-        canvas.drawCircle(cx, cy - r * 0.42f, 1.9f * density, fillPaint)
-        roundRect.set(cx - 1.6f * density, cy - r * 0.14f, cx + 1.6f * density, cy + r * 0.52f)
-        canvas.drawRoundRect(roundRect, 1.6f * density, 1.6f * density, fillPaint)
+        // Set from the ring rather than in dp, so the glyph holds its proportions
+        // whatever size the icon is asked to be.
+        val stem = r * 0.155f
+        canvas.drawCircle(cx, cy - r * 0.44f, stem * 1.15f, fillPaint)
+        roundRect.set(cx - stem, cy - r * 0.14f, cx + stem, cy + r * 0.54f)
+        canvas.drawRoundRect(roundRect, stem, stem, fillPaint)
     }
 
     /** A cog, top right: settings. Eight teeth on a ring, with a hole in it. */
@@ -3166,17 +3184,17 @@ class GameView @JvmOverloads constructor(
         val alpha = if (pressed) 1f else 0.62f
         val cx = rect.centerX()
         val cy = rect.centerY()
-        val r = rect.width() / 2f
+        val r = iconReach(rect)
         fillPaint.shader = null
         fillPaint.alpha = 255
         fillPaint.color = Theme.withAlpha(Theme.textSecondary, alpha)
 
-        val toothLength = r * 0.30f
-        val toothWidth = r * 0.24f
+        // The teeth stop on the same circle the i's ring is drawn on.
+        val toothLength = r * 0.34f
+        val toothWidth = r * 0.26f
         for (i in 0 until 8) {
-            val a = (Math.PI / 4 * i).toFloat()
             canvas.save()
-            canvas.rotate(Math.toDegrees(a.toDouble()).toFloat(), cx, cy)
+            canvas.rotate(45f * i, cx, cy)
             roundRect.set(
                 cx - toothWidth / 2f, cy - r,
                 cx + toothWidth / 2f, cy - r + toothLength * 2f
@@ -3186,7 +3204,7 @@ class GameView @JvmOverloads constructor(
         }
         rimPaint.strokeWidth = r * 0.30f
         rimPaint.color = Theme.withAlpha(Theme.textSecondary, alpha)
-        canvas.drawCircle(cx, cy, r * 0.52f, rimPaint)
+        canvas.drawCircle(cx, cy, r * 0.53f, rimPaint)
     }
 
     /**
@@ -3913,6 +3931,9 @@ class GameView @JvmOverloads constructor(
         const val PAUSE_BUTTON_SIZE = 34f
         /** The title screen's corner icons. */
         const val CORNER_ICON_SIZE = 22.5f
+
+        /** Line weight of the corner icons, in dp - and what they inset by. */
+        const val ICON_STROKE = 2f
 
         /** Grain tile edge, in pixels, and how strongly it sits over the body. */
         /**

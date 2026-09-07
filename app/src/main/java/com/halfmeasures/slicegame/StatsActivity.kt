@@ -208,10 +208,13 @@ class StatsActivity : AppCompatActivity() {
     }
 
     /**
-     * Precision, left aligned all the way down: the bar, then the perfect rate
-     * as the headline, then one plain sentence per group with the split it means
-     * out on the right. The counts used to sit there, which made every line read
-     * as a tally when what it is is a rate.
+     * Precision, left aligned all the way down: the bar, then one block per group.
+     *
+     * A block is a big coloured percentage with a sentence under it, and all four
+     * are the same block. The small rows they replaced put the four rates in a
+     * different visual language from the headline sitting above them, which made
+     * the headline look like the real number and the rest like footnotes - when
+     * they are the same measurement four times.
      */
     private fun precisionPanel(): View {
         val cuts = stats.totalCuts
@@ -239,63 +242,22 @@ class StatsActivity : AppCompatActivity() {
             addView(StackView(this@StatsActivity, groups).apply {
                 layoutParams = LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, dp(16f)
-                ).apply { topMargin = dp(12f); bottomMargin = dp(12f) }
-            })
-            addView(TextView(this@StatsActivity).apply {
-                text = "${pct(groups[0])}%"
-                typeface = Theme.display(this@StatsActivity)
-                setTextColor(Theme.gold)
-                textSize = 30f
-            })
-            addView(TextView(this@StatsActivity).apply {
-                text = "of every cut you have made was perfect"
-                typeface = Theme.ui(this@StatsActivity)
-                setTextColor(Theme.textFaint)
-                textSize = 12f
-                setPadding(0, dp(2f), 0, dp(12f))
+                ).apply { topMargin = dp(12f); bottomMargin = dp(16f) }
             })
             for (i in groups.indices) {
-                addView(breakdownRow(pct(groups[i]), GROUP_LABELS[i], GROUP_RANGES[i], groupColour(i)))
+                addView(
+                    rateBlock(
+                        pct(groups[i]), GROUP_LABELS[i], GROUP_RANGES[i], groupColour(i),
+                        last = i == groups.size - 1
+                    )
+                )
             }
         }
     }
 
-    /** "33% of your cuts are perfect." with the split it means on the right. */
-    private fun breakdownRow(percent: Int, label: String, range: String, colour: Int) =
-        LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(5f), 0, dp(5f))
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-            addView(View(this@StatsActivity).apply {
-                background = GradientDrawable().apply {
-                    shape = GradientDrawable.OVAL
-                    setColor(colour)
-                }
-                layoutParams = LinearLayout.LayoutParams(dp(9f), dp(9f))
-                    .apply { rightMargin = dp(10f) }
-            })
-            addView(TextView(this@StatsActivity).apply {
-                text = "$percent% of your cuts are $label."
-                typeface = Theme.ui(this@StatsActivity)
-                setTextColor(Theme.textSecondary)
-                textSize = 13.5f
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-            })
-            addView(TextView(this@StatsActivity).apply {
-                text = range
-                typeface = Theme.uiBold(this@StatsActivity)
-                setTextColor(colour)
-                textSize = 12f
-                gravity = Gravity.END
-            })
-        }
-
     /**
      * The six recorded bands folded into the four the player thinks in. The bar
-     * and the lines below it read off the same four numbers, so a colour in the
+     * and the blocks below it read off the same four numbers, so a colour in the
      * bar always has a sentence to go with it.
      */
     private fun groupedBands(): IntArray {
@@ -303,43 +265,26 @@ class StatsActivity : AppCompatActivity() {
         return intArrayOf(b[0], b[1] + b[2], b[3], b[4] + b[5])
     }
 
-    /** "33% are good cuts - 45/55 or better - 412 of them". */
-    private fun breakdownRow(label: String, range: String, percent: Int, count: Int, colour: Int) =
+    /** A big coloured rate over the sentence that says what it counted. */
+    private fun rateBlock(percent: Int, label: String, range: String, colour: Int, last: Boolean) =
         LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(4f), 0, dp(4f))
+            orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-            addView(View(this@StatsActivity).apply {
-                background = GradientDrawable().apply {
-                    shape = GradientDrawable.OVAL
-                    setColor(colour)
-                }
-                layoutParams = LinearLayout.LayoutParams(dp(9f), dp(9f))
-                    .apply { rightMargin = dp(10f) }
-            })
+            ).apply { bottomMargin = if (last) 0 else dp(16f) }
+
             addView(TextView(this@StatsActivity).apply {
                 text = "$percent%"
                 typeface = Theme.display(this@StatsActivity)
                 setTextColor(colour)
-                textSize = 15f
-                layoutParams = LinearLayout.LayoutParams(dp(46f), ViewGroup.LayoutParams.WRAP_CONTENT)
+                textSize = 30f
             })
             addView(TextView(this@StatsActivity).apply {
-                text = "$label  ·  $range"
-                typeface = Theme.ui(this@StatsActivity)
-                setTextColor(Theme.textSecondary)
-                textSize = 13f
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-            })
-            addView(TextView(this@StatsActivity).apply {
-                text = format(count)
+                text = "of every cut you have made was $label ($range)"
                 typeface = Theme.ui(this@StatsActivity)
                 setTextColor(Theme.textFaint)
-                textSize = 13f
-                gravity = Gravity.END
+                textSize = 12f
+                setPadding(0, dp(2f), 0, 0)
             })
         }
 
@@ -771,6 +716,6 @@ class StatsActivity : AppCompatActivity() {
         const val MIN_RUNS = 10
 
         val GROUP_LABELS = arrayOf("perfect", "good", "mid range", "bad")
-        val GROUP_RANGES = arrayOf("= 50/50", "45/55 \u2013 60/40", "70/30", "80/20 or worse")
+        val GROUP_RANGES = arrayOf("a dead 50/50", "45/55 to 60/40", "around 70/30", "80/20 or worse")
     }
 }

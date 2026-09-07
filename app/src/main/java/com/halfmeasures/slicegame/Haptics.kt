@@ -3,6 +3,7 @@ package com.halfmeasures.slicegame
 import android.content.Context
 import android.media.AudioAttributes
 import android.os.Build
+import android.os.SystemClock
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
@@ -122,9 +123,10 @@ class Haptics(context: Context) {
     private fun oneShot(durationMs: Long, amplitude: Int) {
         if (!available || durationMs <= 0) return
         val v = vibrator ?: return
+        val amp = amplitude.coerceIn(1, 255)
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                play(v, VibrationEffect.createOneShot(durationMs, amplitude.coerceIn(1, 255)))
+                play(v, VibrationEffect.createOneShot(durationMs, amp), durationMs, amp)
             } else {
                 @Suppress("DEPRECATION")
                 v.vibrate(durationMs)
@@ -139,7 +141,10 @@ class Haptics(context: Context) {
         val v = vibrator ?: return
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                play(v, VibrationEffect.createWaveform(timings, amplitudes, -1))
+                play(
+                    v, VibrationEffect.createWaveform(timings, amplitudes, -1),
+                    timings.sum(), amplitudes.maxOrNull() ?: 0
+                )
             } else {
                 @Suppress("DEPRECATION")
                 v.vibrate(timings, -1)
@@ -149,16 +154,30 @@ class Haptics(context: Context) {
         }
     }
 
+    private var runningUntilMs = 0L
+    private var runningPeak = 0
+
     /**
-     * Stops whatever is playing before starting the next effect.
+     * Stops whatever is playing before starting the next effect - unless the next
+     * effect is the weaker of the two.
      *
      * A new vibration is supposed to replace the one in progress, but in practice
      * a request that arrives while the motor is still running its previous pattern
      * can be swallowed - which is what a second perfect landing inside the first
      * one's tail looks like. Cancelling first makes the hand-off explicit.
+     *
+     * The cancel cuts both ways, though: a small buzz fired a frame after a big
+     * one killed the big one and left a tap in its place, so the strongest thing
+     * the player did came out feeling like the weakest. Nothing may now interrupt
+     * a stronger effect that is still running. A louder one still takes over
+     * immediately, which is the case the cancel was there for.
      */
-    private fun play(v: Vibrator, effect: VibrationEffect) {
+    private fun play(v: Vibrator, effect: VibrationEffect, durationMs: Long, peak: Int) {
+        val now = SystemClock.uptimeMillis()
+        if (now < runningUntilMs && peak < runningPeak) return
         v.cancel()
         v.vibrate(effect, attributes)
+        runningUntilMs = now + durationMs
+        runningPeak = peak
     }
 }
