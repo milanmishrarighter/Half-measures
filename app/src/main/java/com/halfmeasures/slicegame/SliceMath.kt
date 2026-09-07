@@ -113,18 +113,12 @@ object SliceMath {
 
         val dx = bx - ax
         val dy = by - ay
-        val len = sqrt(dx * dx + dy * dy)
-        if (len < 0.0001f) return false
+        if (dx * dx + dy * dy < 1e-6f) return false
 
-        // A little reach at each end, so a stroke that stops on the edge still
-        // takes it. Set from the shape, so a big shape is no harder to catch.
-        val reach = shape.radius * shape.spawnScale * BLADE_REACH
-        val ex = dx / len * reach
-        val ey = dy / len * reach
-        val x0 = ax - ex
-        val y0 = ay - ey
-        val x1 = bx + ex
-        val y1 = by + ey
+        // The blade is taken as given, with no reach added past either end. It
+        // arrives measured back along the trail, which already covers what the
+        // finger went through; reaching further would cut a shape the finger had
+        // not got to yet, and the split would appear ahead of its own slash.
 
         // Boxes apart is the cheap way out, and it is exact.
         var minX = poly[0].x; var maxX = poly[0].x
@@ -135,16 +129,16 @@ object SliceMath {
             if (p.y < minY) minY = p.y
             if (p.y > maxY) maxY = p.y
         }
-        if (max(x0, x1) < minX || min(x0, x1) > maxX) return false
-        if (max(y0, y1) < minY || min(y0, y1) > maxY) return false
+        if (max(ax, bx) < minX || min(ax, bx) > maxX) return false
+        if (max(ay, by) < minY || min(ay, by) > maxY) return false
 
         for (i in poly.indices) {
             val p = poly[i]
             val q = poly[(i + 1) % poly.size]
-            if (segmentsCross(x0, y0, x1, y1, p.x, p.y, q.x, q.y)) return true
+            if (segmentsCross(ax, ay, bx, by, p.x, p.y, q.x, q.y)) return true
         }
         // Crossed nothing: either clear of the shape, or wholly within it.
-        return containsPoint(poly, x0, y0)
+        return containsPoint(poly, ax, ay)
     }
 
     /** True when the two segments properly cross - touching at a shared point counts. */
@@ -173,9 +167,6 @@ object SliceMath {
         }
         return inside
     }
-
-    /** How far past each end of a stroke the blade still counts, as a fraction of the shape. */
-    private const val BLADE_REACH = 0.10f
 
     fun bisectorOffset(
         poly: List<PointF2>,
