@@ -90,84 +90,32 @@ object SliceMath {
      * and the crossing has to fall near the sampled segment - with a margin, because
      * fast swipes are sampled coarsely.
      */
-    /**
-     * Did this stroke of the blade actually go through the shape?
-     *
-     * Tested against the outline itself, which is the only thing that works for a
-     * concave one. This used to ask whether the shape had vertices either side of
-     * the blade's *infinite* line, whether the blade passed within a shape radius
-     * of its centre, and whether that centre projected onto the stroke. Every one
-     * of those is a stand-in for the real question, and on a moon all three go
-     * wrong together: the point the game calls the moon's centre sits in the bite,
-     * in open air, so a stroke through the thick of the crescent could be measured
-     * as far from it, and a short flick across a horn projects the centre well off
-     * the end of its own stroke. The cut was refused on a swipe that plainly went
-     * through the shape.
-     *
-     * Now: the blade cuts if it crosses the outline anywhere, or if the whole
-     * stroke landed inside the shape. Both hold for any outline, however concave.
-     */
     fun segmentSlicesShape(shape: GameShape, ax: Float, ay: Float, bx: Float, by: Float): Boolean {
-        val poly = shape.worldVertices()
-        if (poly.size < 3) return false
+        if (distancePointToLine(shape.x, shape.y, ax, ay, bx, by) > shape.radius * 1.2f) return false
 
-        val dx = bx - ax
-        val dy = by - ay
-        if (dx * dx + dy * dy < 1e-6f) return false
+        val frac = projectionFraction(shape.x, shape.y, ax, ay, bx, by)
+        val margin = 0.35f
+        if (frac < -margin || frac > 1f + margin) return false
 
-        // The blade is taken as given, with no reach added past either end. It
-        // arrives measured back along the trail, which already covers what the
-        // finger went through; reaching further would cut a shape the finger had
-        // not got to yet, and the split would appear ahead of its own slash.
-
-        // Boxes apart is the cheap way out, and it is exact.
-        var minX = poly[0].x; var maxX = poly[0].x
-        var minY = poly[0].y; var maxY = poly[0].y
-        for (p in poly) {
-            if (p.x < minX) minX = p.x
-            if (p.x > maxX) maxX = p.x
-            if (p.y < minY) minY = p.y
-            if (p.y > maxY) maxY = p.y
+        var sawPositive = false
+        var sawNegative = false
+        for (p in shape.worldVertices()) {
+            val s = side(ax, ay, bx, by, p.x, p.y)
+            if (s > 0.5f) sawPositive = true else if (s < -0.5f) sawNegative = true
+            if (sawPositive && sawNegative) return true
         }
-        if (max(ax, bx) < minX || min(ax, bx) > maxX) return false
-        if (max(ay, by) < minY || min(ay, by) > maxY) return false
-
-        for (i in poly.indices) {
-            val p = poly[i]
-            val q = poly[(i + 1) % poly.size]
-            if (segmentsCross(ax, ay, bx, by, p.x, p.y, q.x, q.y)) return true
-        }
-        // Crossed nothing: either clear of the shape, or wholly within it.
-        return containsPoint(poly, ax, ay)
+        return false
     }
 
-    /** True when the two segments properly cross - touching at a shared point counts. */
-    private fun segmentsCross(
-        ax: Float, ay: Float, bx: Float, by: Float,
-        cx: Float, cy: Float, dx: Float, dy: Float
-    ): Boolean {
-        val d1 = side(cx, cy, dx, dy, ax, ay)
-        val d2 = side(cx, cy, dx, dy, bx, by)
-        val d3 = side(ax, ay, bx, by, cx, cy)
-        val d4 = side(ax, ay, bx, by, dx, dy)
-        return d1 * d2 <= 0f && d3 * d4 <= 0f
-    }
-
-    /** Even-odd point in polygon, which is right for a concave outline. */
-    private fun containsPoint(poly: List<PointF2>, px: Float, py: Float): Boolean {
-        var inside = false
-        var j = poly.size - 1
-        for (i in poly.indices) {
-            val a = poly[i]
-            val b = poly[j]
-            if ((a.y > py) != (b.y > py) &&
-                px < (b.x - a.x) * (py - a.y) / (b.y - a.y) + a.x
-            ) inside = !inside
-            j = i
-        }
-        return inside
-    }
-
+    /**
+     * Offset from the shape's centre, along the line's normal, at which a line in
+     * direction (dirX, dirY) splits [poly] into exactly equal areas.
+     *
+     * Moving the line along +normal strictly shrinks the far side, so the areas are
+     * monotonic in the offset and a bisection converges quickly. This is exact for
+     * every outline - including a triangle or star, where the halving line does not
+     * pass through the centroid.
+     */
     fun bisectorOffset(
         poly: List<PointF2>,
         cx: Float, cy: Float,
