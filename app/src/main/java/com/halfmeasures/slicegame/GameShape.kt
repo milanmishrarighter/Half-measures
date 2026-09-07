@@ -245,10 +245,22 @@ private fun torusContours(): List<List<PointF2>> = listOf(
     }
 )
 
+/**
+ * The ring as one closed loop, for cutting: right round the outside, in along a
+ * radius, right round the inside, back out along the same radius.
+ *
+ * The slit has no width. It used to be two degrees either side, which kept the
+ * loop from touching itself - and took a two degree wedge of material out of the
+ * ring with it. Intact that never showed, because the ring is *drawn* from two
+ * plain circles; but a cut piece is drawn from this, so any halving that left the
+ * slit inside a piece put a crack across it. A zero width slit is two coincident
+ * edges rather than a crossing, which the catalogue's self-intersection gate
+ * allows and the winding rule fills correctly, and the outline drawn for a piece
+ * cancels them against each other.
+ */
 private fun torusOutline(): List<PointF2> {
-    val slit = Math.toRadians(2.0).toFloat()
-    val start = (Math.PI / 2).toFloat() + slit
-    val end = (Math.PI / 2).toFloat() + (2.0 * Math.PI).toFloat() - slit
+    val start = (Math.PI / 2).toFloat()
+    val end = start + (2.0 * Math.PI).toFloat()
     val v = ArrayList<PointF2>(84)
     for (i in 0..46) {
         val t = start + (end - start) * i / 46f
