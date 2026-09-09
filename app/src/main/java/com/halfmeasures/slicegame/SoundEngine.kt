@@ -159,7 +159,12 @@ class SoundEngine(context: Context) {
         }
         lastPlayed[bank] = index
 
-        val range = spread.coerceIn(1, PITCH_STEPS.size)
+        // The clicks are already spread over ten notes and are meant to sound like
+        // one sound. A full nineteen percent of detune on top of that takes the
+        // low ones somewhere the little speaker cannot follow and makes the high
+        // ones thin, so this bank gets the narrow middle of the range.
+        val asked = if (bank == SfxBank.UI) spread.coerceAtMost(3) else spread
+        val range = asked.coerceIn(1, PITCH_STEPS.size)
         val offset = (PITCH_STEPS.size - range) / 2
         val level = if (bank == SfxBank.VOICE) gain * voiceVolume else gain
         shoot(ids[index], level, PITCH_STEPS[offset + random.nextInt(range)])
@@ -395,9 +400,8 @@ class SoundEngine(context: Context) {
     // -----------------------------------------------------------------
 
     private fun renderSingle(sfx: Sfx): ShortArray = when (sfx) {
-        Sfx.BUTTON -> buffer(70) { b ->
-            tone(b, 0, 55, 880f, 1180f, SQUARE, 0.5f, duty = 0.25f, crush = 3)
-        }
+        // The same click the bank plays, on its middle note.
+        Sfx.BUTTON -> renderUi(UI_NOTES.size / 2)
 
         Sfx.MISS -> buffer(340) { b ->
             tone(b, 0, 290, 440f, 70f, SAW, 0.42f, crush = 4)
@@ -484,41 +488,29 @@ class SoundEngine(context: Context) {
      * and quiet by design - a menu is not a place for a flourish - but no two are
      * built the same way, and the bank pitches each shot on top of that.
      */
-    private fun renderUi(i: Int): ShortArray = when (i) {
-        // A plain chip blip, up.
-        0 -> buffer(70) { b -> tone(b, 0, 55, 880f, 1180f, SQUARE, 0.44f, duty = 0.25f, crush = 3) }
-        // The same, down - a press and a release read differently.
-        1 -> buffer(70) { b -> tone(b, 0, 58, 1180f, 820f, SQUARE, 0.42f, duty = 0.25f, crush = 3) }
-        // Two-step, a fourth apart.
-        2 -> buffer(110) { b ->
-            tone(b, 0, 38, 784f, 784f, SQUARE, 0.36f, duty = 0.5f, crush = 3)
-            tone(b, 34, 55, 1046f, 1046f, SQUARE, 0.36f, duty = 0.25f, crush = 3)
-        }
-        // Soft triangle, no edge to it.
-        3 -> buffer(90) { b -> tone(b, 0, 78, 988f, 1245f, TRIANGLE, 0.40f, attackMs = 5) }
-        // A tick with a breath of noise on the front, like a key.
-        4 -> buffer(80) { b ->
-            tone(b, 0, 18, 0f, 0f, NOISE, 0.16f, attackMs = 1, crush = 4)
-            tone(b, 6, 52, 1046f, 1318f, SQUARE, 0.36f, duty = 0.125f, crush = 3)
-        }
-        // Narrow duty: thin and glassy.
-        5 -> buffer(75) { b -> tone(b, 0, 62, 1318f, 1568f, SQUARE, 0.30f, duty = 0.125f, crush = 2) }
-        // A fifth below, fatter.
-        6 -> buffer(95) { b ->
-            tone(b, 0, 70, 587f, 784f, SQUARE, 0.40f, duty = 0.375f, crush = 3)
-            tone(b, 0, 40, 1174f, 1568f, TRIANGLE, 0.14f, attackMs = 3)
-        }
-        // Two-step down, for anything that reads as backing out.
-        7 -> buffer(110) { b ->
-            tone(b, 0, 40, 1046f, 1046f, SQUARE, 0.34f, duty = 0.25f, crush = 3)
-            tone(b, 36, 60, 784f, 740f, SQUARE, 0.36f, duty = 0.25f, crush = 4)
-        }
-        // Saw, with a bite to the attack.
-        8 -> buffer(80) { b -> tone(b, 0, 66, 660f, 990f, SAW, 0.30f, attackMs = 2, crush = 4) }
-        // A sine pip under a square one: the roundest of the set.
-        else -> buffer(100) { b ->
-            tone(b, 0, 46, 1568f, 1568f, SQUARE, 0.26f, duty = 0.25f, crush = 2)
-            tone(b, 0, 88, 392f, 392f, SINE, 0.30f, attackMs = 6)
+    /**
+     * Every button in the game, as one sound in ten pitches.
+     *
+     * Four layers, all of them round waves - no square, no saw, no bitcrush,
+     * because those are what made the old blips sharp. A sine an octave down for
+     * the weight, a triangle on the note for the body, a sine on its twelfth for
+     * the part a phone speaker can actually move, and a short soft pip near two
+     * kilohertz so a press still reads over the music.
+     *
+     * That third layer is the one that matters. A click built only from bass
+     * measures beautifully and is inaudible on a handset - run through a filter
+     * standing in for a phone speaker, a sub-only version of this kept a fifth of
+     * its level. Where it sits now it keeps three fifths, against seven tenths for
+     * the blips it replaces, while carrying a seventh of their energy in the harsh
+     * 1.5-4kHz band and nothing at all above four.
+     */
+    private fun renderUi(i: Int): ShortArray {
+        val f = UI_NOTES[i % UI_NOTES.size]
+        return buffer(155) { b ->
+            tone(b, 0, 135, f * 0.5f, f * 0.43f, SINE, 0.24f, attackMs = 3)
+            tone(b, 0, 110, f, f * 0.88f, TRIANGLE, 0.26f, attackMs = 4)
+            tone(b, 0, 72, f * 3f, f * 2.7f, SINE, 0.44f, attackMs = 5)
+            tone(b, 0, 46, f * 8f, f * 6.6f, SINE, 0.30f, attackMs = 10)
         }
     }
 
@@ -1077,7 +1069,7 @@ class SoundEngine(context: Context) {
 
     private companion object {
         /** Bumped whenever the set is retuned, so the cache cannot serve stale waves. */
-        const val RENDER_VERSION = 5
+        const val RENDER_VERSION = 6
 
         const val BANK_SIZE = 10
         const val RATE = 22050
@@ -1099,6 +1091,12 @@ class SoundEngine(context: Context) {
         const val FIFTH = 1.4983f
 
         val PITCH_STEPS = floatArrayOf(0.84f, 0.89f, 0.94f, 1.0f, 1.06f, 1.12f, 1.19f)
+
+        /** The ten notes the button click is built on: F#3 up to D#4. */
+        val UI_NOTES = floatArrayOf(
+            185.0f, 196.0f, 207.7f, 220.0f, 233.1f,
+            246.9f, 261.6f, 277.2f, 293.7f, 311.1f
+        )
 
         /**
          * The announcer, as recorded takes in the assets. The bank picks one at
